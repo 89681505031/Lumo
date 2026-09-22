@@ -62,7 +62,7 @@ class MainActivity:ComponentActivity(){
  when {
   restoring -> Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()}
   token==null || me==null -> Register{t,u->prefs.edit().putString("token",t).apply();token=t;me=u}
-  peer==null -> Home(token!!,me!!,{peer=it}){prefs.edit().clear().apply();token=null;me=null;peer=null;logoutNonce++}
+  peer==null -> Home(token!!,me!!,{peer=it},{me=it}){prefs.edit().clear().apply();token=null;me=null;peer=null;logoutNonce++}
   else -> Chat(token!!,me!!,peer!!){peer=null}
  }
 }
@@ -84,7 +84,7 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Home(token:String,me:User,open:(User)->Unit,logout:()->Unit){
+@Composable fun Home(token:String,me:User,open:(User)->Unit,profileChanged:(User)->Unit,logout:()->Unit){
  var tab by remember{mutableIntStateOf(0)}
  Scaffold(
   topBar={Surface(shadowElevation=2.dp){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(20.dp,14.dp),verticalAlignment=Alignment.CenterVertically){
@@ -100,7 +100,7 @@ class MainActivity:ComponentActivity(){
    when(tab){
     0->Chats(token,{tab=1},open)
     1->People(token,open)
-    else->Profile(me,logout)
+    else->Profile(token,me,profileChanged,logout)
    }
   }
  }
@@ -148,27 +148,23 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Profile(me:User,logout:()->Unit){
+@Composable fun Profile(token:String,me:User,profileChanged:(User)->Unit,logout:()->Unit){
  val context=LocalContext.current
- var update by remember{mutableStateOf<UpdateInfo?>(null)}
- var checking by remember{mutableStateOf(true)}
- var updateText by remember{mutableStateOf("Проверяем обновления…")}
- var progress by remember{mutableIntStateOf(-1)}
- LaunchedEffect(Unit){thread{runCatching{Api.latestRelease()}.onSuccess{info->
-  update=info.takeIf{it.versionCode>BuildConfig.VERSION_CODE}
-  updateText=if(update!=null)"Доступна новая версия Lumo" else "Установлена последняя версия"
- }.onFailure{updateText="Не удалось проверить обновления"}.also{checking=false}}}
+ var editing by remember{mutableStateOf(false)};var name by remember(me.displayName){mutableStateOf(me.displayName)};var saving by remember{mutableStateOf(false)};var profileError by remember{mutableStateOf("")}
+ var update by remember{mutableStateOf<UpdateInfo?>(null)};var checking by remember{mutableStateOf(true)};var updateText by remember{mutableStateOf("Проверяем обновления…")};var progress by remember{mutableIntStateOf(-1)}
+ LaunchedEffect(Unit){thread{runCatching{Api.latestRelease()}.onSuccess{info->update=info.takeIf{it.versionCode>BuildConfig.VERSION_CODE};updateText=if(update!=null)"Доступна новая версия Lumo" else "Установлена последняя версия"}.onFailure{updateText="Не удалось проверить обновления"}.also{checking=false}}}
  Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
-  Spacer(Modifier.height(32.dp));Box(Modifier.size(92.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(me.displayName.take(1).uppercase(),style=MaterialTheme.typography.displaySmall,fontWeight=FontWeight.Bold)}
+  Spacer(Modifier.height(24.dp));Box(Modifier.size(92.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(me.displayName.take(1).uppercase(),style=MaterialTheme.typography.displaySmall,fontWeight=FontWeight.Bold)}
   Spacer(Modifier.height(16.dp));Text(me.displayName,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text("@"+me.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
-  Spacer(Modifier.height(32.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text("Аккаунт Lumo",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text("Профиль подключён к серверу Lumo.")}}
-  Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){
-   Text("Обновление",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text(updateText)
-   Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-   if(checking) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp))
-   if(progress>=0){Spacer(Modifier.height(12.dp));LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth());Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp))}
-   update?.let{u->if(progress<0){Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl){progress=it;updateText=if(it<100)"Загружаем обновление…" else "Устанавливаем обновление…"}},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}}
+  Spacer(Modifier.height(20.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){
+   Text("Профиль",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(8.dp))
+   if(editing){
+    OutlinedTextField(name,{name=it;profileError=""},label={Text("Имя")},singleLine=true,modifier=Modifier.fillMaxWidth())
+    if(profileError.isNotEmpty())Text(profileError,color=MaterialTheme.colorScheme.error)
+    Spacer(Modifier.height(10.dp));Row{Button({saving=true;thread{runCatching{Api.updateMe(token,name)}.onSuccess{profileChanged(it);editing=false}.onFailure{profileError="Не удалось сохранить"}.also{saving=false}}},enabled=!saving&&name.isNotBlank()){Text(if(saving)"Сохраняем…" else "Сохранить")};Spacer(Modifier.width(8.dp));TextButton({name=me.displayName;editing=false}){Text("Отмена")}}
+   }else Button({editing=true},modifier=Modifier.fillMaxWidth()){Text("Редактировать профиль")}
   }}
+  Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text("Обновление",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text(updateText);Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(checking)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp));if(progress>=0){Spacer(Modifier.height(12.dp));LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth());Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp))};update?.let{u->if(progress<0){Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl){progress=it;updateText=if(it<100)"Загружаем обновление…" else "Устанавливаем обновление…"}},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}}}}
   Spacer(Modifier.height(14.dp));OutlinedButton(logout,modifier=Modifier.fillMaxWidth()){Text("Выйти из аккаунта")}
  }
 }
@@ -243,6 +239,7 @@ class LumoInstallReceiver:BroadcastReceiver(){
 object Api{
  private const val HTTP="https://lumo-gamma-seven.vercel.app";private const val WS="wss://lumo-gamma-seven.vercel.app/ws";private val c=OkHttpClient()
  fun register(login:String,name:String):Pair<String,User>{val j=JSONObject().put("username",login).put("displayName",name);val r=Request.Builder().url(HTTP+"/api/register").post(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Регистрация: "+x.code);val o=JSONObject(x.body!!.string());return o.getString("token") to user(o.getJSONObject("user"))}}
+ fun updateMe(t:String,name:String):User{val j=JSONObject().put("displayName",name);val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).patch(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Профиль: "+x.code);return user(JSONObject(x.body!!.string()))}}
  fun me(t:String):User{val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Сессия: "+x.code);return user(JSONObject(x.body!!.string()))}}
  fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
  fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Чаты: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"))}}}
