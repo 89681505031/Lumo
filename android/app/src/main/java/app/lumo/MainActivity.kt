@@ -41,6 +41,7 @@ data class User(val id:String,val username:String,val displayName:String)
 data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="")
 data class Conversation(val peer:User,val lastMessage:String)
 data class UpdateInfo(val versionCode:Int,val downloadUrl:String)
+data class Receipt(val messageId:String,val deliveredAt:String,val readAt:String)
 
 class MainActivity:ComponentActivity(){
  override fun onCreate(b:Bundle?){super.onCreate(b);setContent{MaterialTheme{App()}}}
@@ -210,7 +211,7 @@ class LumoInstallReceiver:BroadcastReceiver(){
  val msgs=remember{mutableStateListOf<Msg>()};var input by remember{mutableStateOf("")};var ws by remember{mutableStateOf<WebSocket?>(null)}
  DisposableEffect(peer.id){
   thread{runCatching{Api.history(token,peer.id)}.onSuccess{msgs.clear();msgs.addAll(it);val unread=it.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}}
-  ws=Api.socket(token){m->if(m.from==peer.id||m.to==peer.id){msgs.add(m);if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}}
+  ws=Api.socket(token,{m->if(m.from==peer.id||m.to==peer.id){if(msgs.none{it.id==m.id})msgs.add(m);if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}},{r->val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=r.deliveredAt.ifBlank{old.deliveredAt},readAt=r.readAt.ifBlank{old.readAt})}})
   onDispose{ws?.close(1000,"bye")}
  }
  Scaffold(
@@ -223,7 +224,7 @@ class LumoInstallReceiver:BroadcastReceiver(){
     items(msgs,key={it.id}){m->
      Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.from==me.id)Arrangement.End else Arrangement.Start){
       Surface(shape=RoundedCornerShape(18.dp),color=if(m.from==me.id)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,modifier=Modifier.widthIn(max=300.dp)){
-       Column(Modifier.padding(14.dp,8.dp)){Text(m.text);Row(Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically){if(m.createdAt.isNotBlank())Text(formatMessageTime(m.createdAt),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(m.from==me.id){Spacer(Modifier.width(5.dp));Text(if(m.readAt.isNotBlank())"✓✓" else "✓",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
+       Column(Modifier.padding(14.dp,8.dp)){Text(m.text);Row(Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically){if(m.createdAt.isNotBlank())Text(formatMessageTime(m.createdAt),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(m.from==me.id){Spacer(Modifier.width(5.dp));Text(if(m.readAt.isNotBlank())"✓✓" else if(m.deliveredAt.isNotBlank())"✓✓" else "✓",style=MaterialTheme.typography.labelSmall,color=if(m.readAt.isNotBlank())MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)}}}
       }
      }
     }
@@ -246,8 +247,8 @@ object Api{
  fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
  fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Чаты: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"))}}}
  fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/messages/"+p).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("История: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{msg(a.getJSONObject(it))}}}
- fun latestRelease():UpdateInfo{val r=Request.Builder().url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest").header("Accept","application/vnd.github+json").build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Обновление: "+x.code);val o=JSONObject(x.body!!.string());val code=Regex("versionCode=(\\d+)").find(o.optString("body"))?.groupValues?.get(1)?.toIntOrNull()?:0;val a=o.getJSONArray("assets");for(i in 0 until a.length()){val asset=a.getJSONObject(i);if(asset.optString("name")=="app-debug.apk" || asset.optString("label")=="Lumo.apk")return UpdateInfo(code,asset.getString("browser_download_url"))};error("APK не найден")}}
- fun socket(t:String,on:(Msg)->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS+"?token="+t).build(),object:WebSocketListener(){override fun onMessage(w:WebSocket,s:String){val o=JSONObject(s);if(o.optString("type")=="message")on(msg(o.getJSONObject("message")))}})}
+ fun latestRelease():UpdateInfo{val r=Request.Builder().url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest").header("Accept","application/vnd.github+json").build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Обновление: "+x.code);val o=JSONObject(x.body!!.string());val code=Regex("versionCode=(\\d+)").find(o.optString("body"))?.groupValues?.get(1)?.toIntOrNull()?:0;val a=o.getJSONArray("assets");for(i in 0 until a.length()){val asset=a.getJSONObject(i);if(asset.optString("name")=="app-debug.apk" || asset.optString("name")=="app-release.apk" || asset.optString("label")=="Lumo.apk")return UpdateInfo(code,asset.getString("browser_download_url"))};error("APK не найден")}}
+ fun socket(t:String,onMessage:(Msg)->Unit,onReceipt:(Receipt)->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS+"?token="+t).build(),object:WebSocketListener(){override fun onMessage(w:WebSocket,s:String){val o=JSONObject(s);when(o.optString("type")){"message"->onMessage(msg(o.getJSONObject("message")));"receipt"->onReceipt(Receipt(o.getString("messageId"),o.optString("deliveredAt"),o.optString("readAt")))}}})}
  private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"))
  private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),o.optString("createdAt"),o.optString("deliveredAt"),o.optString("readAt"))
 }
