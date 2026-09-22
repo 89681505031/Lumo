@@ -14,6 +14,9 @@ app.use(express.json({ limit: "64kb" }));
 const users = new Map();
 const sessions = new Map();
 const messages = [];
+const rateBuckets = new Map();
+function rateLimit({windowMs,max}){return (req,res,next)=>{const key=(req.headers["x-forwarded-for"]||req.socket.remoteAddress||"unknown").toString().split(",")[0].trim();const now=Date.now();let b=rateBuckets.get(key);if(!b||now-b.start>=windowMs)b={start:now,count:0};b.count++;rateBuckets.set(key,b);if(b.count>max)return res.status(429).json({error:"rate_limited"});next();};}
+setInterval(()=>{const cutoff=Date.now()-10*60_000;for(const [key,b] of rateBuckets)if(b.start<cutoff)rateBuckets.delete(key);},10*60_000).unref?.();
 
 function publicUser(user) {
   return { id: user.id, username: user.username, displayName: user.displayName };
@@ -36,7 +39,7 @@ async function auth(req, res, next) {
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase}; if(hasDatabase){try{database=await dbHealth()}catch{database={configured:true,ok:false}}} res.json({ ok:true, service:"lumo-server", database }); });
 
-app.post("/api/register", async (req, res) => {
+app.post("/api/register", rateLimit({windowMs:60_000,max:10}), async (req, res) => {
   try {
     const username = String(req.body?.username || "").trim().toLowerCase();
     const displayName = String(req.body?.displayName || "").trim();
