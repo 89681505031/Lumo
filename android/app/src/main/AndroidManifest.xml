@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
  <uses-permission android:name="android.permission.INTERNET"/>
- <application android:label="Lumo" android:theme="@style/Theme.Lumo" android:usesCleartextTraffic="true">
+ <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+ <application android:label="Lumo" android:theme="@style/Theme.Lumo" android:icon="@drawable/ic_lumo_icon" android:roundIcon="@drawable/ic_lumo_icon" android:usesCleartextTraffic="false">
   <activity android:name=".MainActivity" android:exported="true">
    <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
   </activity>
