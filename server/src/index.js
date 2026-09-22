@@ -61,13 +61,12 @@ app.patch("/api/me", auth, async (req, res) => {
 });
 
 app.get("/api/users", auth, async (req, res) => {
-  const q = String(req.query.q || "").toLowerCase();
-  if(hasDatabase) return res.json(await postgresStore.searchUsers(req.user.id,q));
-  res.json([...users.values()].filter(u => u.id !== req.user.id).filter(u => !q || u.username.includes(q) || u.displayName.toLowerCase().includes(q)).slice(0, 50).map(publicUser));
+  try { const q = String(req.query.q || "").toLowerCase(); if(q.length>50)return res.status(400).json({error:"invalid_query"}); if(hasDatabase) return res.json(await postgresStore.searchUsers(req.user.id,q)); res.json([...users.values()].filter(u => u.id !== req.user.id).filter(u => !q || u.username.includes(q) || u.displayName.toLowerCase().includes(q)).slice(0, 50).map(publicUser)); }
+  catch(error){console.error("User search failed",error);res.status(503).json({error:"service_unavailable"});}
 });
 
 app.get("/api/conversations", auth, async (req, res) => {
-  if(hasDatabase) return res.json(await postgresStore.conversations(req.user.id));
+  try { if(hasDatabase) return res.json(await postgresStore.conversations(req.user.id));
   const mine = messages.filter(m => m.from === req.user.id || m.to === req.user.id);
   const byPeer = new Map();
   for (const m of mine) {
@@ -80,13 +79,12 @@ app.get("/api/conversations", auth, async (req, res) => {
     lastMessage: last.text,
     lastAt: last.createdAt
   })).filter(x => x.peer).sort((a,b) => b.lastAt.localeCompare(a.lastAt));
-  res.json(result);
+  res.json(result); } catch(error){console.error("Conversation list failed",error);res.status(503).json({error:"service_unavailable"});}
 });
 
 app.get("/api/messages/:peerId", auth, async (req, res) => {
-  const peerId = req.params.peerId;
-  if(hasDatabase) return res.json(await postgresStore.messages(req.user.id,peerId));
-  res.json(messages.filter(m => (m.from === req.user.id && m.to === peerId) || (m.from === peerId && m.to === req.user.id)));
+  try { const peerId = req.params.peerId; if(hasDatabase) return res.json(await postgresStore.messages(req.user.id,peerId)); res.json(messages.filter(m => (m.from === req.user.id && m.to === peerId) || (m.from === peerId && m.to === req.user.id))); }
+  catch(error){console.error("Message history failed",error);res.status(503).json({error:"service_unavailable"});}
 });
 
 const server = createServer(app);
