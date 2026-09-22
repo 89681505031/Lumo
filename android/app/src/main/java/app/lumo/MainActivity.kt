@@ -42,6 +42,7 @@ data class Msg(val id:String,val from:String,val to:String,val text:String,val c
 data class Conversation(val peer:User,val lastMessage:String)
 data class UpdateInfo(val versionCode:Int,val downloadUrl:String)
 data class Receipt(val messageId:String,val deliveredAt:String,val readAt:String)
+data class PendingMessage(val clientMessageId:String,val text:String)
 
 class MainActivity:ComponentActivity(){
  override fun onCreate(b:Bundle?){super.onCreate(b);setContent{MaterialTheme{App()}}}
@@ -209,11 +210,11 @@ class LumoInstallReceiver:BroadcastReceiver(){
 
 @Composable fun Chat(token:String,me:User,peer:User,back:()->Unit){
  val context=LocalContext.current;val queuePrefs=remember{context.getSharedPreferences("lumo_pending",Context.MODE_PRIVATE)};val queueKey="pending_"+me.id+"_"+peer.id
- val msgs=remember{mutableStateListOf<Msg>()};var input by remember{mutableStateOf("")};var ws by remember{mutableStateOf<WebSocket?>(null)};var socketGeneration by remember{mutableIntStateOf(0)};var connected by remember{mutableStateOf(false)};val pending=remember{mutableStateListOf<String>().apply{val a=runCatching{JSONArray(queuePrefs.getString(queueKey,"[]"))}.getOrNull();if(a!=null)for(i in 0 until a.length())add(a.optString(i))}}
- fun savePending(){val a=JSONArray();pending.forEach{a.put(it)};queuePrefs.edit().putString(queueKey,a.toString()).apply()}
+ val msgs=remember{mutableStateListOf<Msg>()};var input by remember{mutableStateOf("")};var ws by remember{mutableStateOf<WebSocket?>(null)};var socketGeneration by remember{mutableIntStateOf(0)};var connected by remember{mutableStateOf(false)};val pending=remember{mutableStateListOf<PendingMessage>().apply{val a=runCatching{JSONArray(queuePrefs.getString(queueKey,"[]"))}.getOrNull();if(a!=null)for(i in 0 until a.length()){val o=a.optJSONObject(i);if(o!=null)add(PendingMessage(o.optString("clientMessageId"),o.optString("text")))}}}
+ fun savePending(){val a=JSONArray();pending.forEach{a.put(JSONObject().put("clientMessageId",it.clientMessageId).put("text",it.text))};queuePrefs.edit().putString(queueKey,a.toString()).apply()}
  DisposableEffect(peer.id){
   thread{runCatching{Api.history(token,peer.id)}.onSuccess{msgs.clear();msgs.addAll(it);val unread=it.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}}
-  fun syncHistory(){thread{runCatching{Api.history(token,peer.id)}.onSuccess{fresh->val byId=(msgs+fresh).associateBy{it.id}.values.sortedBy{it.createdAt};msgs.clear();msgs.addAll(byId);val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->if(m.from==peer.id||m.to==peer.id){if(msgs.none{it.id==m.id})msgs.add(m);if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}},{r->val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=r.deliveredAt.ifBlank{old.deliveredAt},readAt=r.readAt.ifBlank{old.readAt})}},{connected=true;val queued=pending.toList();pending.clear();savePending();queued.forEach{text->ws?.send(JSONObject().put("type","message").put("to",peer.id).put("text",text).toString())};syncHistory()},{connected=false;if(generation==socketGeneration){thread{Thread.sleep(2000);if(generation==socketGeneration)connect()}}})};connect()
+  fun syncHistory(){thread{runCatching{Api.history(token,peer.id)}.onSuccess{fresh->val byId=(msgs+fresh).associateBy{it.id}.values.sortedBy{it.createdAt};msgs.clear();msgs.addAll(byId);val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->if(m.from==peer.id||m.to==peer.id){if(msgs.none{it.id==m.id})msgs.add(m);if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}},{r->val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=r.deliveredAt.ifBlank{old.deliveredAt},readAt=r.readAt.ifBlank{old.readAt})}},{connected=true;val queued=pending.toList();pending.clear();savePending();queued.forEach{p->ws?.send(JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId).toString())};syncHistory()},{connected=false;if(generation==socketGeneration){thread{Thread.sleep(2000);if(generation==socketGeneration)connect()}}})};connect()
   onDispose{socketGeneration++;ws?.close(1000,"bye")}
  }
  Scaffold(
@@ -234,7 +235,7 @@ class LumoInstallReceiver:BroadcastReceiver(){
    }
    Surface(shadowElevation=4.dp){Row(Modifier.fillMaxWidth().imePadding().padding(10.dp),verticalAlignment=Alignment.Bottom){
     OutlinedTextField(input,{input=it},placeholder={Text("Сообщение")},modifier=Modifier.weight(1f),maxLines=4,shape=RoundedCornerShape(24.dp))
-    Spacer(Modifier.width(8.dp));Button({val text=input.trim();if(text.isNotEmpty()){if(connected)ws?.send(JSONObject().put("type","message").put("to",peer.id).put("text",text).toString()) else {pending.add(text);savePending()};input=""}},enabled=input.isNotBlank(),contentPadding=PaddingValues(horizontal=18.dp,vertical=16.dp)){Text("➤")}
+    Spacer(Modifier.width(8.dp));Button({val text=input.trim();if(text.isNotEmpty()){val p=PendingMessage(java.util.UUID.randomUUID().toString(),text);if(connected)ws?.send(JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId).toString()) else {pending.add(p);savePending()};input=""}},enabled=input.isNotBlank(),contentPadding=PaddingValues(horizontal=18.dp,vertical=16.dp)){Text("➤")}
    }}
   }
  }
