@@ -96,6 +96,15 @@ wss.on("connection", async (ws, req) => {
   if (!userId) return ws.close(1008, "Unauthorized");
   sockets.set(userId, ws);
   ws.send(JSON.stringify({ type: "ready", userId }));
+  if (hasDatabase) {
+    try {
+      const delivered = await postgresStore.markDelivered(userId);
+      for (const m of delivered) sendTo(m.from, { type: "receipt", messageId: m.id, deliveredAt: m.deliveredAt, readAt: m.readAt });
+    } catch (error) { console.error("Failed to mark pending messages delivered", error); }
+  } else {
+    const now = new Date().toISOString();
+    for (const m of messages) if (m.to === userId && !m.deliveredAt) { m.deliveredAt = now; sendTo(m.from, { type: "receipt", messageId: m.id, deliveredAt: m.deliveredAt, readAt: m.readAt }); }
+  }
   ws.on("message", async raw => {
     try {
       const data = JSON.parse(raw.toString());
