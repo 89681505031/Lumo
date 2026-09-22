@@ -15,7 +15,8 @@ const users = new Map();
 const sessions = new Map();
 const messages = [];
 const rateBuckets = new Map();
-function rateLimit({windowMs,max}){return (req,res,next)=>{const key=(req.headers["x-forwarded-for"]||req.socket.remoteAddress||"unknown").toString().split(",")[0].trim();const now=Date.now();let b=rateBuckets.get(key);if(!b||now-b.start>=windowMs)b={start:now,count:0};b.count++;rateBuckets.set(key,b);if(b.count>max)return res.status(429).json({error:"rate_limited"});next();};}
+function clientAddress(req){const direct=req.socket.remoteAddress||"unknown";if(process.env.TRUST_PROXY==="true"){const forwarded=req.headers["x-forwarded-for"];if(forwarded)return forwarded.toString().split(",")[0].trim();}return direct;}
+function rateLimit({windowMs,max}){return (req,res,next)=>{const key=clientAddress(req);const now=Date.now();let b=rateBuckets.get(key);if(!b||now-b.start>=windowMs)b={start:now,count:0};b.count++;rateBuckets.set(key,b);if(b.count>max)return res.status(429).json({error:"rate_limited"});next();};}
 setInterval(()=>{const cutoff=Date.now()-10*60_000;for(const [key,b] of rateBuckets)if(b.start<cutoff)rateBuckets.delete(key);},10*60_000).unref?.();
 
 function publicUser(user) {
