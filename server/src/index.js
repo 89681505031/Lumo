@@ -95,7 +95,8 @@ const sockets = new Map();
 
 function sendTo(userId, payload) {
   const ws = sockets.get(userId);
-  if (ws?.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
+  if (ws?.readyState !== ws.OPEN) return false;
+  try { ws.send(JSON.stringify(payload)); return true; } catch { return false; }
 }
 
 wss.on("connection", async (ws, req) => {
@@ -131,7 +132,8 @@ wss.on("connection", async (ws, req) => {
       const clientMessageId = typeof data.clientMessageId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data.clientMessageId) ? data.clientMessageId : null;
       const recipientExists = hasDatabase ? await postgresStore.userExists(to) : users.has(to);
       if (!recipientExists || !text || text.length > 4000) return;
-      let message = { id: randomUUID(), from: userId, to, text, createdAt: new Date().toISOString(), deliveredAt: sockets.has(to) ? new Date().toISOString() : null, readAt: null, clientMessageId };
+      const deliveredNow = Boolean(sockets.get(to)?.readyState === sockets.get(to)?.OPEN);
+      let message = { id: randomUUID(), from: userId, to, text, createdAt: new Date().toISOString(), deliveredAt: deliveredNow ? new Date().toISOString() : null, readAt: null, clientMessageId };
       if(hasDatabase) message = await postgresStore.saveMessage(message); else { const existing=clientMessageId ? messages.find(m=>m.from===userId&&m.clientMessageId===clientMessageId) : null; if(existing) message=existing; else messages.push(message); }
       ws.send(JSON.stringify({ type: "message", message }));
       sendTo(to, { type: "message", message });
