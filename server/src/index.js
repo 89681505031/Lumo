@@ -134,7 +134,9 @@ wss.on("connection", async (ws, req) => {
       const clientMessageId = typeof data.clientMessageId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data.clientMessageId) ? data.clientMessageId : null;
       if (!clientMessageId) return ws.send(JSON.stringify({type:"error",error:"invalid_client_message_id"}));
       const recipientExists = hasDatabase ? await postgresStore.userExists(to) : users.has(to);
-      if (!recipientExists || !text || text.length > 4000) return;
+      if (!recipientExists) return ws.send(JSON.stringify({type:"error",error:"recipient_not_found"}));
+      if (!text) return ws.send(JSON.stringify({type:"error",error:"empty_message"}));
+      if (text.length > 4000) return ws.send(JSON.stringify({type:"error",error:"message_too_long"}));
       let message = { id: randomUUID(), from: userId, to, text, createdAt: new Date().toISOString(), deliveredAt: null, readAt: null, clientMessageId };
       let inserted=true;
       if(hasDatabase) { const saved=await postgresStore.saveMessage(message); message=saved.message; inserted=saved.inserted; } else { const existing=messages.find(m=>m.from===userId&&m.clientMessageId===clientMessageId); if(existing){if(existing.to!==to||existing.text!==text)return ws.send(JSON.stringify({type:"error",error:"client_message_id_conflict"}));message=existing;inserted=false;} else messages.push(message); }
