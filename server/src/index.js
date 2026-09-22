@@ -8,7 +8,8 @@ import { postgresStore } from "./postgres-store.js";
 if (hasDatabase) { try { await initDatabase(); console.log("Lumo PostgreSQL schema ready"); } catch (error) { console.error("Lumo PostgreSQL initialization failed", error); } }
 
 const app = express();
-app.use(express.json({ limit: "1mb" }));
+app.disable("x-powered-by");
+app.use(express.json({ limit: "64kb" }));
 
 const users = new Map();
 const sessions = new Map();
@@ -85,7 +86,7 @@ app.get("/api/conversations", auth, async (req, res) => {
 });
 
 app.get("/api/messages/:peerId", auth, async (req, res) => {
-  try { const peerId = req.params.peerId; if(hasDatabase) return res.json(await postgresStore.messages(req.user.id,peerId)); res.json(messages.filter(m => (m.from === req.user.id && m.to === peerId) || (m.from === peerId && m.to === req.user.id))); }
+  try { const peerId = req.params.peerId; if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(peerId))return res.status(400).json({error:"invalid_peer_id"}); if(hasDatabase) return res.json(await postgresStore.messages(req.user.id,peerId)); res.json(messages.filter(m => (m.from === req.user.id && m.to === peerId) || (m.from === peerId && m.to === req.user.id))); }
   catch(error){console.error("Message history failed",error);res.status(503).json({error:"service_unavailable"});}
 });
 
