@@ -126,10 +126,11 @@ wss.on("connection", async (ws, req) => {
       if (data.type !== "message") return;
       const to = String(data.to || "");
       const text = String(data.text || "").trim();
+      const clientMessageId = typeof data.clientMessageId === "string" && /^[0-9a-f-]{36}$/i.test(data.clientMessageId) ? data.clientMessageId : null;
       const recipientExists = hasDatabase ? await postgresStore.userExists(to) : users.has(to);
       if (!recipientExists || !text || text.length > 4000) return;
-      const message = { id: randomUUID(), from: userId, to, text, createdAt: new Date().toISOString(), deliveredAt: sockets.has(to) ? new Date().toISOString() : null, readAt: null };
-      if(hasDatabase) await postgresStore.saveMessage(message); else messages.push(message);
+      let message = { id: randomUUID(), from: userId, to, text, createdAt: new Date().toISOString(), deliveredAt: sockets.has(to) ? new Date().toISOString() : null, readAt: null, clientMessageId };
+      if(hasDatabase) message = await postgresStore.saveMessage(message); else { const existing=clientMessageId ? messages.find(m=>m.from===userId&&m.clientMessageId===clientMessageId) : null; if(existing) message=existing; else messages.push(message); }
       ws.send(JSON.stringify({ type: "message", message }));
       sendTo(to, { type: "message", message });
     } catch { ws.send(JSON.stringify({ type: "error", error: "bad_message" })); }
