@@ -93,11 +93,12 @@ wss.on("connection", (ws, req) => {
   ws.on("message", raw => {
     try {
       const data = JSON.parse(raw.toString());
+      if (data.type === "read") { const ids = Array.isArray(data.ids) ? data.ids : []; for (const m of messages) { if (ids.includes(m.id) && m.to === userId && !m.readAt) { m.readAt = new Date().toISOString(); sendTo(m.from, { type: "receipt", messageId: m.id, deliveredAt: m.deliveredAt, readAt: m.readAt }); } } return; }
       if (data.type !== "message") return;
       const to = String(data.to || "");
       const text = String(data.text || "").trim();
       if (!users.has(to) || !text || text.length > 4000) return;
-      const message = { id: randomUUID(), from: userId, to, text, createdAt: new Date().toISOString() };
+      const message = { id: randomUUID(), from: userId, to, text, createdAt: new Date().toISOString(), deliveredAt: sockets.has(to) ? new Date().toISOString() : null, readAt: null };
       messages.push(message);
       ws.send(JSON.stringify({ type: "message", message }));
       sendTo(to, { type: "message", message });
