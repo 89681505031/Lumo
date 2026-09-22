@@ -50,6 +50,7 @@ class MainActivity:ComponentActivity(){
  var token by remember{mutableStateOf(prefs.getString("token",null))}
  var me by remember{mutableStateOf<User?>(null)}
  var peer by remember{mutableStateOf<User?>(null)}
+ var logoutNonce by remember{mutableIntStateOf(0)}
  var restoring by remember{mutableStateOf(token!=null)}
  LaunchedEffect(token){
   val t=token
@@ -59,7 +60,7 @@ class MainActivity:ComponentActivity(){
  when {
   restoring -> Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()}
   token==null || me==null -> Register{t,u->prefs.edit().putString("token",t).apply();token=t;me=u}
-  peer==null -> Home(token!!,me!!){peer=it}
+  peer==null -> Home(token!!,me!!,{peer=it}){prefs.edit().clear().apply();token=null;me=null;peer=null;logoutNonce++}
   else -> Chat(token!!,me!!,peer!!){peer=null}
  }
 }
@@ -81,7 +82,7 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Home(token:String,me:User,open:(User)->Unit){
+@Composable fun Home(token:String,me:User,open:(User)->Unit,logout:()->Unit){
  var tab by remember{mutableIntStateOf(0)}
  Scaffold(
   topBar={Surface(shadowElevation=2.dp){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(20.dp,14.dp),verticalAlignment=Alignment.CenterVertically){
@@ -97,7 +98,7 @@ class MainActivity:ComponentActivity(){
    when(tab){
     0->Chats(token,{tab=1},open)
     1->People(token,open)
-    else->Profile(me)
+    else->Profile(me,logout)
    }
   }
  }
@@ -145,7 +146,7 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Profile(me:User){
+@Composable fun Profile(me:User,logout:()->Unit){
  val context=LocalContext.current
  var update by remember{mutableStateOf<UpdateInfo?>(null)}
  var checking by remember{mutableStateOf(true)}
@@ -164,6 +165,7 @@ class MainActivity:ComponentActivity(){
    if(checking) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp))
    update?.let{u->Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl)},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}
   }}
+  Spacer(Modifier.height(14.dp));OutlinedButton(logout,modifier=Modifier.fillMaxWidth()){Text("Выйти из аккаунта")}
  }
 }
 
