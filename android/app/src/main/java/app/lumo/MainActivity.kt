@@ -10,6 +10,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
+import android.content.pm.PackageInstaller
+import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -151,6 +153,7 @@ class MainActivity:ComponentActivity(){
  var update by remember{mutableStateOf<UpdateInfo?>(null)}
  var checking by remember{mutableStateOf(true)}
  var updateText by remember{mutableStateOf("Проверяем обновления…")}
+ var progress by remember{mutableIntStateOf(-1)}
  LaunchedEffect(Unit){thread{runCatching{Api.latestRelease()}.onSuccess{info->
   update=info.takeIf{it.versionCode>BuildConfig.VERSION_CODE}
   updateText=if(update!=null)"Доступна новая версия Lumo" else "Установлена последняя версия"
@@ -163,28 +166,48 @@ class MainActivity:ComponentActivity(){
    Text("Обновление",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text(updateText)
    Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
    if(checking) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp))
-   update?.let{u->Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl)},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}
+   if(progress>=0){Spacer(Modifier.height(12.dp));LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth());Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp))}
+   update?.let{u->if(progress<0){Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl){progress=it;updateText=if(it<100)"Загружаем обновление…" else "Устанавливаем обновление…"}},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}}
   }}
   Spacer(Modifier.height(14.dp));OutlinedButton(logout,modifier=Modifier.fillMaxWidth()){Text("Выйти из аккаунта")}
  }
 }
 
-fun startUpdate(context:Context,url:String){
+fun startUpdate(context:Context,url:String,onProgress:(Int)->Unit){
  if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()){
-  context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+context.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-  return
+  context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+context.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));return
  }
- val dm=context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
- val request=DownloadManager.Request(Uri.parse(url)).setTitle("Обновление Lumo").setDescription("Загрузка новой версии").setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED).setDestinationInExternalFilesDir(context,Environment.DIRECTORY_DOWNLOADS,"Lumo-update.apk")
- val id=dm.enqueue(request)
- val receiver=object:BroadcastReceiver(){override fun onReceive(c:Context,i:Intent){
-  if(i.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID,-1L)!=id)return
-  val uri=dm.getUriForDownloadedFile(id)?:return
-  val install=Intent(Intent.ACTION_VIEW).setDataAndType(uri,"application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-  c.startActivity(install);runCatching{c.unregisterReceiver(this)}
- }}
- if(Build.VERSION.SDK_INT>=33)context.registerReceiver(receiver,IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),Context.RECEIVER_EXPORTED)
- else @Suppress("DEPRECATION") context.registerReceiver(receiver,IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE))
+ thread{
+  runCatching{
+   val request=Request.Builder().url(url).build()
+   OkHttpClient().newCall(request).execute().use{response->
+    if(!response.isSuccessful)error("HTTP "+response.code)
+    val body=response.body?:error("Пустой APK");val total=body.contentLength();val file=File(context.cacheDir,"Lumo-update.apk")
+    body.byteStream().use{input->file.outputStream().use{out->val buf=ByteArray(64*1024);var read:Int;var done=0L;var last=-1;while(input.read(buf).also{read=it}>0){out.write(buf,0,read);done+=read;if(total>0){val p=((done*100)/total).toInt().coerceIn(0,100);if(p!=last){last=p;onProgress(p)}}}}}
+    onProgress(100);installUpdate(context,file)
+   }
+  }.onFailure{onProgress(-1)}
+ }
+}
+
+fun installUpdate(context:Context,apk:File){
+ val installer=context.packageManager.packageInstaller
+ val params=PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+ val sessionId=installer.createSession(params);val session=installer.openSession(sessionId)
+ apk.inputStream().use{input->session.openWrite("Lumo.apk",0,apk.length()).use{out->input.copyTo(out);session.fsync(out)}}
+ val intent=Intent(context,LumoInstallReceiver::class.java).setAction("app.lumo.INSTALL_STATUS")
+ val flags=if(Build.VERSION.SDK_INT>=31) android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE else android.app.PendingIntent.FLAG_UPDATE_CURRENT
+ val pi=android.app.PendingIntent.getBroadcast(context,sessionId,intent,flags)
+ session.commit(pi.intentSender);session.close()
+}
+
+class LumoInstallReceiver:BroadcastReceiver(){
+ override fun onReceive(context:Context,intent:Intent){
+  when(intent.getIntExtra(PackageInstaller.EXTRA_STATUS,PackageInstaller.STATUS_FAILURE)){
+   PackageInstaller.STATUS_PENDING_USER_ACTION->{val confirm=if(Build.VERSION.SDK_INT>=33)intent.getParcelableExtra(Intent.EXTRA_INTENT,Intent::class.java) else @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_INTENT);confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);if(confirm!=null)context.startActivity(confirm)}
+   PackageInstaller.STATUS_SUCCESS->{val launch=context.packageManager.getLaunchIntentForPackage(context.packageName)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP);if(launch!=null)context.startActivity(launch)}
+  }
+ }
 }
 
 @Composable fun Chat(token:String,me:User,peer:User,back:()->Unit){
