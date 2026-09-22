@@ -26,4 +26,7 @@ npm run dev
 
 Server defaults to http://localhost:3000.
 
+## Deployment
+The current backend deployment target is Vercel. Keep Vercel as the application hosting platform unless the project owner explicitly changes this decision. PostgreSQL remains required for persistent users, sessions, and messages; configure it through `DATABASE_URL` in the Vercel project environment.
+
 > MVP authentication and in-memory storage are for development only. Production will use a persistent database, secure authentication, abuse protection, and audited end-to-end encryption.
