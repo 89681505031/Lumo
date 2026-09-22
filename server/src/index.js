@@ -2,6 +2,7 @@ import express from "express";
 import { WebSocketServer } from "ws";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
+import { dbHealth, hasDatabase } from "./db.js";
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -24,7 +25,7 @@ function auth(req, res, next) {
   next();
 }
 
-app.get("/health", (_req, res) => res.json({ ok: true, service: "lumo-server" }));
+app.get("/health", async (_req, res) => { let database={configured:hasDatabase}; if(hasDatabase){try{database=await dbHealth()}catch{database={configured:true,ok:false}}} res.json({ ok:true, service:"lumo-server", database }); });
 
 app.post("/api/register", (req, res) => {
   const username = String(req.body?.username || "").trim().toLowerCase();
