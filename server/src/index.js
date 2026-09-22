@@ -130,6 +130,7 @@ wss.on("connection", async (ws, req) => {
       const to = String(data.to || "");
       const text = String(data.text || "").trim();
       const clientMessageId = typeof data.clientMessageId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data.clientMessageId) ? data.clientMessageId : null;
+      if (!clientMessageId) return ws.send(JSON.stringify({type:"error",error:"invalid_client_message_id"}));
       const recipientExists = hasDatabase ? await postgresStore.userExists(to) : users.has(to);
       if (!recipientExists || !text || text.length > 4000) return;
       const deliveredNow = Boolean(sockets.get(to)?.readyState === sockets.get(to)?.OPEN);
@@ -137,7 +138,7 @@ wss.on("connection", async (ws, req) => {
       if(hasDatabase) message = await postgresStore.saveMessage(message); else { const existing=clientMessageId ? messages.find(m=>m.from===userId&&m.clientMessageId===clientMessageId) : null; if(existing) message=existing; else messages.push(message); }
       ws.send(JSON.stringify({ type: "message", message }));
       sendTo(to, { type: "message", message });
-    } catch { ws.send(JSON.stringify({ type: "error", error: "bad_message" })); }
+    } catch (error) { console.error("WebSocket message handling failed",error); if(ws.readyState===ws.OPEN) ws.send(JSON.stringify({ type: "error", error: "service_unavailable" })); }
   });
   ws.on("close", () => { if (sockets.get(userId) === ws) sockets.delete(userId); });
 });
