@@ -3,6 +3,7 @@ import { WebSocketServer } from "ws";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { dbHealth, hasDatabase } from "./db.js";
+import { postgresStore } from "./postgres-store.js";
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -15,11 +16,11 @@ function publicUser(user) {
   return { id: user.id, username: user.username, displayName: user.displayName };
 }
 
-function auth(req, res, next) {
+async function auth(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
   const userId = sessions.get(token);
-  const user = users.get(userId);
+  const user = hasDatabase ? await postgresStore.userBySession(token) : users.get(userId);
   if (!user) return res.status(401).json({ error: "unauthorized" });
   req.user = user;
   next();
@@ -27,34 +28,34 @@ function auth(req, res, next) {
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase}; if(hasDatabase){try{database=await dbHealth()}catch{database={configured:true,ok:false}}} res.json({ ok:true, service:"lumo-server", database }); });
 
-app.post("/api/register", (req, res) => {
+app.post("/api/register", async (req, res) => {
   const username = String(req.body?.username || "").trim().toLowerCase();
   const displayName = String(req.body?.displayName || "").trim();
   if (!/^[a-z0-9_]{3,24}$/.test(username) || !displayName) return res.status(400).json({ error: "invalid_profile" });
-  if ([...users.values()].some(u => u.username === username)) return res.status(409).json({ error: "username_taken" });
-  const user = { id: randomUUID(), username, displayName };
-  users.set(user.id, user);
   const token = randomUUID();
-  sessions.set(token, user.id);
+  let user;
+  if (hasDatabase) { user = await postgresStore.createUser({ id:randomUUID(), username, displayName, token }); if(!user) return res.status(409).json({error:"username_taken"}); }
+  else { if ([...users.values()].some(u => u.username === username)) return res.status(409).json({ error: "username_taken" }); user={id:randomUUID(),username,displayName}; users.set(user.id,user); sessions.set(token,user.id); }
   res.status(201).json({ token, user: publicUser(user) });
 });
 
 app.get("/api/me", auth, (req, res) => res.json(publicUser(req.user)));
 
-app.patch("/api/me", auth, (req, res) => {
+app.patch("/api/me", auth, async (req, res) => {
   const displayName = String(req.body?.displayName || "").trim();
   if (!displayName || displayName.length > 50) return res.status(400).json({ error: "invalid_display_name" });
-  req.user.displayName = displayName;
-  users.set(req.user.id, req.user);
-  res.json(publicUser(req.user));
+  if(hasDatabase) return res.json(publicUser(await postgresStore.updateUser(req.user.id,displayName)));
+  req.user.displayName = displayName; users.set(req.user.id, req.user); res.json(publicUser(req.user));
 });
 
-app.get("/api/users", auth, (req, res) => {
+app.get("/api/users", auth, async (req, res) => {
   const q = String(req.query.q || "").toLowerCase();
+  if(hasDatabase) return res.json(await postgresStore.searchUsers(req.user.id,q));
   res.json([...users.values()].filter(u => u.id !== req.user.id).filter(u => !q || u.username.includes(q) || u.displayName.toLowerCase().includes(q)).slice(0, 50).map(publicUser));
 });
 
-app.get("/api/conversations", auth, (req, res) => {
+app.get("/api/conversations", auth, async (req, res) => {
+  if(hasDatabase) return res.json(await postgresStore.conversations(req.user.id));
   const mine = messages.filter(m => m.from === req.user.id || m.to === req.user.id);
   const byPeer = new Map();
   for (const m of mine) {
@@ -70,8 +71,9 @@ app.get("/api/conversations", auth, (req, res) => {
   res.json(result);
 });
 
-app.get("/api/messages/:peerId", auth, (req, res) => {
+app.get("/api/messages/:peerId", auth, async (req, res) => {
   const peerId = req.params.peerId;
+  if(hasDatabase) return res.json(await postgresStore.messages(req.user.id,peerId));
   res.json(messages.filter(m => (m.from === req.user.id && m.to === peerId) || (m.from === peerId && m.to === req.user.id)));
 });
 
