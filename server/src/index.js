@@ -36,14 +36,19 @@ async function auth(req, res, next) {
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase}; if(hasDatabase){try{database=await dbHealth()}catch{database={configured:true,ok:false}}} res.json({ ok:true, service:"lumo-server", database }); });
 
 app.post("/api/register", async (req, res) => {
-  const username = String(req.body?.username || "").trim().toLowerCase();
-  const displayName = String(req.body?.displayName || "").trim();
-  if (!/^[a-z0-9_]{3,24}$/.test(username) || !displayName) return res.status(400).json({ error: "invalid_profile" });
-  const token = randomUUID();
-  let user;
-  if (hasDatabase) { user = await postgresStore.createUser({ id:randomUUID(), username, displayName, token }); if(!user) return res.status(409).json({error:"username_taken"}); }
-  else { if ([...users.values()].some(u => u.username === username)) return res.status(409).json({ error: "username_taken" }); user={id:randomUUID(),username,displayName}; users.set(user.id,user); sessions.set(token,user.id); }
-  res.status(201).json({ token, user: publicUser(user) });
+  try {
+    const username = String(req.body?.username || "").trim().toLowerCase();
+    const displayName = String(req.body?.displayName || "").trim();
+    if (!/^[a-z0-9_]{3,24}$/.test(username) || !displayName || displayName.length > 50) return res.status(400).json({ error: "invalid_profile" });
+    const token = randomUUID();
+    let user;
+    if (hasDatabase) { user = await postgresStore.createUser({ id:randomUUID(), username, displayName, token }); if(!user) return res.status(409).json({error:"username_taken"}); }
+    else { if ([...users.values()].some(u => u.username === username)) return res.status(409).json({ error: "username_taken" }); user={id:randomUUID(),username,displayName}; users.set(user.id,user); sessions.set(token,user.id); }
+    res.status(201).json({ token, user: publicUser(user) });
+  } catch (error) {
+    console.error("Registration failed", error);
+    res.status(503).json({ error: "service_unavailable" });
+  }
 });
 
 app.get("/api/me", auth, (req, res) => res.json(publicUser(req.user)));
