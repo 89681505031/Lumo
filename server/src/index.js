@@ -149,9 +149,10 @@ wss.on("connection", async (ws, req) => {
       let message = { id: randomUUID(), from: userId, to, text, createdAt: new Date().toISOString(), deliveredAt: null, readAt: null, clientMessageId };
       let inserted=true;
       if(hasDatabase) { const saved=await postgresStore.saveMessage(message); message=saved.message; inserted=saved.inserted; } else { const existing=messages.find(m=>m.from===userId&&m.clientMessageId===clientMessageId); if(existing){if(existing.to!==to||existing.text!==text)return ws.send(JSON.stringify({type:"error",error:"client_message_id_conflict"}));message=existing;inserted=false;} else messages.push(message); }
-      if(inserted && sendTo(message.to, { type: "message", message })) {
+      const shouldDeliver=inserted||!message.deliveredAt;
+      if(shouldDeliver && sendTo(message.to, { type: "message", message })) {
         message={...message,deliveredAt:new Date().toISOString()};
-        if(hasDatabase){const delivered=await postgresStore.markDelivered(message.to);message=delivered.find(m=>m.id===message.id)||message;}else{const i=messages.findIndex(m=>m.id===message.id);if(i>=0)messages[i]=message;}
+        if(hasDatabase){message=await postgresStore.markMessageDelivered(message.id,message.to)||message;}else{const i=messages.findIndex(m=>m.id===message.id);if(i>=0)messages[i]=message;}
       }
       ws.send(JSON.stringify({ type: "message", message }));
     } catch (error) { console.error("WebSocket message handling failed",error); if(ws.readyState===ws.OPEN) ws.send(JSON.stringify({ type: "error", error: error?.code==="CLIENT_MESSAGE_ID_CONFLICT" ? "client_message_id_conflict" : "service_unavailable" })); }
