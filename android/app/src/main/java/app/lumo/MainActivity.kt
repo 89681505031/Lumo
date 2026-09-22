@@ -1,6 +1,15 @@
 package app.lumo
 
 import android.os.Bundle
+import android.app.DownloadManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -17,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -28,6 +38,7 @@ import kotlin.concurrent.thread
 data class User(val id:String,val username:String,val displayName:String)
 data class Msg(val id:String,val from:String,val to:String,val text:String)
 data class Conversation(val peer:User,val lastMessage:String)
+data class UpdateInfo(val versionCode:Int,val downloadUrl:String)
 
 class MainActivity:ComponentActivity(){
  override fun onCreate(b:Bundle?){super.onCreate(b);setContent{MaterialTheme{App()}}}
@@ -126,11 +137,43 @@ class MainActivity:ComponentActivity(){
 }
 
 @Composable fun Profile(me:User){
+ val context=LocalContext.current
+ var update by remember{mutableStateOf<UpdateInfo?>(null)}
+ var checking by remember{mutableStateOf(true)}
+ var updateText by remember{mutableStateOf("Проверяем обновления…")}
+ LaunchedEffect(Unit){thread{runCatching{Api.latestRelease()}.onSuccess{info->
+  update=info.takeIf{it.versionCode>BuildConfig.VERSION_CODE}
+  updateText=if(update!=null)"Доступна новая версия Lumo" else "Установлена последняя версия"
+ }.onFailure{updateText="Не удалось проверить обновления"}.also{checking=false}}}
  Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
   Spacer(Modifier.height(32.dp));Box(Modifier.size(92.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(me.displayName.take(1).uppercase(),style=MaterialTheme.typography.displaySmall,fontWeight=FontWeight.Bold)}
   Spacer(Modifier.height(16.dp));Text(me.displayName,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text("@"+me.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
   Spacer(Modifier.height(32.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text("Аккаунт Lumo",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text("Профиль подключён к серверу Lumo.")}}
+  Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){
+   Text("Обновление",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text(updateText)
+   Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   if(checking) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp))
+   update?.let{u->Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl)},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}
+  }}
  }
+}
+
+fun startUpdate(context:Context,url:String){
+ if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()){
+  context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+context.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+  return
+ }
+ val dm=context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+ val request=DownloadManager.Request(Uri.parse(url)).setTitle("Обновление Lumo").setDescription("Загрузка новой версии").setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED).setDestinationInExternalFilesDir(context,Environment.DIRECTORY_DOWNLOADS,"Lumo-update.apk")
+ val id=dm.enqueue(request)
+ val receiver=object:BroadcastReceiver(){override fun onReceive(c:Context,i:Intent){
+  if(i.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID,-1L)!=id)return
+  val uri=dm.getUriForDownloadedFile(id)?:return
+  val install=Intent(Intent.ACTION_VIEW).setDataAndType(uri,"application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+  c.startActivity(install);runCatching{c.unregisterReceiver(this)}
+ }}
+ if(Build.VERSION.SDK_INT>=33)context.registerReceiver(receiver,IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),Context.RECEIVER_EXPORTED)
+ else @Suppress("DEPRECATION") context.registerReceiver(receiver,IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE))
 }
 
 @Composable fun Chat(token:String,me:User,peer:User,back:()->Unit){
@@ -169,6 +212,7 @@ object Api{
  fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
  fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Чаты: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"))}}}
  fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/messages/"+p).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("История: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{msg(a.getJSONObject(it))}}}
+ fun latestRelease():UpdateInfo{val r=Request.Builder().url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest").header("Accept","application/vnd.github+json").build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Обновление: "+x.code);val o=JSONObject(x.body!!.string());val code=Regex("versionCode=(\\d+)").find(o.optString("body"))?.groupValues?.get(1)?.toIntOrNull()?:0;val a=o.getJSONArray("assets");for(i in 0 until a.length()){val asset=a.getJSONObject(i);if(asset.optString("name")=="Lumo.apk")return UpdateInfo(code,asset.getString("browser_download_url"))};error("APK не найден")}}
  fun socket(t:String,on:(Msg)->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS+"?token="+t).build(),object:WebSocketListener(){override fun onMessage(w:WebSocket,s:String){val o=JSONObject(s);if(o.optString("type")=="message")on(msg(o.getJSONObject("message")))}})}
  private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"))
  private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"))
