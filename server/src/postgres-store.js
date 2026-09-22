@@ -39,6 +39,10 @@ export const postgresStore = {
     return r.rows.map(mapMessage);
   },
   async saveMessage(m) {
+    if(m.clientMessageId){
+      const r=await dbQuery(`insert into messages(id,sender_id,recipient_id,text,created_at,delivered_at,read_at,client_message_id) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict (sender_id,client_message_id) where client_message_id is not null do update set sender_id=excluded.sender_id returning *`,[m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt,m.clientMessageId]);
+      return mapMessage(r.rows[0]);
+    }
     await dbQuery("insert into messages(id,sender_id,recipient_id,text,created_at,delivered_at,read_at) values($1,$2,$3,$4,$5,$6,$7)",[m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt]);
     return m;
   },
