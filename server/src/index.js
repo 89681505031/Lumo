@@ -54,10 +54,12 @@ app.post("/api/register", async (req, res) => {
 app.get("/api/me", auth, (req, res) => res.json(publicUser(req.user)));
 
 app.patch("/api/me", auth, async (req, res) => {
-  const displayName = String(req.body?.displayName || "").trim();
-  if (!displayName || displayName.length > 50) return res.status(400).json({ error: "invalid_display_name" });
-  if(hasDatabase) return res.json(publicUser(await postgresStore.updateUser(req.user.id,displayName)));
-  req.user.displayName = displayName; users.set(req.user.id, req.user); res.json(publicUser(req.user));
+  try {
+    const displayName = String(req.body?.displayName || "").trim();
+    if (!displayName || displayName.length > 50) return res.status(400).json({ error: "invalid_display_name" });
+    if(hasDatabase) { const user=await postgresStore.updateUser(req.user.id,displayName); if(!user)return res.status(404).json({error:"user_not_found"}); return res.json(publicUser(user)); }
+    req.user.displayName = displayName; users.set(req.user.id, req.user); res.json(publicUser(req.user));
+  } catch(error) { console.error("Profile update failed",error); res.status(503).json({error:"service_unavailable"}); }
 });
 
 app.get("/api/users", auth, async (req, res) => {
