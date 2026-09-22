@@ -208,10 +208,10 @@ class LumoInstallReceiver:BroadcastReceiver(){
 }
 
 @Composable fun Chat(token:String,me:User,peer:User,back:()->Unit){
- val msgs=remember{mutableStateListOf<Msg>()};var input by remember{mutableStateOf("")};var ws by remember{mutableStateOf<WebSocket?>(null)};var socketGeneration by remember{mutableIntStateOf(0)}
+ val msgs=remember{mutableStateListOf<Msg>()};var input by remember{mutableStateOf("")};var ws by remember{mutableStateOf<WebSocket?>(null)};var socketGeneration by remember{mutableIntStateOf(0)};var connected by remember{mutableStateOf(false)}
  DisposableEffect(peer.id){
   thread{runCatching{Api.history(token,peer.id)}.onSuccess{msgs.clear();msgs.addAll(it);val unread=it.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}}
-  fun syncHistory(){thread{runCatching{Api.history(token,peer.id)}.onSuccess{fresh->val byId=(msgs+fresh).associateBy{it.id}.values.sortedBy{it.createdAt};msgs.clear();msgs.addAll(byId);val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->if(m.from==peer.id||m.to==peer.id){if(msgs.none{it.id==m.id})msgs.add(m);if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}},{r->val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=r.deliveredAt.ifBlank{old.deliveredAt},readAt=r.readAt.ifBlank{old.readAt})}},{syncHistory()},{if(generation==socketGeneration){thread{Thread.sleep(2000);if(generation==socketGeneration)connect()}}})};connect()
+  fun syncHistory(){thread{runCatching{Api.history(token,peer.id)}.onSuccess{fresh->val byId=(msgs+fresh).associateBy{it.id}.values.sortedBy{it.createdAt};msgs.clear();msgs.addAll(byId);val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->if(m.from==peer.id||m.to==peer.id){if(msgs.none{it.id==m.id})msgs.add(m);if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}},{r->val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=r.deliveredAt.ifBlank{old.deliveredAt},readAt=r.readAt.ifBlank{old.readAt})}},{connected=true;syncHistory()},{connected=false;if(generation==socketGeneration){thread{Thread.sleep(2000);if(generation==socketGeneration)connect()}}})};connect()
   onDispose{socketGeneration++;ws?.close(1000,"bye")}
  }
  Scaffold(
@@ -220,6 +220,7 @@ class LumoInstallReceiver:BroadcastReceiver(){
   }}}
  ){pad->
   Column(Modifier.padding(pad).fillMaxSize()){
+   if(!connected){Surface(color=MaterialTheme.colorScheme.errorContainer,modifier=Modifier.fillMaxWidth()){Text("Нет соединения. Переподключаемся…",modifier=Modifier.padding(10.dp),color=MaterialTheme.colorScheme.onErrorContainer)}}
    LazyColumn(Modifier.weight(1f).fillMaxWidth(),contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
     items(msgs,key={it.id}){m->
      Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.from==me.id)Arrangement.End else Arrangement.Start){
