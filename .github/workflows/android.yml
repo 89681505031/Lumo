@@ -3,6 +3,8 @@ on:
   push:
     paths: ["android/**", ".github/workflows/android.yml"]
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -13,8 +15,18 @@ jobs:
         with: { distribution: temurin, java-version: "17" }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: "8.9" }
-      - run: gradle assembleDebug
+      - name: Build APK
+        env:
+          LUMO_VERSION_CODE: ${{ github.run_number }}
+        run: gradle assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: lumo-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish in-app update
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete lumo-latest --cleanup-tag --yes || true
+          gh release create lumo-latest android/app/build/outputs/apk/debug/app-debug.apk#Lumo.apk --title "Lumo ${{ github.run_number }}" --notes "versionCode=${{ github.run_number }}" --latest
