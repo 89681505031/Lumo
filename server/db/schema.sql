@@ -17,7 +17,9 @@ create table if not exists messages (
   text varchar(4000) not null,
   created_at timestamptz not null default now(),
   delivered_at timestamptz,
-  read_at timestamptz
+  read_at timestamptz,
+  client_message_id uuid
 );
+create unique index if not exists messages_sender_client_id_uidx on messages(sender_id, client_message_id) where client_message_id is not null;
 create index if not exists messages_sender_idx on messages(sender_id, created_at desc);
 create index if not exists messages_recipient_idx on messages(recipient_id, created_at desc);
