@@ -45,11 +45,20 @@ class MainActivity:ComponentActivity(){
 }
 
 @Composable fun App(){
- var token by remember{mutableStateOf<String?>(null)}
+ val context=LocalContext.current
+ val prefs=remember{context.getSharedPreferences("lumo_session",Context.MODE_PRIVATE)}
+ var token by remember{mutableStateOf(prefs.getString("token",null))}
  var me by remember{mutableStateOf<User?>(null)}
  var peer by remember{mutableStateOf<User?>(null)}
+ var restoring by remember{mutableStateOf(token!=null)}
+ LaunchedEffect(token){
+  val t=token
+  if(t==null){restoring=false;me=null}
+  else if(me==null){restoring=true;thread{runCatching{Api.me(t)}.onSuccess{me=it}.onFailure{prefs.edit().clear().apply();token=null}.also{restoring=false}}}
+ }
  when {
-  token==null -> Register{t,u->token=t;me=u}
+  restoring -> Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()}
+  token==null || me==null -> Register{t,u->prefs.edit().putString("token",t).apply();token=t;me=u}
   peer==null -> Home(token!!,me!!){peer=it}
   else -> Chat(token!!,me!!,peer!!){peer=null}
  }
@@ -209,6 +218,7 @@ fun startUpdate(context:Context,url:String){
 object Api{
  private const val HTTP="https://lumo-gamma-seven.vercel.app";private const val WS="wss://lumo-gamma-seven.vercel.app/ws";private val c=OkHttpClient()
  fun register(login:String,name:String):Pair<String,User>{val j=JSONObject().put("username",login).put("displayName",name);val r=Request.Builder().url(HTTP+"/api/register").post(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Регистрация: "+x.code);val o=JSONObject(x.body!!.string());return o.getString("token") to user(o.getJSONObject("user"))}}
+ fun me(t:String):User{val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Сессия: "+x.code);return user(JSONObject(x.body!!.string()))}}
  fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
  fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Чаты: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"))}}}
  fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/messages/"+p).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("История: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{msg(a.getJSONObject(it))}}}
