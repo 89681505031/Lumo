@@ -26,7 +26,8 @@ import org.json.JSONObject
 import kotlin.concurrent.thread
 
 data class User(val id:String,val username:String,val displayName:String)
-data class Msg(val id:String,val from:String,val to:String,val text:String)\ndata class Conversation(val peer:User,val lastMessage:String)
+data class Msg(val id:String,val from:String,val to:String,val text:String)
+data class Conversation(val peer:User,val lastMessage:String)
 
 class MainActivity:ComponentActivity(){
  override fun onCreate(b:Bundle?){super.onCreate(b);setContent{MaterialTheme{App()}}}
@@ -166,7 +167,8 @@ object Api{
  private const val HTTP="https://lumo-gamma-seven.vercel.app";private const val WS="wss://lumo-gamma-seven.vercel.app/ws";private val c=OkHttpClient()
  fun register(login:String,name:String):Pair<String,User>{val j=JSONObject().put("username",login).put("displayName",name);val r=Request.Builder().url(HTTP+"/api/register").post(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Регистрация: "+x.code);val o=JSONObject(x.body!!.string());return o.getString("token") to user(o.getJSONObject("user"))}}
  fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
- fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Чаты: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"))}}}\n fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/messages/"+p).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("История: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{msg(a.getJSONObject(it))}}}
+ fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Чаты: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"))}}}
+ fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/messages/"+p).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("История: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{msg(a.getJSONObject(it))}}}
  fun socket(t:String,on:(Msg)->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS+"?token="+t).build(),object:WebSocketListener(){override fun onMessage(w:WebSocket,s:String){val o=JSONObject(s);if(o.optString("type")=="message")on(msg(o.getJSONObject("message")))}})}
  private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"))
  private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"))
