@@ -35,7 +35,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import kotlin.concurrent.thread
 import kotlinx.coroutines.launch
 
 data class User(val id:String,val username:String,val displayName:String)
@@ -183,7 +182,7 @@ fun startUpdate(context:Context,url:String,onProgress:(Int)->Unit){
  if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()){
   context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+context.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));return
  }
- thread{
+ kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch{
   runCatching{
    val request=Request.Builder().url(url).build()
    OkHttpClient().newCall(request).execute().use{response->
