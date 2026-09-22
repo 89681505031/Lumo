@@ -111,6 +111,8 @@ wss.on("connection", async (ws, req) => {
     return ws.close(1013, "Service unavailable");
   }
   if (!userId) return ws.close(1008, "Unauthorized");
+  const previousSocket=sockets.get(userId);
+  if(previousSocket && previousSocket!==ws && previousSocket.readyState===previousSocket.OPEN) previousSocket.close(1000,"Replaced by a newer connection");
   sockets.set(userId, ws);
   ws.send(JSON.stringify({ type: "ready", userId }));
   if (hasDatabase) {
