@@ -16,12 +16,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: "8.9" }
       - name: Prepare signing key
+        if: ${{ secrets.LUMO_KEYSTORE_BASE64 != '' }}
         env:
           LUMO_KEYSTORE_BASE64: ${{ secrets.LUMO_KEYSTORE_BASE64 }}
-        run: |
-          test -n "$LUMO_KEYSTORE_BASE64"
-          echo "$LUMO_KEYSTORE_BASE64" | base64 --decode > app/lumo-release.jks
+        run: echo "$LUMO_KEYSTORE_BASE64" | base64 --decode > app/lumo-release.jks
       - name: Build signed APK
+        if: ${{ secrets.LUMO_KEYSTORE_BASE64 != '' }}
         env:
           LUMO_VERSION_CODE: ${{ github.run_number }}
           LUMO_KEYSTORE_PATH: lumo-release.jks
@@ -29,11 +29,19 @@ jobs:
           LUMO_KEY_ALIAS: ${{ secrets.LUMO_KEY_ALIAS }}
           LUMO_KEY_PASSWORD: ${{ secrets.LUMO_KEY_PASSWORD }}
         run: gradle assembleRelease
+      - name: Build debug APK
+        if: ${{ secrets.LUMO_KEYSTORE_BASE64 == '' }}
+        env:
+          LUMO_VERSION_CODE: ${{ github.run_number }}
+        run: gradle assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: lumo-release-apk
-          path: android/app/build/outputs/apk/release/app-release.apk
+          name: lumo-apk
+          path: |
+            android/app/build/outputs/apk/release/app-release.apk
+            android/app/build/outputs/apk/debug/app-debug.apk
       - name: Publish in-app update
+        if: ${{ secrets.LUMO_KEYSTORE_BASE64 != '' }}
         working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
