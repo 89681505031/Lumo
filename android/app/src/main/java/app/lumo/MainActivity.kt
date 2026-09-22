@@ -59,7 +59,13 @@ class MainActivity:ComponentActivity(){
  LaunchedEffect(token){
   val t=token
   if(t==null){restoring=false;me=null}
-  else if(me==null){restoring=true;thread{runCatching{Api.me(t)}.onSuccess{me=it}.onFailure{prefs.edit().clear().apply();token=null}.also{restoring=false}}}
+  else if(me==null){
+   restoring=true
+   runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.me(t)}}
+    .onSuccess{me=it}
+    .onFailure{prefs.edit().clear().apply();token=null}
+   restoring=false
+  }
  }
  when {
   restoring -> Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()}
@@ -80,7 +86,8 @@ class MainActivity:ComponentActivity(){
   OutlinedTextField(login,{login=it},label={Text("Логин")},singleLine=true,modifier=Modifier.fillMaxWidth())
   if(err.isNotEmpty()) Text(err,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(top=8.dp))
   Spacer(Modifier.height(16.dp))
-  Button({busy=true;thread{runCatching{Api.register(login,name)}.onSuccess{done(it.first,it.second)}.onFailure{err=it.message?:"Ошибка";busy=false}}},enabled=!busy&&name.isNotBlank()&&login.isNotBlank(),modifier=Modifier.fillMaxWidth().height(52.dp)){
+  val scope=rememberCoroutineScope()
+  Button({busy=true;err="";scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.register(login,name)}}.onSuccess{done(it.first,it.second)}.onFailure{err=it.message?:"Ошибка";busy=false}}},enabled=!busy&&name.isNotBlank()&&login.isNotBlank(),modifier=Modifier.fillMaxWidth().height(52.dp)){
    Text(if(busy)"Подключаем..." else "Создать аккаунт")
   }
  }
