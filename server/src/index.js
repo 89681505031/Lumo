@@ -29,12 +29,8 @@ app.get("/health", (_req, res) => res.json({ ok: true, service: "lumo-server" })
 app.post("/api/register", (req, res) => {
   const username = String(req.body?.username || "").trim().toLowerCase();
   const displayName = String(req.body?.displayName || "").trim();
-  if (!/^[a-z0-9_]{3,24}$/.test(username) || !displayName) {
-    return res.status(400).json({ error: "invalid_profile" });
-  }
-  if ([...users.values()].some(u => u.username === username)) {
-    return res.status(409).json({ error: "username_taken" });
-  }
+  if (!/^[a-z0-9_]{3,24}$/.test(username) || !displayName) return res.status(400).json({ error: "invalid_profile" });
+  if ([...users.values()].some(u => u.username === username)) return res.status(409).json({ error: "username_taken" });
   const user = { id: randomUUID(), username, displayName };
   users.set(user.id, user);
   const token = randomUUID();
@@ -46,21 +42,28 @@ app.get("/api/me", auth, (req, res) => res.json(publicUser(req.user)));
 
 app.get("/api/users", auth, (req, res) => {
   const q = String(req.query.q || "").toLowerCase();
-  const result = [...users.values()]
-    .filter(u => u.id !== req.user.id)
-    .filter(u => !q || u.username.includes(q) || u.displayName.toLowerCase().includes(q))
-    .slice(0, 50)
-    .map(publicUser);
+  res.json([...users.values()].filter(u => u.id !== req.user.id).filter(u => !q || u.username.includes(q) || u.displayName.toLowerCase().includes(q)).slice(0, 50).map(publicUser));
+});
+
+app.get("/api/conversations", auth, (req, res) => {
+  const mine = messages.filter(m => m.from === req.user.id || m.to === req.user.id);
+  const byPeer = new Map();
+  for (const m of mine) {
+    const peerId = m.from === req.user.id ? m.to : m.from;
+    const old = byPeer.get(peerId);
+    if (!old || old.createdAt < m.createdAt) byPeer.set(peerId, m);
+  }
+  const result = [...byPeer.entries()].map(([peerId, last]) => ({
+    peer: publicUser(users.get(peerId)),
+    lastMessage: last.text,
+    lastAt: last.createdAt
+  })).filter(x => x.peer).sort((a,b) => b.lastAt.localeCompare(a.lastAt));
   res.json(result);
 });
 
 app.get("/api/messages/:peerId", auth, (req, res) => {
   const peerId = req.params.peerId;
-  const result = messages.filter(m =>
-    (m.from === req.user.id && m.to === peerId) ||
-    (m.from === peerId && m.to === req.user.id)
-  );
-  res.json(result);
+  res.json(messages.filter(m => (m.from === req.user.id && m.to === peerId) || (m.from === peerId && m.to === req.user.id)));
 });
 
 const server = createServer(app);
@@ -77,10 +80,8 @@ wss.on("connection", (ws, req) => {
   const token = url.searchParams.get("token");
   const userId = sessions.get(token);
   if (!userId) return ws.close(1008, "Unauthorized");
-
   sockets.set(userId, ws);
   ws.send(JSON.stringify({ type: "ready", userId }));
-
   ws.on("message", raw => {
     try {
       const data = JSON.parse(raw.toString());
@@ -88,25 +89,13 @@ wss.on("connection", (ws, req) => {
       const to = String(data.to || "");
       const text = String(data.text || "").trim();
       if (!users.has(to) || !text || text.length > 4000) return;
-
-      const message = {
-        id: randomUUID(),
-        from: userId,
-        to,
-        text,
-        createdAt: new Date().toISOString()
-      };
+      const message = { id: randomUUID(), from: userId, to, text, createdAt: new Date().toISOString() };
       messages.push(message);
       ws.send(JSON.stringify({ type: "message", message }));
       sendTo(to, { type: "message", message });
-    } catch {
-      ws.send(JSON.stringify({ type: "error", error: "bad_message" }));
-    }
+    } catch { ws.send(JSON.stringify({ type: "error", error: "bad_message" })); }
   });
-
-  ws.on("close", () => {
-    if (sockets.get(userId) === ws) sockets.delete(userId);
-  });
+  ws.on("close", () => { if (sockets.get(userId) === ws) sockets.delete(userId); });
 });
 
 const port = Number(process.env.PORT || 3000);
