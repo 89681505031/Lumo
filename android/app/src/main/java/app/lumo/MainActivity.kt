@@ -26,7 +26,7 @@ import org.json.JSONObject
 import kotlin.concurrent.thread
 
 data class User(val id:String,val username:String,val displayName:String)
-data class Msg(val id:String,val from:String,val to:String,val text:String)
+data class Msg(val id:String,val from:String,val to:String,val text:String)\ndata class Conversation(val peer:User,val lastMessage:String)
 
 class MainActivity:ComponentActivity(){
  override fun onCreate(b:Bundle?){super.onCreate(b);setContent{MaterialTheme{App()}}}
@@ -74,7 +74,7 @@ class MainActivity:ComponentActivity(){
  ){pad->
   Box(Modifier.padding(pad).fillMaxSize()){
    when(tab){
-    0->ChatsEmpty{tab=1}
+    0->Chats(token,{tab=1},open)
     1->People(token,open)
     else->Profile(me)
    }
@@ -82,11 +82,26 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun ChatsEmpty(find:()->Unit){
- Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
-  Text("Сообщений пока нет",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.SemiBold)
-  Spacer(Modifier.height(8.dp));Text("Найди человека и начни первый диалог",style=MaterialTheme.typography.bodyLarge)
-  Spacer(Modifier.height(20.dp));Button(find){Text("Найти людей")}
+@Composable fun Chats(token:String,find:()->Unit,open:(User)->Unit){
+ var chats by remember{mutableStateOf<List<Conversation>>(emptyList())}
+ var loading by remember{mutableStateOf(true)}
+ LaunchedEffect(Unit){thread{runCatching{Api.conversations(token)}.onSuccess{chats=it}.also{loading=false}}}
+ if(loading){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()};return}
+ if(chats.isEmpty()){
+  Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
+   Text("Сообщений пока нет",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.SemiBold)
+   Spacer(Modifier.height(8.dp));Text("Найди человека и начни первый диалог",style=MaterialTheme.typography.bodyLarge)
+   Spacer(Modifier.height(20.dp));Button(find){Text("Найти людей")}
+  }
+ } else {
+  LazyColumn(Modifier.fillMaxSize()){
+   items(chats,key={it.peer.id}){chat->
+    Row(Modifier.fillMaxWidth().clickable{open(chat.peer)}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){
+     Box(Modifier.size(56.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(chat.peer.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleLarge)}
+     Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(chat.peer.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium);Text(chat.lastMessage,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+    };HorizontalDivider()
+   }
+  }
  }
 }
 
@@ -151,7 +166,7 @@ object Api{
  private const val HTTP="https://lumo-gamma-seven.vercel.app";private const val WS="wss://lumo-gamma-seven.vercel.app/ws";private val c=OkHttpClient()
  fun register(login:String,name:String):Pair<String,User>{val j=JSONObject().put("username",login).put("displayName",name);val r=Request.Builder().url(HTTP+"/api/register").post(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Регистрация: "+x.code);val o=JSONObject(x.body!!.string());return o.getString("token") to user(o.getJSONObject("user"))}}
  fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
- fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/messages/"+p).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("История: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{msg(a.getJSONObject(it))}}}
+ fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Чаты: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"))}}}\n fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/messages/"+p).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("История: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{msg(a.getJSONObject(it))}}}
  fun socket(t:String,on:(Msg)->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS+"?token="+t).build(),object:WebSocketListener(){override fun onMessage(w:WebSocket,s:String){val o=JSONObject(s);if(o.optString("type")=="message")on(msg(o.getJSONObject("message")))}})}
  private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"))
  private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"))
