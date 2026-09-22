@@ -86,23 +86,25 @@ function sendTo(userId, payload) {
   if (ws?.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
 }
 
-wss.on("connection", (ws, req) => {
+wss.on("connection", async (ws, req) => {
   const url = new URL(req.url, "http://localhost");
   const token = url.searchParams.get("token");
-  const userId = sessions.get(token);
+  const dbUser = hasDatabase ? await postgresStore.userBySession(token) : null;
+  const userId = hasDatabase ? dbUser?.id : sessions.get(token);
   if (!userId) return ws.close(1008, "Unauthorized");
   sockets.set(userId, ws);
   ws.send(JSON.stringify({ type: "ready", userId }));
-  ws.on("message", raw => {
+  ws.on("message", async raw => {
     try {
       const data = JSON.parse(raw.toString());
-      if (data.type === "read") { const ids = Array.isArray(data.ids) ? data.ids : []; for (const m of messages) { if (ids.includes(m.id) && m.to === userId && !m.readAt) { m.readAt = new Date().toISOString(); sendTo(m.from, { type: "receipt", messageId: m.id, deliveredAt: m.deliveredAt, readAt: m.readAt }); } } return; }
+      if (data.type === "read") { const ids = Array.isArray(data.ids) ? data.ids : []; if(hasDatabase){ const changed=await postgresStore.markRead(ids,userId); for(const m of changed) sendTo(m.from,{type:"receipt",messageId:m.id,deliveredAt:m.deliveredAt,readAt:m.readAt}); } else { for (const m of messages) { if (ids.includes(m.id) && m.to === userId && !m.readAt) { m.readAt = new Date().toISOString(); sendTo(m.from, { type: "receipt", messageId: m.id, deliveredAt: m.deliveredAt, readAt: m.readAt }); } } } return; }
       if (data.type !== "message") return;
       const to = String(data.to || "");
       const text = String(data.text || "").trim();
-      if (!users.has(to) || !text || text.length > 4000) return;
+      const recipientExists = hasDatabase ? await postgresStore.userExists(to) : users.has(to);
+      if (!recipientExists || !text || text.length > 4000) return;
       const message = { id: randomUUID(), from: userId, to, text, createdAt: new Date().toISOString(), deliveredAt: sockets.has(to) ? new Date().toISOString() : null, readAt: null };
-      messages.push(message);
+      if(hasDatabase) await postgresStore.saveMessage(message); else messages.push(message);
       ws.send(JSON.stringify({ type: "message", message }));
       sendTo(to, { type: "message", message });
     } catch { ws.send(JSON.stringify({ type: "error", error: "bad_message" })); }
