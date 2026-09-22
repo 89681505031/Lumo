@@ -10,11 +10,18 @@ export const postgresStore = {
     return r.rows[0] ? mapUser(r.rows[0]) : null;
   },
   async createUser({id,username,displayName,token}) {
-    const c=await dbQuery("select 1 from users where username=$1",[username]);
-    if(c.rowCount) return null;
-    await dbQuery("insert into users(id,username,display_name) values($1,$2,$3)",[id,username,displayName]);
-    await dbQuery("insert into sessions(token,user_id) values($1,$2)",[token,id]);
-    return {id,username,displayName};
+    try {
+      const r=await dbQuery(`with created as (
+        insert into users(id,username,display_name) values($1,$2,$3)
+        returning id,username,display_name
+      ), session as (
+        insert into sessions(token,user_id) select $4,id from created
+      ) select * from created`,[id,username,displayName,token]);
+      return r.rows[0] ? mapUser(r.rows[0]) : null;
+    } catch (error) {
+      if(error?.code==="23505") return null;
+      throw error;
+    }
   },
   async updateUser(id,displayName) {
     const r=await dbQuery("update users set display_name=$2 where id=$1 returning *",[id,displayName]);
