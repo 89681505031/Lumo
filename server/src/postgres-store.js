@@ -50,6 +50,10 @@ export const postgresStore = {
     await dbQuery("insert into messages(id,sender_id,recipient_id,text,created_at,delivered_at,read_at) values($1,$2,$3,$4,$5,$6,$7)",[m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt]);
     return {message:m,inserted:true};
   },
+  async markMessageDelivered(messageId,userId) {
+    const r=await dbQuery("update messages set delivered_at=coalesce(delivered_at,now()) where id=$1 and recipient_id=$2 returning *",[messageId,userId]);
+    return r.rows[0] ? mapMessage(r.rows[0]) : null;
+  },
   async markDelivered(userId) {
     const r=await dbQuery("update messages set delivered_at=coalesce(delivered_at,now()) where recipient_id=$1 and delivered_at is null returning *",[userId]);
     return r.rows.map(mapMessage);
