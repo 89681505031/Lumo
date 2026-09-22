@@ -133,10 +133,9 @@ class MainActivity:ComponentActivity(){
 
 @Composable fun People(token:String,open:(User)->Unit){
  var users by remember{mutableStateOf<List<User>>(emptyList())};var q by remember{mutableStateOf("")};var loading by remember{mutableStateOf(false)}
- fun load(){loading=true;thread{runCatching{Api.users(token,q)}.onSuccess{users=it}.also{loading=false}}}
- LaunchedEffect(Unit){load()}
+ LaunchedEffect(q){loading=true;kotlinx.coroutines.delay(300);runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.users(token,q)}}.onSuccess{users=it};loading=false}
  Column(Modifier.fillMaxSize()){
-  OutlinedTextField(q,{q=it;load()},label={Text("Поиск по имени или логину")},singleLine=true,modifier=Modifier.fillMaxWidth().padding(16.dp))
+  OutlinedTextField(q,{q=it},label={Text("Поиск по имени или логину")},singleLine=true,modifier=Modifier.fillMaxWidth().padding(16.dp))
   if(loading) LinearProgressIndicator(Modifier.fillMaxWidth())
   LazyColumn(Modifier.fillMaxSize()){
    items(users,key={it.id}){u->
