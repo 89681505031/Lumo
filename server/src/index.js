@@ -126,7 +126,7 @@ wss.on("connection", async (ws, req) => {
       if (data.type !== "message") return;
       const to = String(data.to || "");
       const text = String(data.text || "").trim();
-      const clientMessageId = typeof data.clientMessageId === "string" && /^[0-9a-f-]{36}$/i.test(data.clientMessageId) ? data.clientMessageId : null;
+      const clientMessageId = typeof data.clientMessageId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data.clientMessageId) ? data.clientMessageId : null;
       const recipientExists = hasDatabase ? await postgresStore.userExists(to) : users.has(to);
       if (!recipientExists || !text || text.length > 4000) return;
       let message = { id: randomUUID(), from: userId, to, text, createdAt: new Date().toISOString(), deliveredAt: sockets.has(to) ? new Date().toISOString() : null, readAt: null, clientMessageId };
