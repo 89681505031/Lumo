@@ -40,6 +40,14 @@ app.post("/api/register", (req, res) => {
 
 app.get("/api/me", auth, (req, res) => res.json(publicUser(req.user)));
 
+app.patch("/api/me", auth, (req, res) => {
+  const displayName = String(req.body?.displayName || "").trim();
+  if (!displayName || displayName.length > 50) return res.status(400).json({ error: "invalid_display_name" });
+  req.user.displayName = displayName;
+  users.set(req.user.id, req.user);
+  res.json(publicUser(req.user));
+});
+
 app.get("/api/users", auth, (req, res) => {
   const q = String(req.query.q || "").toLowerCase();
   res.json([...users.values()].filter(u => u.id !== req.user.id).filter(u => !q || u.username.includes(q) || u.displayName.toLowerCase().includes(q)).slice(0, 50).map(publicUser));
