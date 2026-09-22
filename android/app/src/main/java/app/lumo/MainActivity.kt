@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
@@ -75,7 +76,7 @@ class MainActivity:ComponentActivity(){
 object Api{
  private const val HTTP="http://10.0.2.2:3000";private const val WS="ws://10.0.2.2:3000/ws";private val c=OkHttpClient()
  fun register(login:String,name:String):Pair<String,User>{val j=JSONObject().put("username",login).put("displayName",name);val r=Request.Builder().url(HTTP+"/api/register").post(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Регистрация: "+x.code);val o=JSONObject(x.body!!.string());return o.getString("token") to user(o.getJSONObject("user"))}}
- fun users(t:String,q:String):List<User>{val url=HttpUrl.get(HTTP+"/api/users").newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
+ fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
  fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/messages/"+p).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->val a=JSONArray(x.body!!.string());return(0 until a.length()).map{msg(a.getJSONObject(it))}}}
  fun socket(t:String,on:(Msg)->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS+"?token="+t).build(),object:WebSocketListener(){override fun onMessage(w:WebSocket,s:String){val o=JSONObject(s);if(o.optString("type")=="message")on(msg(o.getJSONObject("message")))}})}
  private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"))
