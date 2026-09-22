@@ -237,7 +237,7 @@ class LumoInstallReceiver:BroadcastReceiver(){
  }
 }
 
-fun formatMessageTime(iso:String):String=runCatching{java.time.OffsetDateTime.parse(iso).toLocalTime().withSecond(0).withNano(0).toString()}.getOrDefault("")
+fun formatMessageTime(iso:String):String=runCatching{java.time.format.DateTimeFormatter.ofPattern("HH:mm").withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.parse(iso))}.getOrDefault("")
 
 object Api{
  private const val HTTP="https://lumo-gamma-seven.vercel.app";private const val WS="wss://lumo-gamma-seven.vercel.app/ws";private val c=OkHttpClient()
