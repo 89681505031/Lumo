@@ -25,6 +25,8 @@ export const postgresStore = {
     const r=await dbQuery("select * from users where id<>$1 and ($2='' or username ilike $3 or display_name ilike $3) order by display_name limit 50",[me,q,term]);
     return r.rows.map(mapUser);
   },
+  async userExists(id) { const r=await dbQuery("select 1 from users where id=$1",[id]); return r.rowCount>0; },
+  async conversations(me) { const r=await dbQuery(`select distinct on (peer_id) peer_id, username, display_name, text, created_at from (select case when m.sender_id=$1 then m.recipient_id else m.sender_id end peer_id,m.text,m.created_at from messages m where m.sender_id=$1 or m.recipient_id=$1) x join users u on u.id=x.peer_id order by peer_id,created_at desc`,[me]); return r.rows.map(x=>({peer:{id:x.peer_id,username:x.username,displayName:x.display_name},lastMessage:x.text,lastAt:x.created_at?.toISOString?.()||x.created_at})).sort((a,b)=>String(b.lastAt).localeCompare(String(a.lastAt))); },
   async messages(me,peer) {
     const r=await dbQuery("select * from messages where (sender_id=$1 and recipient_id=$2) or (sender_id=$2 and recipient_id=$1) order by created_at",[me,peer]);
     return r.rows.map(mapMessage);
