@@ -19,13 +19,18 @@ function publicUser(user) {
 }
 
 async function auth(req, res, next) {
-  const header = req.headers.authorization || "";
-  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
-  const userId = sessions.get(token);
-  const user = hasDatabase ? await postgresStore.userBySession(token) : users.get(userId);
-  if (!user) return res.status(401).json({ error: "unauthorized" });
-  req.user = user;
-  next();
+  try {
+    const header = req.headers.authorization || "";
+    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    const userId = sessions.get(token);
+    const user = hasDatabase ? await postgresStore.userBySession(token) : users.get(userId);
+    if (!user) return res.status(401).json({ error: "unauthorized" });
+    req.user = user;
+    next();
+  } catch (error) {
+    console.error("Authentication database error", error);
+    res.status(503).json({ error: "service_unavailable" });
+  }
 }
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase}; if(hasDatabase){try{database=await dbHealth()}catch{database={configured:true,ok:false}}} res.json({ ok:true, service:"lumo-server", database }); });
@@ -91,8 +96,14 @@ function sendTo(userId, payload) {
 wss.on("connection", async (ws, req) => {
   const url = new URL(req.url, "http://localhost");
   const token = url.searchParams.get("token");
-  const dbUser = hasDatabase ? await postgresStore.userBySession(token) : null;
-  const userId = hasDatabase ? dbUser?.id : sessions.get(token);
+  let userId;
+  try {
+    const dbUser = hasDatabase ? await postgresStore.userBySession(token) : null;
+    userId = hasDatabase ? dbUser?.id : sessions.get(token);
+  } catch (error) {
+    console.error("WebSocket authentication database error", error);
+    return ws.close(1013, "Service unavailable");
+  }
   if (!userId) return ws.close(1008, "Unauthorized");
   sockets.set(userId, ws);
   ws.send(JSON.stringify({ type: "ready", userId }));
