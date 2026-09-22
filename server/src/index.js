@@ -2,8 +2,10 @@ import express from "express";
 import { WebSocketServer } from "ws";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
-import { dbHealth, hasDatabase } from "./db.js";
+import { dbHealth, hasDatabase, initDatabase } from "./db.js";
 import { postgresStore } from "./postgres-store.js";
+
+if (hasDatabase) { try { await initDatabase(); console.log("Lumo PostgreSQL schema ready"); } catch (error) { console.error("Lumo PostgreSQL initialization failed", error); } }
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
