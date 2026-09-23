@@ -87,6 +87,7 @@ export const groupStore = {
   },
   async invite(actorId,groupId,inviteeId) {
     const client=await pool.connect();
+    let committed=false;
     try {
       await client.query("begin");
       // Serialize membership mutations and the 50-person limit per group.
@@ -117,14 +118,16 @@ export const groupStore = {
         [groupId,inviteeId]
       );
       await client.query("commit");
+      committed=true;
       return {ok:true};
     } catch(error) {
       await client.query("rollback").catch(()=>{});
       throw error;
-    } finally { client.release(); }
+    } finally { if(!committed)await client.query("rollback").catch(()=>{}); client.release(); }
   },
   async setRole(actorId,groupId,userId,role) {
     const client=await pool.connect();
+    let committed=false;
     try {
       await client.query("begin");
       const groupRow=await client.query("select owner_id from chat_groups where id=$1 for update",[groupId]);
@@ -137,14 +140,16 @@ export const groupStore = {
       );
       if(!updated.rowCount)return {error:"member_not_found"};
       await client.query("commit");
+      committed=true;
       return {role:updated.rows[0].role};
     } catch(error) {
       await client.query("rollback").catch(()=>{});
       throw error;
-    } finally { client.release(); }
+    } finally { if(!committed)await client.query("rollback").catch(()=>{}); client.release(); }
   },
   async remove(actorId,groupId,userId) {
     const client=await pool.connect();
+    let committed=false;
     try {
       await client.query("begin");
       const g=await client.query("select owner_id from chat_groups where id=$1 for update",[groupId]);
@@ -169,11 +174,12 @@ export const groupStore = {
         [groupId,userId]
       );
       await client.query("commit");
+      committed=true;
       return {ok:true};
     } catch(error) {
       await client.query("rollback").catch(()=>{});
       throw error;
-    } finally { client.release(); }
+    } finally { if(!committed)await client.query("rollback").catch(()=>{}); client.release(); }
   },
   async delete(actorId,groupId) {
     const row=await dbQuery(
