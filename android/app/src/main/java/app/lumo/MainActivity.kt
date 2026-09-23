@@ -302,14 +302,15 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  LaunchedEffect(token,peer.id){
   while(true){
    kotlinx.coroutines.delay(5000)
-   if(!connected){
-    for(p in pending.toList()){
-     val saved=runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.sendMessage(token,peer.id,p)}}
-     if(saved.isFailure)break
-     val m=saved.getOrThrow()
-     pending.removeAll{it.clientMessageId==p.clientMessageId};savePending()
-     val merged=mergeChatMessages(msgs,listOf(m));msgs.clear();msgs.addAll(merged)
-    }
+   // Retry unacknowledged messages even if the socket looks connected:
+   // HTTP and WebSocket share the same PostgreSQL idempotency key.
+   for(p in pending.toList()){
+    if(pending.none{it.clientMessageId==p.clientMessageId})continue
+    val saved=runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.sendMessage(token,peer.id,p)}}
+    if(saved.isFailure)break
+    val m=saved.getOrThrow()
+    pending.removeAll{it.clientMessageId==p.clientMessageId};savePending()
+    val merged=mergeChatMessages(msgs,listOf(m));msgs.clear();msgs.addAll(merged)
    }
    val refreshed=runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
     val fresh=Api.history(token,peer.id)
@@ -343,6 +344,16 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
      Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.from==me.id)Arrangement.End else Arrangement.Start){
       Surface(shape=RoundedCornerShape(18.dp),color=if(m.from==me.id)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,modifier=Modifier.widthIn(max=300.dp)){
        Column(Modifier.padding(14.dp,8.dp)){Text(m.text);Row(Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically){if(m.createdAt.isNotBlank())Text(formatMessageTime(m.createdAt),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(m.from==me.id){Spacer(Modifier.width(5.dp));Text(if(m.readAt.isNotBlank())"✓✓" else if(m.deliveredAt.isNotBlank())"✓✓" else "✓",style=MaterialTheme.typography.labelSmall,color=if(m.readAt.isNotBlank())MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)}}}
+      }
+     }
+    }
+    items(pending.filter{p->msgs.none{it.from==me.id&&it.clientMessageId==p.clientMessageId}},key={"pending-"+it.clientMessageId}){p->
+     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
+      Surface(shape=RoundedCornerShape(18.dp),color=MaterialTheme.colorScheme.primaryContainer,modifier=Modifier.widthIn(max=300.dp)){
+       Column(Modifier.padding(14.dp,8.dp)){
+        Text(p.text)
+        Text("Отправляется…",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+       }
       }
      }
     }
