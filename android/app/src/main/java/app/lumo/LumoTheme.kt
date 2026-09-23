@@ -1,5 +1,12 @@
 package app.lumo
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -44,7 +51,10 @@ private val cosmicPalette = darkColorScheme(
 
 @Composable
 fun LumoTheme(content:@Composable () -> Unit) {
-    MaterialTheme(colorScheme=cosmicPalette, content=content)
+    val appearance=rememberLumoAppearance()
+    CompositionLocalProvider(LocalLumoAppearance provides appearance) {
+        MaterialTheme(colorScheme=cosmicPalette, content=content)
+    }
 }
 
 /** Frosted blue glass and contrasting cyan / pink edge from the approved mockup. */
@@ -68,11 +78,29 @@ fun Modifier.lumoGlass(radius:Int=24):Modifier {
 /**
  * Native Compose illustration: starfield and partially cropped illuminated planets.
  * No screenshots are used as backgrounds, so all controls stay interactive and scale
- * to different phone sizes. This layer is deliberately static to conserve battery.
+ * to different phone sizes. The optional twinkle can be turned off to save battery.
  */
 @Composable
 fun LumoBackdrop(modifier:Modifier=Modifier,content:@Composable BoxScope.() -> Unit) {
-    Box(modifier.background(LumoGradient)) {
+    val appearance=LocalLumoAppearance.current
+    val selected=appearance.theme
+    val lowPower=appearance.lowPower || selected==LumoVisualTheme.MINIMAL
+    val twinkle=if(!lowPower && appearance.animated) {
+        val infinite=rememberInfiniteTransition(label="Lumo star twinkle")
+        val alpha by infinite.animateFloat(
+            initialValue=.47f,targetValue=1f,
+            animationSpec=infiniteRepeatable(tween(durationMillis=11000),RepeatMode.Reverse),
+            label="star intensity"
+        )
+        alpha
+    } else 1f
+    val spaceColors=lumoSpaceColors(selected)
+    val glows=when(selected){
+        LumoVisualTheme.AURORA->listOf(Color(0xFF29EDDD),Color(0xFF3094FF),Color(0xFF4DBDCC))
+        LumoVisualTheme.VIOLET->listOf(Color(0xFFAD70FF),Color(0xFF5B41F8),Color(0xFFFF42BD))
+        else->listOf(Color(0xFF2677FF),Color(0xFF5B36FF),Color(0xFFFF39C7))
+    }
+    Box(modifier.background(Brush.verticalGradient(spaceColors))) {
         Canvas(Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
@@ -90,9 +118,11 @@ fun LumoBackdrop(modifier:Modifier=Modifier,content:@Composable BoxScope.() -> U
                 )
             }
 
-            halo(.95f,.18f,.95f,Color(0xFF2677FF))
-            halo(-.15f,.47f,.87f,Color(0xFF5B36FF))
-            halo(.78f,.88f,.75f,Color(0xFFFF39C7))
+            if(!lowPower){
+                halo(.95f,.18f,.95f,glows[0])
+                halo(-.15f,.47f,.87f,glows[1])
+                halo(.78f,.88f,.75f,glows[2])
+            }
 
             fun planet(x:Float,y:Float,r:Float,lit:Color,dark:Color) {
                 val c=Offset(w*x,h*y)
@@ -121,19 +151,22 @@ fun LumoBackdrop(modifier:Modifier=Modifier,content:@Composable BoxScope.() -> U
                 }
             }
 
-            // Cropped planets frame the screen instead of sitting beneath message text.
-            planet(1.27f,.22f,.59f,Color(0xFF3CAEFF),Color(0xFF172984))
-            planet(-.43f,.76f,.52f,Color(0xFFAF7AFF),Color(0xFF172988))
-            planet(.88f,1.13f,.45f,Color(0xFFCF72FF),Color(0xFF12246D))
+            // Large planets are skipped in battery-saver and minimal mode.
+            if(!lowPower){
+                planet(1.27f,.22f,.59f,glows[0],Color(0xFF172984))
+                planet(-.43f,.76f,.52f,glows[1],Color(0xFF172988))
+                planet(.88f,1.13f,.45f,glows[2],Color(0xFF12246D))
+            }
 
-            // Reproducible star positions: no random state, animation or network assets.
-            repeat(105) { i ->
+            // Reproducible star positions; low power draws only a small static set.
+            repeat(if(lowPower && selected==LumoVisualTheme.MINIMAL) 0
+                   else if(lowPower) 25 else 105) { i ->
                 val x=((i*73+17)%109)/109f*w
                 val y=((i*47+11)%113)/113f*h
                 val light=if(i%4==0) LumoCyan else if(i%7==0) LumoPink else Color.White
                 val rr=if(i%12==0) 1.45.dp.toPx() else .63.dp.toPx()
-                drawCircle(light.copy(alpha=if(i%3==0).83f else .48f),rr,Offset(x,y))
-                if(i%16==0) {
+                drawCircle(light.copy(alpha=(if(i%3==0).83f else .48f)*twinkle),rr,Offset(x,y))
+                if(!lowPower && i%16==0) {
                     drawLine(light.copy(alpha=.7f),Offset(x-rr*3,y),Offset(x+rr*3,y),.7.dp.toPx())
                     drawLine(light.copy(alpha=.7f),Offset(x,y-rr*3),Offset(x,y+rr*3),.7.dp.toPx())
                 }
