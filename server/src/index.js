@@ -241,15 +241,7 @@ wss.on("connection", async (ws, req) => {
   sessionCheck?.unref?.();
   let socketWindowStart=Date.now(),socketMessageCount=0;
   ws.send(JSON.stringify({ type: "ready", userId }));
-  if (hasDatabase) {
-    try {
-      const delivered = await postgresStore.markDelivered(userId);
-      for (const m of delivered) sendTo(m.from, { type: "receipt", messageId: m.id, deliveredAt: m.deliveredAt, readAt: m.readAt });
-    } catch (error) { console.error("Failed to mark pending messages delivered", error); }
-  } else {
-    const now = new Date().toISOString();
-    for (const m of messages) if (m.to === userId && !m.deliveredAt) { m.deliveredAt = now; sendTo(m.from, { type: "receipt", messageId: m.id, deliveredAt: m.deliveredAt, readAt: m.readAt }); }
-  }
+  // Pending messages become delivered only when the recipient fetches that chat.
   ws.on("message", async raw => {
     try {
       if (sockets.get(userId) !== ws) return ws.close(1008, "Connection replaced");
