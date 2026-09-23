@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -167,6 +168,21 @@ fun LumoEditableAvatar(userId:String,displayName:String,size:Dp=122.dp){
             ){
                 Text("✎",style=MaterialTheme.typography.titleLarge,color=Color.White)
             }
+        }
+        if(bitmap!=null)TextButton(onClick={
+            scope.launch {
+                error=""
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val file=avatarFile(context,userId)
+                        if(file.exists() && !file.delete())error("Не удалось удалить фото")
+                    }
+                }.onSuccess { reload++ }
+                 .onFailure { error=it.message?:"Не удалось удалить фото" }
+            }
+        }) {
+            Text("Удалить фото с устройства",color=Color.White,
+                style=MaterialTheme.typography.labelMedium)
         }
         if(error.isNotBlank())Text(
             error,color=MaterialTheme.colorScheme.error,
