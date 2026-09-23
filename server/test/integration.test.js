@@ -19,7 +19,7 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
   await new Promise(resolve=>listener.close(resolve));
   const child=spawn(process.execPath,["src/index.js"],{
     cwd:process.cwd(),
-    env:{...process.env,PORT:String(port),DATABASE_URL:databaseUrl,DATABASE_SSL:"false",LUMO_CALL_SIGNALING_ENABLED:"true",LUMO_TURN_URLS:"turn:127.0.0.1:3478?transport=udp",LUMO_TURN_SECRET:"ci-only-test-turn-secret-longer-than-32-chars"},
+    env:{...process.env,PORT:String(port),DATABASE_URL:databaseUrl,DATABASE_SSL:"false",LUMO_CALL_SIGNALING_ENABLED:"true",LUMO_TURN_URLS:"turn:127.0.0.1:3478?transport=udp",LUMO_TURN_SECRET:"ci-only-test-turn-secret-longer-than-32-chars",CRON_SECRET:"ci-call-cleanup-only-secret-over-thirty-two-chars"},
     stdio:"ignore"
   });
   let socket;
@@ -95,6 +95,12 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(invite.status,201);
     assert.equal(invite.json.status,"ringing");
     const callId=invite.json.id;
+    // Both participants are occupied while an invitation is ringing.
+    const reverse=await request("/api/calls","POST",b.token,{to:a.user.id,kind:"audio"},otherBase);
+    assert.equal(reverse.status,409,"Reciprocal ringing call must not be created");
+    assert.equal(reverse.json.error,"call_busy");
+    const thirdPartyInvite=await request("/api/calls","POST",c.token,{to:b.user.id,kind:"audio"});
+    assert.equal(thirdPartyInvite.status,409,"An invited recipient cannot receive overlapping calls");
     const thirdPartyAction=await request("/api/calls/"+callId+"/respond","POST",c.token,{action:"accept"},otherBase);
     assert.equal(thirdPartyAction.status,404,"An outsider must not discover a private call");
     const incoming=await request("/api/calls","GET",b.token,null,otherBase);
@@ -160,6 +166,49 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
       clientSignalId:randomUUID(),type:"ice",payload:{candidate:"candidate:late"}
     });
     assert.equal(lateSignal.status,409);
+
+    // Parallel invites on two separate server instances must serialize on
+    // BOTH users, not just on the outgoing caller.
+    const [raceAC,raceCA]=await Promise.all([
+      request("/api/calls","POST",a.token,{to:c.user.id,kind:"audio"}),
+      request("/api/calls","POST",c.token,{to:a.user.id,kind:"audio"},otherBase)
+    ]);
+    assert.deepEqual([raceAC.status,raceCA.status].sort(),[201,409]);
+    const winner=raceAC.status===201?raceAC:raceCA;
+    const winnerToken=raceAC.status===201?a.token:c.token;
+    const endedRace=await request("/api/calls/"+winner.json.id+"/respond","POST",winnerToken,{action:"end"});
+    assert.equal(endedRace.status,200);
+    // The cron endpoint is secret-protected and independent from user sessions.
+    const cleanupNoKey=await request("/internal/call-cleanup","GET");
+    assert.equal(cleanupNoKey.status,401);
+    const cleanupUserKey=await request("/internal/call-cleanup","GET",a.token, null, otherBase);
+    assert.equal(cleanupUserKey.status,401);
+    const maintenancePool=new pg.Pool({connectionString:databaseUrl,ssl:false});
+    try {
+      await maintenancePool.query(
+        "update call_signals set created_at=now()-interval '2 hours' where call_id=$1",
+        [callId]
+      );
+      await maintenancePool.query(
+        "update calls set expires_at=now()-interval '2 hours' where id=$1",
+        [callId]
+      );
+      const cleanup=await request(
+        "/internal/call-cleanup","GET","ci-call-cleanup-only-secret-over-thirty-two-chars",null,otherBase
+      );
+      assert.equal(cleanup.status,200);
+      assert.equal(cleanup.json.signalsDeleted>=2,true,"Old SDP and ICE metadata removed");
+      assert.equal(cleanup.json.callsDeleted>=1,true,"Old calls removed even without new invitations");
+      assert.equal((await maintenancePool.query("select id from calls where id=$1",[callId])).rowCount,0);
+      assert.equal((await maintenancePool.query("select 1 from calls where id=$1",[winner.json.id])).rowCount,1,
+        "Recently ended calls should not be removed prematurely");
+      const repeatedCleanup=await request(
+        "/internal/call-cleanup","GET","ci-call-cleanup-only-secret-over-thirty-two-chars"
+      );
+      assert.equal(repeatedCleanup.status,200,"Maintenance can run repeatedly");
+    } finally {
+      await maintenancePool.end();
+    }
     // The inbox must load even before the user has sent any messages.
     const initialChats=await request("/api/conversations","GET",a.token);
     assert.equal(initialChats.status,200,"Empty inbox must not fail on ambiguous SQL columns");
