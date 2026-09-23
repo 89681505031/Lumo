@@ -15,6 +15,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -52,24 +55,35 @@ fun PushSettings(session: String, me: User) {
         scope.launch {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
-                    val messaging = FirebaseMessaging.getInstance()
-                    messaging.isAutoInitEnabled = false
-                    runCatching { messaging.deleteToken() }
-                    LumoPushApi.revoke(session)
+                    PushOperationGate.mutex.withLock {
+                        val messaging = FirebaseMessaging.getInstance()
+                        messaging.isAutoInitEnabled = false
+                        LumoPushApi.revoke(session)
+                        // Complete token deletion before allowing a new opt-in.
+                        runCatching { deleteFirebaseToken() }
+                    }
                 }
             }
             result.onSuccess {
-                // A successful remote revocation completes the local opt-out.
                 if (PushOptState.revokePending(context, me.id, session)) {
                     PushOptState.clear(context)
                 }
                 revokePending = false
                 notice = "Уведомления отключены."
             }.onFailure {
-                notice = "На этом телефоне уведомления выключены. " +
-                    "Удаление на сервере ещё не подтверждено — повторите позже."
+                if (PushOptState.revokePending(context, me.id, session)) {
+                    LumoPushSyncWorker.schedule(context)
+                }
+                notice = "Уведомления выключены на устройстве. " +
+                    "Android автоматически повторит отключение на сервере при наличии сети."
             }
             busy = false
+        }
+    }
+
+    LaunchedEffect(session, me.id) {
+        if (PushOptState.revokePending(context, me.id, session)) {
+            LumoPushSyncWorker.schedule(context)
         }
     }
 
@@ -81,48 +95,77 @@ fun PushSettings(session: String, me: User) {
     }
 
     LaunchedEffect(requestEnable) {
-        if (requestEnable == 0 || !BuildConfig.LUMO_FCM_CONFIGURED || busy || enabled) return@LaunchedEffect
+        if (requestEnable == 0 || !BuildConfig.LUMO_FCM_CONFIGURED || busy ||
+            enabled || revokePending) return@LaunchedEffect
         busy = true
         notice = ""
         val result = runCatching {
             withContext(Dispatchers.IO) {
-                // No FCM token or Firebase auto-init before a user's click.
-                val messaging = FirebaseMessaging.getInstance()
-                messaging.isAutoInitEnabled = true
-                val fcmToken = getFcmToken()
-                check(PushOptState.permissionGranted(context)) { "Notifications permission revoked" }
-                check(
-                    context.getSharedPreferences("lumo_session", Context.MODE_PRIVATE)
-                        .getString("token", null) == session
-                ) { "Session changed before token registration" }
-                LumoPushApi.register(session, fcmToken)
-                if (context.getSharedPreferences("lumo_session", Context.MODE_PRIVATE)
-                        .getString("token", null) != session) {
-                    runCatching { LumoPushApi.revoke(session) }
-                    throw IllegalStateException("Session changed during token registration")
+                PushOperationGate.mutex.withLock {
+                    // This lock prevents an older token refresh from outliving
+                    // the user's explicit disable / logout request.
+                    check(!PushOptState.revokePending(context, me.id, session))
+                    val messaging = FirebaseMessaging.getInstance()
+                    messaging.isAutoInitEnabled = true
+                    val fcmToken = getFcmToken()
+                    check(PushOptState.permissionGranted(context))
+                    check(context.getSharedPreferences("lumo_session", Context.MODE_PRIVATE)
+                        .getString("token", null) == session)
+                    LumoPushApi.register(session, fcmToken)
+                    if (context.getSharedPreferences("lumo_session", Context.MODE_PRIVATE)
+                        .getString("token", null) != session ||
+                        !PushOptState.permissionGranted(context)) {
+                        // A just-registered token must not remain with an old
+                        // account after a sign-out or permission revocation.
+                        LumoPushApi.revoke(session)
+                        throw IllegalStateException("Session or permission changed")
+                    }
+                    PushOptState.enable(context, me.id, session)
+                    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    manager.createNotificationChannel(
+                        NotificationChannel("lumo_messages", "Сообщения Lumo",
+                            NotificationManager.IMPORTANCE_DEFAULT)
+                    )
                 }
-                PushOptState.enable(context, me.id, session)
-                val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                manager.createNotificationChannel(
-                    NotificationChannel("lumo_messages", "Сообщения Lumo", NotificationManager.IMPORTANCE_DEFAULT)
-                )
             }
         }
         result.onSuccess {
             enabled = true
+            revokePending = false
             notice = "Тестовые уведомления включены только для текущего аккаунта."
-        }.onFailure {
-            withContext(Dispatchers.IO) {
-                // Registration may have succeeded before a later local failure:
-                // attempt to revoke the old session as well.
-                runCatching { LumoPushApi.revoke(session) }
-                runCatching {
-                    val messaging = FirebaseMessaging.getInstance()
-                    messaging.isAutoInitEnabled = false
-                    messaging.deleteToken()
+            LumoPushSyncWorker.schedule(context)
+        }.onFailure { error ->
+            // Do not lose the server revoke even if navigation cancels Compose
+            // between accepting a token and persisting the local consent.
+            withContext(NonCancellable + Dispatchers.IO) {
+                val stillThisSession = context.getSharedPreferences(
+                    "lumo_session", Context.MODE_PRIVATE
+                ).getString("token", null) == session
+                if (stillThisSession) {
+                    PushOptState.disableLocally(context, me.id, session)
+                    runCatching { FirebaseMessaging.getInstance().isAutoInitEnabled = false }
+                }
+                val remotelyRevoked = runCatching {
+                    PushOperationGate.mutex.withLock {
+                        LumoPushApi.revoke(session)
+                        if (stillThisSession) runCatching { deleteFirebaseToken() }
+                    }
+                }
+                if (stillThisSession && PushOptState.revokePending(context, me.id, session)) {
+                    if (remotelyRevoked.isSuccess ||
+                        remotelyRevoked.exceptionOrNull() is SessionExpiredException) {
+                        PushOptState.clear(context)
+                    } else {
+                        LumoPushSyncWorker.schedule(context)
+                    }
                 }
             }
-            notice = "Не удалось подключить уведомления. Проверьте сервер и Firebase."
+            enabled = false
+            revokePending = PushOptState.revokePending(context, me.id, session)
+            notice = if (revokePending)
+                "На телефоне выключено. Отключение на сервере повторится при подключении."
+            else "Не удалось включить уведомления. Проверьте Firebase и сервер."
+            if (error is CancellationException) throw error
         }
         busy = false
     }
@@ -146,8 +189,8 @@ fun PushSettings(session: String, me: User) {
                 Spacer(Modifier.height(12.dp))
                 if (revokePending) {
                     Text(
-                        "На этом устройстве выключено. Требуется подтвердить удаление " +
-                            "регистрации на сервере.",
+                        "На этом устройстве выключено. Android повторит удаление " +
+                            "регистрации на сервере автоматически при наличии сети.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     Button(onClick = { retryServerRevoke() }, enabled = !busy) {
@@ -162,6 +205,7 @@ fun PushSettings(session: String, me: User) {
                             // Local permission takes precedence over network success.
                             // Data-only FCM is always filtered through this local flag.
                             PushOptState.disableLocally(context, me.id, session)
+                            runCatching { FirebaseMessaging.getInstance().isAutoInitEnabled = false }
                             enabled = false
                             revokePending = true
                             notice = "На устройстве выключено. Отзываем регистрацию на сервере…"
