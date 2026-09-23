@@ -143,11 +143,12 @@ class MainActivity:ComponentActivity(){
 
 @Composable fun People(token:String,open:(User)->Unit){
  var users by remember{mutableStateOf<List<User>>(emptyList())};var q by remember{mutableStateOf("")};var loading by remember{mutableStateOf(false)};var loadError by remember{mutableStateOf(false)};var retry by remember{mutableIntStateOf(0)}
- LaunchedEffect(token,q,retry){loading=true;loadError=false;kotlinx.coroutines.delay(300);runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.users(token,q)}}.onSuccess{users=it}.onFailure{loadError=true};loading=false}
+ LaunchedEffect(token,q,retry){loading=true;loadError=false;users=emptyList();kotlinx.coroutines.delay(300);runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.users(token,q)}}.onSuccess{users=it}.onFailure{loadError=true};loading=false}
  Column(Modifier.fillMaxSize()){
   OutlinedTextField(q,{q=it},label={Text("Поиск по имени или логину")},singleLine=true,modifier=Modifier.fillMaxWidth().padding(16.dp))
   if(loading) LinearProgressIndicator(Modifier.fillMaxWidth())
   if(loadError){Column(Modifier.fillMaxWidth().padding(16.dp),horizontalAlignment=Alignment.CenterHorizontally){Text("Не удалось загрузить пользователей");Spacer(Modifier.height(8.dp));Button({retry++}){Text("Повторить")}}}
+  if(!loading&&!loadError&&users.isEmpty()){Box(Modifier.fillMaxWidth().padding(24.dp),contentAlignment=Alignment.Center){Text(if(q.isBlank())"Пользователей пока нет" else "Ничего не найдено",color=MaterialTheme.colorScheme.onSurfaceVariant)}}
   LazyColumn(Modifier.fillMaxSize()){
    items(users,key={it.id}){u->
     Row(Modifier.fillMaxWidth().clickable{open(u)}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){
