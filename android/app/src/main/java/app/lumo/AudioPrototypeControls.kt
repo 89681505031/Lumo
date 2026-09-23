@@ -10,6 +10,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import org.json.JSONObject
@@ -30,6 +33,7 @@ fun AudioPrototypeControls(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
     var status by remember(call.id) { mutableStateOf("Микрофон выключен") }
     var busy by remember(call.id) { mutableStateOf(false) }
     var engine by remember(call.id) { mutableStateOf<WebRtcAudioSession?>(null) }
@@ -207,8 +211,17 @@ fun AudioPrototypeControls(
         }
     }
 
-    DisposableEffect(call.id) {
+    DisposableEffect(call.id, lifecycleOwner) {
+        // A Compose screen can stay alive after pressing Home. Debug audio must
+        // stop immediately when its host activity is no longer visible.
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP && (engine != null || busy)) {
+                stop("Тестовое аудио остановлено: приложение свернуто")
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
             // Invalidate BEFORE cleanup: any late TURN response cannot reopen audio.
             gate.dispose()
             startupJob?.cancel()
