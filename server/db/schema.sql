@@ -49,3 +49,15 @@ create table if not exists user_blocks (
   constraint no_self_block check (blocker_id<>blocked_id)
 );
 create index if not exists user_blocks_blocked_idx on user_blocks(blocked_id,blocker_id);
+
+-- Push tokens are scoped to the authenticated session and disappear on logout.
+-- The future sender MUST join sessions and require expires_at > now().
+create table if not exists push_devices (
+  session_token uuid primary key references sessions(token) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  token_hash char(64) unique not null,
+  fcm_token text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists push_devices_user_idx on push_devices(user_id);
