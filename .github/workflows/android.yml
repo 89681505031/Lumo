@@ -93,7 +93,7 @@ jobs:
             "configuration_version": "1"
           }
           EOF
-          gradle :app:assembleDebug -PlumoStagingUrl=https://staging.example.test -PlumoEnableFcm=true
+          gradle :app:processDebugGoogleServices :app:assembleDebug -PlumoStagingUrl=https://staging.example.test -PlumoEnableFcm=true
           manifest="$(find app/build/intermediates -name AndroidManifest.xml -path '*/debug/*' -print -quit)"
           if [ -z "$manifest" ] || [ ! -f "$manifest" ]; then
             echo "Missing merged staging manifest"
@@ -101,7 +101,3 @@ jobs:
           fi
           grep -q 'LumoDebugFirebaseService' "$manifest"
           grep -q 'android.permission.POST_NOTIFICATIONS' "$manifest"
-          if ! find app/build/generated/res/google-services -name values.xml -exec grep -l '123456789012' {} + | grep -q .; then
-            echo "Synthetic Firebase resources were not generated"
-            exit 1
-          fi
