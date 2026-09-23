@@ -148,6 +148,7 @@ wss.on("connection", async (ws, req) => {
   }
   ws.on("message", async raw => {
     try {
+      if (sockets.get(userId) !== ws) return ws.close(1008, "Connection replaced");
       if(raw.length>16_384)return ws.close(1009,"Message too large");
       const now=Date.now();if(now-socketWindowStart>=10_000){socketWindowStart=now;socketMessageCount=0;}if(++socketMessageCount>100)return ws.close(1008,"Rate limit");
       const data = JSON.parse(raw.toString());
