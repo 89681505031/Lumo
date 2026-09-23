@@ -72,7 +72,8 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
         headers:{...(token?{Authorization:"Bearer "+token}:{}),...(body?{"content-type":"application/json"}:{})},
         ...(body?{body:JSON.stringify(body)}:{})
       });
-      return {status:r.status,json:await r.json()};
+      const raw=await r.text();
+      return {status:r.status,json:raw ? JSON.parse(raw) : null};
     }
     const testPass="test-"+randomUUID()+"-Secure";
     const first=await request("/api/register","POST",null,{username:"a"+randomUUID().slice(0,8),displayName:"Alice",password:testPass});
