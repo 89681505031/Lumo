@@ -26,18 +26,28 @@ export const retrySeconds = attempts => Math.min(300,20*Math.pow(2,Math.min(atte
 // A worker crash after FCM succeeds may cause one repeated generic push.
 export async function dispatchPushBatch({db,send,max=12}) {
   const limit=Math.max(1,Math.min(20,Math.floor(max)));
+  // A process may crash repeatedly with its provider request in flight.
+  // Expired 4-attempt leases are terminal; do not resurrect the job forever.
+  const exhausted=await db.query(`with expired as (
+    select id from push_outbox where status='pending' and attempts>=4
+      and (lease_until is null or lease_until<=now())
+    order by available_at,id for update skip locked limit $1
+  ) update push_outbox o
+    set status='dropped',processed_at=now(),lease_until=null,
+        last_error_code='lease_exhausted'
+    from expired where o.id=expired.id returning o.id`,[limit]);
   // Separate, short transactions: workers do not hold row locks across FCM.
   // A two-minute lease prevents simultaneous claims. The claim's monotonically
   // increasing 'attempts' also fences off stale workers after lease expiry.
   const claimed=await db.query(`with due as (
-    select id from push_outbox where status='pending'
+    select id from push_outbox where status='pending' and attempts<4
       and available_at<=now() and (lease_until is null or lease_until<=now())
     order by available_at,id for update skip locked limit $1
   ) update push_outbox o set attempts=o.attempts+1,
       lease_until=now()+interval '2 minutes'
     from due where o.id=due.id
     returning o.id,o.message_id,o.session_token,o.recipient_id,o.attempts,o.created_at`,[limit]);
-  let sent=0,dropped=0,retried=0;
+  let sent=0,dropped=exhausted.rowCount,retried=0;
   for(const job of claimed.rows) {
     // Re-check ownership and consent for EACH job. If the user logs out,
     // un-registers, reads the message or blocks the sender before dispatch,
@@ -101,7 +111,7 @@ export async function dispatchPushBatch({db,send,max=12}) {
   }
   // Keep old metadata bounded even when no subsequent messages arrive.
   await db.query("delete from push_outbox where created_at<now()-interval '1 day'");
-  return {processed:claimed.rowCount,sent,dropped,retried};
+  return {processed:claimed.rowCount+exhausted.rowCount,sent,dropped,retried};
 }
 
 let firebaseMessaging;
