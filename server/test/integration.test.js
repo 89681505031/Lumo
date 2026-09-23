@@ -198,7 +198,7 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(recipientSearch.json.length,1);
     const thirdPartySearch=await request("/api/messages/search/"+b.user.id+"?q=live","GET",c.token);
     assert.deepEqual(thirdPartySearch.json,[],"Search may not see someone else's conversation");
-    const literalSearch=await request("/api/messages/search/"+b.user.id+"?q=%25","GET",a.token);
+    const literalSearch=await request("/api/messages/search/"+b.user.id+"?q=%25_","GET",a.token);
     assert.deepEqual(literalSearch.json,[],"SQL wildcards are interpreted as literal text");
     assert.equal((await request("/api/messages/search/"+b.user.id+"?q=x","GET",a.token)).status,400);
     assert.equal((await request("/api/messages/search/bad?q=valid","GET",a.token)).status,400);
