@@ -100,6 +100,7 @@ class MainActivity:ComponentActivity(){
   Spacer(Modifier.height(8.dp))
   Text(if(loginMode)"С возвращением" else "Ближе к важным людям",style=MaterialTheme.typography.titleMedium)
   Spacer(Modifier.height(28.dp))
+  Column(Modifier.fillMaxWidth().lumoGlass(30).padding(20.dp)){
   if(!loginMode){
    OutlinedTextField(name,{name=it},label={Text("Имя")},singleLine=true,modifier=Modifier.fillMaxWidth())
    Spacer(Modifier.height(10.dp))
@@ -126,6 +127,7 @@ class MainActivity:ComponentActivity(){
   }
   TextButton(onClick={loginMode=!loginMode;password="";err=""},enabled=!busy,modifier=Modifier.fillMaxWidth()){
    Text(if(loginMode)"Нет аккаунта? Зарегистрироваться" else "Уже есть аккаунт? Войти")
+  }
   }
  }}
 }
@@ -227,7 +229,7 @@ class MainActivity:ComponentActivity(){
  Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
   Spacer(Modifier.height(24.dp));Box(Modifier.size(92.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(me.displayName.take(1).uppercase(),style=MaterialTheme.typography.displaySmall,fontWeight=FontWeight.Bold)}
   Spacer(Modifier.height(16.dp));Text(me.displayName,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text("@"+me.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
-  Spacer(Modifier.height(20.dp));Card(Modifier.fillMaxWidth().lumoGlass()){Column(Modifier.padding(18.dp)){
+  Spacer(Modifier.height(20.dp));Card(Modifier.fillMaxWidth().lumoGlass(),colors=CardDefaults.cardColors(containerColor=Color(0x447F96CC))){Column(Modifier.padding(18.dp)){
    Text("Профиль",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(8.dp))
    if(editing){
     OutlinedTextField(name,{name=it;profileError=""},label={Text("Имя")},singleLine=true,modifier=Modifier.fillMaxWidth())
@@ -235,7 +237,7 @@ class MainActivity:ComponentActivity(){
     Spacer(Modifier.height(10.dp));Row{Button({saving=true;scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.updateMe(token,name)}}.onSuccess{profileChanged(it);editing=false}.onFailure{profileError="Не удалось сохранить"};saving=false}},enabled=!saving&&name.isNotBlank()){Text(if(saving)"Сохраняем…" else "Сохранить")};Spacer(Modifier.width(8.dp));TextButton({name=me.displayName;editing=false}){Text("Отмена")}}
    }else Button({editing=true},modifier=Modifier.fillMaxWidth()){Text("Редактировать профиль")}
   }}
-  Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text("Обновление",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text(updateText);Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(checking)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp));if(progress>=0){Spacer(Modifier.height(12.dp));LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth());Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp))};update?.let{u->if(progress<0){Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl){p->scope.launch{progress=p;updateText=if(p<0)"Не удалось загрузить обновление" else if(p<100)"Загружаем обновление…" else "Устанавливаем обновление…"}}},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}}}}
+  Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth().lumoGlass(),colors=CardDefaults.cardColors(containerColor=Color(0x447F96CC))){Column(Modifier.padding(18.dp)){Text("Обновление",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text(updateText);Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(checking)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp));if(progress>=0){Spacer(Modifier.height(12.dp));LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth());Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp))};update?.let{u->if(progress<0){Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl){p->scope.launch{progress=p;updateText=if(p<0)"Не удалось загрузить обновление" else if(p<100)"Загружаем обновление…" else "Устанавливаем обновление…"}}},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}}}}
   Spacer(Modifier.height(14.dp))
   OutlinedButton(onClick={
    loggingOut=true;logoutError=""
