@@ -154,6 +154,16 @@ app.get("/api/messages/:peerId", auth, async (req, res) => {
   catch(error){console.error("Message history failed",error);res.status(503).json({error:"service_unavailable"});}
 });
 
+app.get("/api/messages/search/:peerId",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  const id=req.params.peerId;
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) || id===req.user.id)
+    return res.status(400).json({error:"invalid_peer_id"});
+  const q=typeof req.query.q==="string" ? req.query.q.trim() : "";
+  if(q.length<2 || q.length>100)return res.status(400).json({error:"invalid_search_query"});
+  try{return res.json(await postgresStore.searchMessages(req.user.id,id,q));}
+  catch(error){console.error("Search messages failed",error);return res.status(503).json({error:"service_unavailable"});}
+});
+
 // HTTP transport is a durable fallback when WebSocket peers connect to different instances.
 const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
