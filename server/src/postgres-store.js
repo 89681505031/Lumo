@@ -136,14 +136,14 @@ export const postgresStore = {
   },
   async saveMessage(m) {
     if(m.clientMessageId){
-      const inserted=await dbQuery(`insert into messages(id,sender_id,recipient_id,text,created_at,delivered_at,read_at,client_message_id) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict (sender_id,client_message_id) where client_message_id is not null do nothing returning *`,[m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt,m.clientMessageId]);
+      const inserted=await dbQuery(`insert into messages(id,sender_id,recipient_id,text,created_at,delivered_at,read_at,client_message_id,original_text) values($1,$2,$3,$4,$5,$6,$7,$8,$4) on conflict (sender_id,client_message_id) where client_message_id is not null do nothing returning *`,[m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt,m.clientMessageId]);
       if(inserted.rows[0]) return {message:mapMessage(inserted.rows[0]),inserted:true};
       const existing=await dbQuery("select * from messages where sender_id=$1 and client_message_id=$2",[m.from,m.clientMessageId]);
       const row=existing.rows[0];
-      if(!row || row.recipient_id!==m.to || row.text!==m.text){const error=new Error("client_message_id_conflict");error.code="CLIENT_MESSAGE_ID_CONFLICT";throw error;}
+      if(!row || row.recipient_id!==m.to || (row.original_text ?? row.text)!==m.text){const error=new Error("client_message_id_conflict");error.code="CLIENT_MESSAGE_ID_CONFLICT";throw error;}
       return {message:mapMessage(row),inserted:false};
     }
-    await dbQuery("insert into messages(id,sender_id,recipient_id,text,created_at,delivered_at,read_at) values($1,$2,$3,$4,$5,$6,$7)",[m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt]);
+    await dbQuery("insert into messages(id,sender_id,recipient_id,text,created_at,delivered_at,read_at,original_text) values($1,$2,$3,$4,$5,$6,$7,$4)",[m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt]);
     return {message:m,inserted:true};
   },
   async markMessageDelivered(messageId,userId) {
