@@ -72,7 +72,7 @@ class MainActivity:ComponentActivity(){
    restoring=true;restoreError=false
    runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.me(t)}}
     .onSuccess{me=it}
-    .onFailure{error->if(error is SessionExpiredException){prefs.edit().remove("token").apply();token=null}else restoreError=true}
+    .onFailure{error->if(error is SessionExpiredException){PushLifecycle.forgetOnLogout(context);prefs.edit().remove("token").apply();token=null}else restoreError=true}
    restoring=false
   }
  }
@@ -84,7 +84,7 @@ class MainActivity:ComponentActivity(){
    Spacer(Modifier.height(16.dp));Button({restoreRetry++}){Text("Повторить")}
   }
   token==null || me==null -> Register{t,u->prefs.edit().putString("token",t).apply();token=t;me=u}
-  peer==null -> Home(token!!,me!!,{peer=it},{me=it},darkMode,{value->darkMode=value;uiPrefs.edit().putBoolean("dark_mode",value).apply()}){prefs.edit().clear().apply();token=null;me=null;peer=null;logoutNonce++}
+  peer==null -> Home(token!!,me!!,{peer=it},{me=it},darkMode,{value->darkMode=value;uiPrefs.edit().putBoolean("dark_mode",value).apply()}){PushLifecycle.forgetOnLogout(context);prefs.edit().clear().apply();token=null;me=null;peer=null;logoutNonce++}
   else -> Chat(token!!,me!!,peer!!){peer=null}
  }
  }
@@ -263,6 +263,7 @@ class MainActivity:ComponentActivity(){
    }else Button({editing=true},modifier=Modifier.fillMaxWidth()){Text("Редактировать профиль")}
   }}
   Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Row(Modifier.fillMaxWidth().padding(18.dp),verticalAlignment=Alignment.CenterVertically){Text("Тёмная тема",modifier=Modifier.weight(1f));Switch(checked=darkMode,onCheckedChange=onDarkModeChange)}}
+  Spacer(Modifier.height(14.dp));PushSettings(token,me)
   Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){
    Text("Заблокированные пользователи",fontWeight=FontWeight.SemiBold)
    if(blocksError.isNotBlank())Text(blocksError,color=MaterialTheme.colorScheme.error)
