@@ -104,8 +104,20 @@ const sockets = new Map();
 
 function sendTo(userId, payload) {
   const ws = sockets.get(userId);
-  if (ws?.readyState !== ws.OPEN) return false;
-  try { ws.send(JSON.stringify(payload)); return true; } catch { return false; }
+  if (!ws) return false;
+  if (ws.readyState !== ws.OPEN) {
+    if (sockets.get(userId) === ws) sockets.delete(userId);
+    return false;
+  }
+  try {
+    ws.send(JSON.stringify(payload));
+    return true;
+  } catch (error) {
+    console.error("WebSocket send failed", error);
+    if (sockets.get(userId) === ws) sockets.delete(userId);
+    ws.terminate();
+    return false;
+  }
 }
 
 wss.on("connection", async (ws, req) => {
