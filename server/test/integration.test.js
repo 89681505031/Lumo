@@ -85,6 +85,10 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(second.status,201);
     assert.equal(third.status,201);
     const a=first.json,b=second.json,c=third.json;
+    // The inbox must load even before the user has sent any messages.
+    const initialChats=await request("/api/conversations","GET",a.token);
+    assert.equal(initialChats.status,200,"Empty inbox must not fail on ambiguous SQL columns");
+    assert.deepEqual(initialChats.json,[]);
     assert.equal(a.user.password_hash,undefined);
     const invalidLogin=await request("/api/login","POST",null,{username:a.user.username,password:"invalid-"+randomUUID()});
     assert.equal(invalidLogin.status,401);
@@ -124,6 +128,15 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
       to:b.user.id,text:"from another conversation",clientMessageId:randomUUID()
     });
     assert.equal(fromCharlie.status,201);
+    const aliceChats=await request("/api/conversations","GET",a.token,null,otherBase);
+    assert.equal(aliceChats.status,200);
+    assert.equal(aliceChats.json.length,1);
+    assert.equal(aliceChats.json[0].peer.id,b.user.id);
+    assert.equal(aliceChats.json[0].lastMessage,payload.text);
+    const bobChats=await request("/api/conversations","GET",b.token);
+    assert.equal(bobChats.status,200);
+    assert.equal(bobChats.json.length,2,"Inbox includes both conversation peers");
+    assert.deepEqual(new Set(bobChats.json.map(chat=>chat.peer.id)),new Set([a.user.id,c.user.id]));
     const received=await request("/api/messages/"+a.user.id,"GET",b.token,null,otherBase);
     assert.equal(received.status,200);
     assert.equal(received.json.length,1);
@@ -140,6 +153,12 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(history.status,200);
     assert.equal(history.json.length,1);
     assert.ok(history.json[0].readAt,"Sender can recover read status across instances");
+    const followUp=await request("/api/messages","POST",b.token,{to:a.user.id,text:"most recent message",clientMessageId:randomUUID()});
+    assert.equal(followUp.status,201);
+    const updatedChats=await request("/api/conversations","GET",a.token);
+    assert.equal(updatedChats.status,200);
+    assert.equal(updatedChats.json.length,1);
+    assert.equal(updatedChats.json[0].lastMessage,"most recent message");
     const socketClosed=new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>reject(new Error("Logged-out WebSocket remains open")),3000);
       socket.once("close",code=>{clearTimeout(timer);resolve(code);});
