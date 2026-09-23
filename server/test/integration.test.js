@@ -22,6 +22,7 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     stdio:"ignore"
   });
   let socket;
+  let replica;
   try{
     const base=`http://127.0.0.1:${port}`;
     let healthy=false;
@@ -34,8 +35,29 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
       await new Promise(resolve=>setTimeout(resolve,100));
     }
     assert.ok(healthy,"PostgreSQL schema did not become ready");
-    async function request(path,method="GET",token=null,body=null){
-      const r=await fetch(base+path,{
+    // Simulate two Vercel function instances sharing one PostgreSQL database.
+    const listener2=createServer();
+    await new Promise((resolve,reject)=>listener2.once("error",reject).listen(0,"127.0.0.1",resolve));
+    const otherPort=listener2.address().port;
+    await new Promise(resolve=>listener2.close(resolve));
+    replica=spawn(process.execPath,["src/index.js"],{
+      cwd:process.cwd(),
+      env:{...process.env,PORT:String(otherPort),DATABASE_URL:databaseUrl,DATABASE_SSL:"false"},
+      stdio:"ignore"
+    });
+    const otherBase=`http://127.0.0.1:${otherPort}`;
+    let replicaHealthy=false;
+    for(let i=0;i<100;i++){
+      if(replica.exitCode!==null)throw new Error("Second integration server exited");
+      try{
+        const r=await fetch(otherBase+"/health");
+        if(r.ok){replicaHealthy=true;break;}
+      }catch{}
+      await new Promise(resolve=>setTimeout(resolve,100));
+    }
+    assert.ok(replicaHealthy,"Second server did not share the ready database");
+    async function request(path,method="GET",token=null,body=null,origin=base){
+      const r=await fetch(origin+path,{
         method,
         headers:{...(token?{Authorization:"Bearer "+token}:{}),...(body?{"content-type":"application/json"}:{})},
         ...(body?{body:JSON.stringify(body)}:{})
@@ -85,7 +107,7 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
       to:b.user.id,text:"from another conversation",clientMessageId:randomUUID()
     });
     assert.equal(fromCharlie.status,201);
-    const received=await request("/api/messages/"+a.user.id,"GET",b.token);
+    const received=await request("/api/messages/"+a.user.id,"GET",b.token,null,otherBase);
     assert.equal(received.status,200);
     assert.equal(received.json.length,1);
     assert.ok(received.json[0].deliveredAt,"Fetching history records delivery");
@@ -93,7 +115,7 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(unopened.status,200);
     assert.equal(unopened.json.length,1);
     assert.equal(unopened.json[0].deliveredAt,null,"Fetching Alice must not mark Charlie delivered");
-    const read=await request("/api/messages/read","POST",b.token,{ids:[sent.json.id]});
+    const read=await request("/api/messages/read","POST",b.token,{ids:[sent.json.id]},otherBase);
     assert.equal(read.status,200);
     assert.equal(read.json.receipts.length,1);
     assert.ok(read.json.receipts[0].readAt);
@@ -106,10 +128,12 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
       socket.once("close",code=>{clearTimeout(timer);resolve(code);});
       socket.once("error",error=>{clearTimeout(timer);reject(error);});
     });
-    const logout=await fetch(base+"/api/logout",{
+    const logout=await fetch(otherBase+"/api/logout",{
       method:"POST",headers:{Authorization:"Bearer "+a.token}
     });
     assert.equal(logout.status,204);
+    // Revocation on another instance must block the next message on this socket.
+    socket.send(JSON.stringify({type:"read",ids:[]}));
     assert.equal(await socketClosed,1008);
     const revoked=await request("/api/me","GET",a.token);
     assert.equal(revoked.status,401);
@@ -142,6 +166,7 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(await expiredSocketClose,1008);
   }finally{
     socket?.terminate();
+    replica?.kill();
     child.kill();
   }
 });
