@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.withLock
@@ -84,6 +85,18 @@ fun PushSettings(session: String, me: User) {
     LaunchedEffect(session, me.id) {
         if (PushOptState.revokePending(context, me.id, session)) {
             LumoPushSyncWorker.schedule(context)
+        }
+    }
+
+    // WorkManager may finish while the Profile screen remains on screen:
+    // never leave a stale "pending" warning after confirmed server deletion.
+    LaunchedEffect(session, me.id, revokePending) {
+        while (revokePending) {
+            delay(4_000)
+            if (!PushOptState.revokePending(context, me.id, session)) {
+                revokePending = false
+                notice = "Регистрация уведомлений на сервере удалена."
+            }
         }
     }
 
