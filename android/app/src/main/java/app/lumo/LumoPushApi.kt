@@ -1,6 +1,7 @@
 package app.lumo
 
 import android.content.Context
+import android.app.NotificationManager
 import android.os.Build
 import android.Manifest
 import android.content.pm.PackageManager
@@ -59,6 +60,10 @@ internal object PushOptState {
         return if (userId.isNotBlank() && revokePending(context, userId, session))
             userId to session else null
     }
+    fun dismissVisibleNotifications(context: Context) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel("lumo_generic", 207)
+    }
     // Make the local opt-out effective BEFORE attempting a network request.
     // A private pending flag lets the current session retry its server revoke.
     @Synchronized
@@ -69,6 +74,7 @@ internal object PushOptState {
             .putBoolean("enabled", false)
             .putBoolean("pending_revoke", true)
             .commit()
+        dismissVisibleNotifications(context)
     }
     @Synchronized
     fun clear(context: Context) {
