@@ -85,15 +85,16 @@ fun LumoBackdrop(modifier:Modifier=Modifier,content:@Composable BoxScope.() -> U
     val appearance=LocalLumoAppearance.current
     val selected=appearance.theme
     val lowPower=appearance.lowPower || selected==LumoVisualTheme.MINIMAL
-    val twinkle=if(!lowPower && appearance.animated) {
+    // Read the animated State inside Canvas, so only the draw phase invalidates.
+    // Message lists and input controls do not recompose every animation frame.
+    val twinkleState=if(!lowPower && appearance.animated) {
         val infinite=rememberInfiniteTransition(label="Lumo star twinkle")
-        val alpha by infinite.animateFloat(
+        infinite.animateFloat(
             initialValue=.47f,targetValue=1f,
             animationSpec=infiniteRepeatable(tween(durationMillis=11000),RepeatMode.Reverse),
             label="star intensity"
         )
-        alpha
-    } else 1f
+    } else null
     val spaceColors=lumoSpaceColors(selected)
     val glows=when(selected){
         LumoVisualTheme.AURORA->listOf(Color(0xFF29EDDD),Color(0xFF3094FF),Color(0xFF4DBDCC))
@@ -102,6 +103,7 @@ fun LumoBackdrop(modifier:Modifier=Modifier,content:@Composable BoxScope.() -> U
     }
     Box(modifier.background(Brush.verticalGradient(spaceColors))) {
         Canvas(Modifier.fillMaxSize()) {
+            val twinkle=twinkleState?.value ?: 1f
             val w = size.width
             val h = size.height
             val unit = minOf(w,h)
