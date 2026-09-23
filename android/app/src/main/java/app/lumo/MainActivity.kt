@@ -61,6 +61,7 @@ class MainActivity:ComponentActivity(){
  var token by remember{mutableStateOf(prefs.getString("token",null))}
  var me by remember{mutableStateOf<User?>(null)}
  var peer by remember{mutableStateOf<User?>(null)}
+ var activeGroup by remember{mutableStateOf<LumoGroup?>(null)}
  var logoutNonce by remember{mutableIntStateOf(0)}
  var restoring by remember{mutableStateOf(token!=null)}
  var restoreError by remember{mutableStateOf(false)}
@@ -84,7 +85,8 @@ class MainActivity:ComponentActivity(){
    Spacer(Modifier.height(16.dp));Button({restoreRetry++}){Text("Повторить")}
   }
   token==null || me==null -> Register{t,u->prefs.edit().putString("token",t).apply();token=t;me=u}
-  peer==null -> Home(token!!,me!!,{peer=it},{me=it},darkMode,{value->darkMode=value;uiPrefs.edit().putBoolean("dark_mode",value).apply()}){prefs.edit().clear().apply();token=null;me=null;peer=null;logoutNonce++}
+  peer==null&&activeGroup==null -> Home(token!!,me!!,{peer=it},{activeGroup=it},{me=it},darkMode,{value->darkMode=value;uiPrefs.edit().putBoolean("dark_mode",value).apply()}){prefs.edit().clear().apply();token=null;me=null;peer=null;activeGroup=null;logoutNonce++}
+  activeGroup!=null -> GroupRoom(token!!,me!!,activeGroup!!){activeGroup=null}
   else -> Chat(token!!,me!!,peer!!){peer=null}
  }
  }
@@ -133,7 +135,7 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Home(token:String,me:User,open:(User)->Unit,profileChanged:(User)->Unit,darkMode:Boolean,onDarkModeChange:(Boolean)->Unit,logout:()->Unit){
+@Composable fun Home(token:String,me:User,open:(User)->Unit,openGroup:(LumoGroup)->Unit,profileChanged:(User)->Unit,darkMode:Boolean,onDarkModeChange:(Boolean)->Unit,logout:()->Unit){
  var tab by remember{mutableIntStateOf(0)}
  Scaffold(
   topBar={Surface(shadowElevation=2.dp){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(20.dp,14.dp),verticalAlignment=Alignment.CenterVertically){
@@ -142,13 +144,15 @@ class MainActivity:ComponentActivity(){
   bottomBar={NavigationBar{
    NavigationBarItem(selected=tab==0,onClick={tab=0},icon={Text("●")},label={Text("Чаты")})
    NavigationBarItem(selected=tab==1,onClick={tab=1},icon={Text("⌕")},label={Text("Люди")})
-   NavigationBarItem(selected=tab==2,onClick={tab=2},icon={Text("☺")},label={Text("Профиль")})
+   NavigationBarItem(selected=tab==2,onClick={tab=2},icon={Text("♧")},label={Text("Группы")})
+   NavigationBarItem(selected=tab==3,onClick={tab=3},icon={Text("☺")},label={Text("Профиль")})
   }}
  ){pad->
   Box(Modifier.padding(pad).fillMaxSize()){
    when(tab){
     0->Chats(token,{tab=1},open)
     1->People(token,open)
+    2->GroupsScreen(token,openGroup)
     else->Profile(token,me,profileChanged,darkMode,onDarkModeChange,logout)
    }
   }
@@ -442,7 +446,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
 fun formatMessageTime(iso:String):String=runCatching{java.time.format.DateTimeFormatter.ofPattern("HH:mm").withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.parse(iso))}.getOrDefault("")
 
 object Api{
- private const val HTTP="https://lumo-gamma-seven.vercel.app";private const val WS="wss://lumo-gamma-seven.vercel.app/ws";val httpClient=OkHttpClient.Builder().connectTimeout(15,java.util.concurrent.TimeUnit.SECONDS).readTimeout(30,java.util.concurrent.TimeUnit.SECONDS).writeTimeout(30,java.util.concurrent.TimeUnit.SECONDS).pingInterval(25,java.util.concurrent.TimeUnit.SECONDS).retryOnConnectionFailure(true).build();private val c=httpClient
+ internal const val HTTP="https://lumo-gamma-seven.vercel.app";private const val WS="wss://lumo-gamma-seven.vercel.app/ws";val httpClient=OkHttpClient.Builder().connectTimeout(15,java.util.concurrent.TimeUnit.SECONDS).readTimeout(30,java.util.concurrent.TimeUnit.SECONDS).writeTimeout(30,java.util.concurrent.TimeUnit.SECONDS).pingInterval(25,java.util.concurrent.TimeUnit.SECONDS).retryOnConnectionFailure(true).build();private val c=httpClient
  fun register(login:String,name:String,password:String):Pair<String,User>{val j=JSONObject().put("username",login).put("displayName",name).put("password",password);val r=Request.Builder().url(HTTP+"/api/register").post(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->val body=x.body?.string().orEmpty();if(!x.isSuccessful){val code=runCatching{JSONObject(body).optString("error")}.getOrDefault("");error(when(code){"database_unavailable"->"Сервис временно недоступен: база данных не подключена";"username_taken"->"Этот логин уже занят";"invalid_profile"->"Проверь имя и логин";"invalid_password"->"Пароль должен содержать от 10 до 128 символов";else->"Ошибка регистрации ("+x.code+")"})};val o=JSONObject(body);return o.getString("token") to user(o.getJSONObject("user"))}}
  fun login(login:String,password:String):Pair<String,User>{
   val body=JSONObject().put("username",login).put("password",password)
