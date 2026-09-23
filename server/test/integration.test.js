@@ -102,9 +102,9 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(incoming.json.find(x=>x.id===callId).status,"ringing");
     const cannotSelfAccept=await request("/api/calls/"+callId+"/respond","POST",a.token,{action:"accept"});
     assert.equal(cannotSelfAccept.status,403);
-    const accepted=await request("/api/calls/"+callId+"/respond","POST",b.token,{action:"accept"},otherBase);
-    assert.equal(accepted.status,200);
-    assert.equal(accepted.json.status,"accepted");
+    const callAccepted=await request("/api/calls/"+callId+"/respond","POST",b.token,{action:"accept"},otherBase);
+    assert.equal(callAccepted.status,200);
+    assert.equal(callAccepted.json.status,"accepted");
     const offer={clientSignalId:randomUUID(),type:"offer",payload:{sdp:"v=0\\r\\n"}};
     const wrongRole=await request("/api/calls/"+callId+"/signals","POST",b.token,offer,otherBase);
     assert.equal(wrongRole.status,403);
