@@ -569,45 +569,136 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    }.onFailure{historyError=true}
   }
  }
- LumoBackdrop(Modifier.fillMaxSize()){Scaffold(containerColor=Color.Transparent,
-  topBar={Surface(color=Color(0x447B92C7)){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp),verticalAlignment=Alignment.CenterVertically){
-   TextButton(back){Text("‹ Назад")};Box(Modifier.size(40.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(peer.displayName.take(1).uppercase())};Spacer(Modifier.width(10.dp));Column{Text(peer.displayName,fontWeight=FontWeight.Bold);Text("@"+peer.username,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
-  }}}
- ){pad->
-  Column(Modifier.padding(pad).fillMaxSize()){
-   if(socketError.isNotEmpty()){Surface(color=MaterialTheme.colorScheme.errorContainer,modifier=Modifier.fillMaxWidth()){Text(socketError,modifier=Modifier.padding(10.dp),color=MaterialTheme.colorScheme.onErrorContainer)}}
-   if(!connected){
-    Surface(color=MaterialTheme.colorScheme.errorContainer,modifier=Modifier.fillMaxWidth()){
-     Text("Нет прямого соединения. Сообщения синхронизируются через сервер…",modifier=Modifier.padding(10.dp),color=MaterialTheme.colorScheme.onErrorContainer)
-    }
-   }
-   if(historyError){Surface(color=MaterialTheme.colorScheme.errorContainer,modifier=Modifier.fillMaxWidth()){Text("Не удалось загрузить историю. Повторим после подключения.",modifier=Modifier.padding(10.dp),color=MaterialTheme.colorScheme.onErrorContainer)}}
-   LazyColumn(Modifier.weight(1f).fillMaxWidth(),contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-    items(msgs,key={it.id}){m->
-     Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.from==me.id)Arrangement.End else Arrangement.Start){
-      Surface(shape=RoundedCornerShape(22.dp),color=if(m.from==me.id)Color(0xCC8C9DEB) else Color(0x8897B1E0),modifier=Modifier.widthIn(max=300.dp).lumoGlass(22)){
-       Column(Modifier.padding(14.dp,8.dp)){Text(m.text);Row(Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically){if(m.createdAt.isNotBlank())Text(formatMessageTime(m.createdAt),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(m.from==me.id){Spacer(Modifier.width(5.dp));Text(if(m.readAt.isNotBlank())"✓✓" else if(m.deliveredAt.isNotBlank())"✓✓" else "✓",style=MaterialTheme.typography.labelSmall,color=if(m.readAt.isNotBlank())MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)}}}
-      }
+ LumoBackdrop(Modifier.fillMaxSize()){
+  Scaffold(
+   containerColor=Color.Transparent,
+   topBar={
+    Row(
+     Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=9.dp,vertical=8.dp)
+      .lumoGlass(22).padding(horizontal=5.dp,vertical=4.dp),
+     verticalAlignment=Alignment.CenterVertically
+    ){
+     TextButton(back){Text("‹",style=MaterialTheme.typography.headlineMedium,color=Color.White)}
+     LumoNeonAvatar(peer.displayName,size=43.dp)
+     Spacer(Modifier.width(10.dp))
+     Column(Modifier.weight(1f)){
+      Text(peer.displayName,fontWeight=FontWeight.Bold,color=Color.White,
+       style=MaterialTheme.typography.titleMedium,maxLines=1)
+      Text("@"+peer.username,style=MaterialTheme.typography.labelMedium,
+       color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
      }
     }
-    items(pending.filter{p->msgs.none{it.from==me.id&&it.clientMessageId==p.clientMessageId}},key={"pending-"+it.clientMessageId}){p->
-     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
-      Surface(shape=RoundedCornerShape(22.dp),color=Color(0xCC8C9DEB),modifier=Modifier.widthIn(max=300.dp).lumoGlass(22)){
-       Column(Modifier.padding(14.dp,8.dp)){
-        Text(p.text)
-        Text("Отправляется…",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   }
+  ){pad->
+   Column(Modifier.fillMaxSize().padding(pad)){
+    if(socketError.isNotEmpty()){
+     Box(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(16).padding(10.dp)){
+      Text(socketError,color=Color(0xFFFFD5E4),style=MaterialTheme.typography.bodySmall)
+     }
+    }
+    if(!connected){
+     Box(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(16).padding(10.dp)){
+      Text("Нет прямого соединения. Сообщения синхронизируются через сервер…",
+       color=MaterialTheme.colorScheme.onSurfaceVariant,style=MaterialTheme.typography.bodySmall)
+     }
+    }
+    if(historyError){
+     Box(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(16).padding(10.dp)){
+      Text("История пока недоступна. Повторим загрузку после подключения.",
+       color=Color(0xFFFFD5E4),style=MaterialTheme.typography.bodySmall)
+     }
+    }
+    LazyColumn(
+     Modifier.weight(1f).fillMaxWidth(),
+     contentPadding=PaddingValues(horizontal=13.dp,vertical=14.dp),
+     verticalArrangement=Arrangement.spacedBy(11.dp)
+    ){
+     items(msgs,key={it.id}){m->
+      val own=m.from==me.id
+      Row(
+       Modifier.fillMaxWidth(),
+       horizontalArrangement=if(own)Arrangement.End else Arrangement.Start,
+       verticalAlignment=Alignment.Bottom
+      ){
+       if(!own){
+        LumoNeonAvatar(peer.displayName,size=30.dp)
+        Spacer(Modifier.width(7.dp))
+       }
+       Box(Modifier.widthIn(max=290.dp).lumoBubble(own).padding(horizontal=14.dp,vertical=10.dp)){
+        Column {
+         Text(m.text,color=Color.White)
+         Spacer(Modifier.height(5.dp))
+         Row(
+          Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically
+         ){
+          if(m.createdAt.isNotBlank())Text(
+           formatMessageTime(m.createdAt),
+           color=Color.White.copy(alpha=.73f),
+           style=MaterialTheme.typography.labelSmall
+          )
+          if(own){
+           Spacer(Modifier.width(5.dp))
+           Text(
+            if(m.readAt.isNotBlank())"✓✓" else if(m.deliveredAt.isNotBlank())"✓✓" else "✓",
+            color=if(m.readAt.isNotBlank())LumoCyan else Color.White.copy(alpha=.75f),
+            style=MaterialTheme.typography.labelSmall
+           )
+          }
+         }
+        }
+       }
+      }
+     }
+     items(
+      pending.filter{p->msgs.none{it.from==me.id&&it.clientMessageId==p.clientMessageId}},
+      key={"pending-"+it.clientMessageId}
+     ){p->
+      Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
+       Box(Modifier.widthIn(max=290.dp).lumoBubble(true).padding(horizontal=14.dp,vertical=10.dp)){
+        Column{
+         Text(p.text,color=Color.White)
+         Text("Отправляется…",color=Color.White.copy(alpha=.7f),
+          style=MaterialTheme.typography.labelSmall)
+        }
        }
       }
      }
     }
+    Row(
+     Modifier.fillMaxWidth().imePadding().padding(horizontal=11.dp,vertical=8.dp)
+      .lumoGlass(30).padding(7.dp),
+     verticalAlignment=Alignment.Bottom
+    ){
+     OutlinedTextField(
+      value=input,onValueChange={input=it},placeholder={Text("Сообщение")},
+      modifier=Modifier.weight(1f),maxLines=4,
+      shape=RoundedCornerShape(22.dp)
+     )
+     Spacer(Modifier.width(7.dp))
+     LumoNeonButton(
+      text="➤",enabled=input.isNotBlank(),modifier=Modifier.width(56.dp),
+      onClick={
+       val text=input.trim()
+       if(text.isNotEmpty()){
+        val p=PendingMessage(java.util.UUID.randomUUID().toString(),text)
+        pending.add(p);savePending()
+        if(connected){
+         val sent=ws?.send(
+          JSONObject().put("type","message").put("to",peer.id)
+           .put("text",p.text).put("clientMessageId",p.clientMessageId).toString()
+         )==true
+         if(!sent){connected=false;ws?.close(1012,"retry")}
+        }
+        input=""
+       }
+      }
+     )
+    }
    }
-   Surface(color=Color.Transparent){Row(Modifier.fillMaxWidth().imePadding().padding(horizontal=12.dp,vertical=10.dp).lumoGlass(28).padding(8.dp),verticalAlignment=Alignment.Bottom){
-    OutlinedTextField(input,{input=it},placeholder={Text("Сообщение")},modifier=Modifier.weight(1f),maxLines=4,shape=RoundedCornerShape(24.dp))
-    Spacer(Modifier.width(8.dp));Button({val text=input.trim();if(text.isNotEmpty()){val p=PendingMessage(java.util.UUID.randomUUID().toString(),text);pending.add(p);savePending();if(connected){val sent=ws?.send(JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId).toString())==true;if(!sent){connected=false;ws?.close(1012,"retry")}};input=""}},enabled=input.isNotBlank(),contentPadding=PaddingValues(horizontal=18.dp,vertical=16.dp)){Text("➤")}
-   }}
   }
- }}
+ }
 }
+
 
 fun formatMessageTime(iso:String):String=runCatching{java.time.format.DateTimeFormatter.ofPattern("HH:mm").withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.parse(iso))}.getOrDefault("")
 
