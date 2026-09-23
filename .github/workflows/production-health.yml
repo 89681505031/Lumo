@@ -25,3 +25,11 @@ jobs:
         env:
           LUMO_PRODUCTION_URL: https://lumo-gamma-seven.vercel.app
         run: node --test server/test/production-smoke.test.js
+      - name: Diagnose production WebSocket upgrade (beta)
+        if: github.event_name != 'schedule'
+        continue-on-error: true
+        env:
+          LUMO_PRODUCTION_URL: https://lumo-gamma-seven.vercel.app
+        run: |
+          npm install --ignore-scripts --prefix server
+          node server/test/production-websocket.mjs
