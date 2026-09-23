@@ -224,6 +224,32 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.deepEqual(cleared.json,[]);
     const restored=await request("/api/messages","POST",c.token,{to:b.user.id,text:"after unblock",clientMessageId:randomUUID()});
     assert.equal(restored.status,201);
+
+    const pushToken="test-fcm:"+randomUUID()+randomUUID();
+    const invalidPush=await request("/api/devices/push","POST",a.token,{platform:"android",token:"short"});
+    assert.equal(invalidPush.status,400);
+    const unauthorizedPush=await request("/api/devices/push","POST",null,{platform:"android",token:pushToken});
+    assert.equal(unauthorizedPush.status,401);
+    const registered=await request("/api/devices/push","POST",a.token,{platform:"android",token:pushToken});
+    assert.equal(registered.status,200);
+    assert.deepEqual(registered.json,{registered:true},"Do not echo private push tokens in API responses");
+    const registeredAgain=await request("/api/devices/push","POST",a.token,{platform:"android",token:pushToken},otherBase);
+    assert.equal(registeredAgain.status,200,"Registration retries are idempotent across instances");
+    const moved=await request("/api/devices/push","POST",b.token,{platform:"android",token:pushToken},otherBase);
+    assert.equal(moved.status,200,"Switching accounts on one device transfers ownership");
+    const pushPool=new pg.Pool({connectionString:databaseUrl,ssl:false});
+    try{
+      const rows=await pushPool.query("select user_id,session_token,fcm_token from push_devices where fcm_token=$1",[pushToken]);
+      assert.equal(rows.rowCount,1,"At most one session owns one FCM token");
+      assert.equal(rows.rows[0].user_id,b.user.id);
+      assert.equal(rows.rows[0].session_token,b.token);
+      const revoked=await request("/api/devices/push","DELETE",b.token,null,otherBase);
+      assert.equal(revoked.status,204);
+      const gone=await pushPool.query("select 1 from push_devices where fcm_token=$1",[pushToken]);
+      assert.equal(gone.rowCount,0,"Revoking push registration removes the token");
+      const registerLogout=await request("/api/devices/push","POST",a.token,{platform:"android",token:pushToken});
+      assert.equal(registerLogout.status,200);
+    }finally{await pushPool.end();}
     const socketClosed=new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>reject(new Error("Logged-out WebSocket remains open")),3000);
       socket.once("close",code=>{clearTimeout(timer);resolve(code);});
@@ -233,6 +259,12 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
       method:"POST",headers:{Authorization:"Bearer "+a.token}
     });
     assert.equal(logout.status,204);
+
+    const postLogoutPool=new pg.Pool({connectionString:databaseUrl,ssl:false});
+    try{
+      const left=await postLogoutPool.query("select 1 from push_devices where session_token=$1",[a.token]);
+      assert.equal(left.rowCount,0,"Session revocation must cascade to push token cleanup");
+    }finally{await postLogoutPool.end();}
     // Revocation on another instance must block the next message on this socket.
     socket.send(JSON.stringify({type:"read",ids:[]}));
     assert.equal(await socketClosed,1008);

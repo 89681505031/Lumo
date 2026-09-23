@@ -47,6 +47,16 @@ export async function initDatabase() {
     constraint no_self_block check (blocker_id<>blocked_id)
   )`);
   await pool.query(`create index if not exists user_blocks_blocked_idx on user_blocks(blocked_id,blocker_id)`);
+  await pool.query(`create table if not exists push_devices (
+    session_token uuid primary key references sessions(token) on delete cascade,
+    user_id uuid not null references users(id) on delete cascade,
+    token_hash char(64) unique not null,
+    fcm_token text not null,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  )`);
+  await pool.query(`create index if not exists push_devices_user_idx on push_devices(user_id)`);
+
   return true;
 }
 export async function dbHealth() {
@@ -57,10 +67,11 @@ export async function dbHealth() {
     to_regclass('messages') as messages_table,
     to_regclass('conversation_prefs') as conversation_prefs_table,
     to_regclass('user_blocks') as user_blocks_table,
+    to_regclass('push_devices') as push_devices_table,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.conversation_prefs_table && row.user_blocks_table && row.password_column && row.session_expiry_column), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.conversation_prefs_table && row.user_blocks_table && row.push_devices_table && row.password_column && row.session_expiry_column), now:row.now };
 }
