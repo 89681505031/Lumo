@@ -41,8 +41,8 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
       });
       return {status:r.status,json:await r.json()};
     }
-    const first=await request("/api/register","POST",null,{username:"a"+randomUUID().slice(0,12),displayName:"Alice"});
-    const second=await request("/api/register","POST",null,{username:"b"+randomUUID().slice(0,12),displayName:"Bob"});
+    const first=await request("/api/register","POST",null,{username:"a"+randomUUID().slice(0,8),displayName:"Alice"});
+    const second=await request("/api/register","POST",null,{username:"b"+randomUUID().slice(0,8),displayName:"Bob"});
     assert.equal(first.status,201);
     assert.equal(second.status,201);
     const a=first.json,b=second.json;
