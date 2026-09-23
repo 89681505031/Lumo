@@ -159,6 +159,7 @@ class MainActivity:ComponentActivity(){
  var chatQuery by remember{mutableStateOf("")}
  var loading by remember{mutableStateOf(true)}
  var loadError by remember{mutableStateOf(false)}
+ var loadErrorDetail by remember{mutableStateOf("")}
  var refreshError by remember{mutableStateOf(false)}
  var retry by remember{mutableIntStateOf(0)}
  LaunchedEffect(token,retry){
@@ -166,12 +167,12 @@ class MainActivity:ComponentActivity(){
   while(true){
    val result=runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.conversations(token)}}
    result.onSuccess{chats=it;loadError=false;refreshError=false}
-    .onFailure{if(chats.isEmpty())loadError=true else refreshError=true}
+    .onFailure{loadErrorDetail=it.message?:"Ошибка соединения";if(chats.isEmpty())loadError=true else refreshError=true}
    loading=false
    kotlinx.coroutines.delay(12_000)
   }
  }
- if(loadError){Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){Text("Не удалось загрузить чаты");Spacer(Modifier.height(12.dp));Button({retry++}){Text("Повторить")}};return}
+ if(loadError){Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){Text("Не удалось загрузить чаты",style=MaterialTheme.typography.titleLarge,color=Color.White);Spacer(Modifier.height(8.dp));Text(loadErrorDetail,style=MaterialTheme.typography.bodyMedium,color=Color.White.copy(alpha=.85f));Spacer(Modifier.height(12.dp));Button({retry++}){Text("Повторить")};TextButton(find){Text("Найти людей")}};return}
  if(loading){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()};return}
  if(chats.isEmpty()){
   Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
@@ -212,7 +213,7 @@ class MainActivity:ComponentActivity(){
      Box(Modifier.size(52.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(u.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleLarge)}
      Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(u.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium);Text("@"+u.username,color=MaterialTheme.colorScheme.onSurfaceVariant)}
      Text("›",style=MaterialTheme.typography.headlineSmall)
-    };HorizontalDivider()
+    }
    }
   }
  }
@@ -229,7 +230,7 @@ class MainActivity:ComponentActivity(){
  Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
   Spacer(Modifier.height(24.dp));Box(Modifier.size(92.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(me.displayName.take(1).uppercase(),style=MaterialTheme.typography.displaySmall,fontWeight=FontWeight.Bold)}
   Spacer(Modifier.height(16.dp));Text(me.displayName,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text("@"+me.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
-  Spacer(Modifier.height(20.dp));Card(Modifier.fillMaxWidth().lumoGlass(),colors=CardDefaults.cardColors(containerColor=Color(0x447F96CC))){Column(Modifier.padding(18.dp)){
+  Spacer(Modifier.height(20.dp));Card(Modifier.fillMaxWidth().lumoGlass(),colors=CardDefaults.cardColors(containerColor=Color(0x337F96CC),contentColor=Color.White)){Column(Modifier.padding(18.dp)){
    Text("Профиль",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(8.dp))
    if(editing){
     OutlinedTextField(name,{name=it;profileError=""},label={Text("Имя")},singleLine=true,modifier=Modifier.fillMaxWidth())
