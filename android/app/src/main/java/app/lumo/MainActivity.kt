@@ -337,6 +337,7 @@ class LumoInstallReceiver:BroadcastReceiver(){
   when(intent.getIntExtra(PackageInstaller.EXTRA_STATUS,PackageInstaller.STATUS_FAILURE)){
    PackageInstaller.STATUS_PENDING_USER_ACTION->{val confirm=if(Build.VERSION.SDK_INT>=33)intent.getParcelableExtra(Intent.EXTRA_INTENT,Intent::class.java) else @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_INTENT);confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);if(confirm!=null)context.startActivity(confirm)}
    PackageInstaller.STATUS_SUCCESS->{val launch=context.packageManager.getLaunchIntentForPackage(context.packageName)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP);if(launch!=null)context.startActivity(launch)}
+   else->{android.widget.Toast.makeText(context,"Не удалось установить обновление. Проверьте, что APK подписан тем же ключом, что установленная версия.",android.widget.Toast.LENGTH_LONG).show()}
   }
  }
 }
