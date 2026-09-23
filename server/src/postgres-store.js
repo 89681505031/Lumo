@@ -9,14 +9,21 @@ export const postgresStore = {
     const r=await dbQuery("select u.* from sessions s join users u on u.id=s.user_id where s.token=$1",[token]);
     return r.rows[0] ? mapUser(r.rows[0]) : null;
   },
-  async createUser({id,username,displayName,token}) {
+  async authUserByUsername(username) {
+    const r=await dbQuery("select id,username,display_name,password_hash from users where username=$1",[username]);
+    return r.rows[0] || null;
+  },
+  async createSession(userId,token) {
+    await dbQuery("insert into sessions(token,user_id) values($1,$2)",[token,userId]);
+  },
+  async createUser({id,username,displayName,passwordHash,token}) {
     try {
       const r=await dbQuery(`with created as (
-        insert into users(id,username,display_name) values($1,$2,$3)
+        insert into users(id,username,display_name,password_hash) values($1,$2,$3,$4)
         returning id,username,display_name
       ), session as (
-        insert into sessions(token,user_id) select $4,id from created
-      ) select * from created`,[id,username,displayName,token]);
+        insert into sessions(token,user_id) select $5,id from created
+      ) select * from created`,[id,username,displayName,passwordHash,token]);
       return r.rows[0] ? mapUser(r.rows[0]) : null;
     } catch (error) {
       if(error?.code==="23505") return null;
