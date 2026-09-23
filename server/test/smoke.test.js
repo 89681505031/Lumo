@@ -41,6 +41,15 @@ test("liveness works while database-dependent routes fail safely", { timeout: 15
     });
     assert.equal(malformed.status, 400);
     assert.equal((await malformed.json()).error, "invalid_json");
+    const oversized = await fetch(base + "/api/register", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ padding: "x".repeat(70_000) })
+    });
+    assert.equal(oversized.status, 413);
+    assert.equal((await oversized.json()).error, "payload_too_large");
+    const unauthorized = await fetch(base + "/api/me");
+    assert.equal(unauthorized.status, 401);
+    assert.equal((await unauthorized.json()).error, "unauthorized");
   } finally {
     child.kill();
   }
