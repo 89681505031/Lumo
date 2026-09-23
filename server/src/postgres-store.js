@@ -6,7 +6,7 @@ const mapMessage = r => ({ id:r.id, from:r.sender_id, to:r.recipient_id, text:r.
 export const postgresStore = {
   enabled: hasDatabase,
   async userBySession(token) {
-    const r=await dbQuery("select u.* from sessions s join users u on u.id=s.user_id where s.token=$1",[token]);
+    const r=await dbQuery("select u.* from sessions s join users u on u.id=s.user_id where s.token=$1 and s.expires_at>now()",[token]);
     return r.rows[0] ? mapUser(r.rows[0]) : null;
   },
   async authUserByUsername(username) {
@@ -15,6 +15,9 @@ export const postgresStore = {
   },
   async createSession(userId,token) {
     await dbQuery("insert into sessions(token,user_id) values($1,$2)",[token,userId]);
+  },
+  async revokeSession(userId,token) {
+    await dbQuery("delete from sessions where user_id=$1 and token=$2",[userId,token]);
   },
   async createUser({id,username,displayName,passwordHash,token}) {
     try {
