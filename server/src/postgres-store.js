@@ -1,7 +1,7 @@
 import { dbQuery, hasDatabase } from "./db.js";
 
 const mapUser = r => ({ id:r.id, username:r.username, displayName:r.display_name });
-const mapMessage = r => ({ id:r.id, from:r.sender_id, to:r.recipient_id, text:r.text, createdAt:r.created_at?.toISOString?.() || r.created_at, deliveredAt:r.delivered_at?.toISOString?.() || r.delivered_at || null, readAt:r.read_at?.toISOString?.() || r.read_at || null, clientMessageId:r.client_message_id || null });
+const mapMessage = r => ({ id:r.id, from:r.sender_id, to:r.recipient_id, text:r.text, createdAt:r.created_at?.toISOString?.() || r.created_at, deliveredAt:r.delivered_at?.toISOString?.() || r.delivered_at || null, readAt:r.read_at?.toISOString?.() || r.read_at || null, clientMessageId:r.client_message_id || null, editedAt:r.edited_at?.toISOString?.() || r.edited_at || null, deletedAt:r.deleted_at?.toISOString?.() || r.deleted_at || null });
 
 export const postgresStore = {
   enabled: hasDatabase,
@@ -65,7 +65,7 @@ export const postgresStore = {
       join users u on u.id=latest.peer_id
       left join (
         select sender_id as peer_id, count(*)::integer as unread_count
-        from messages where recipient_id=$1 and read_at is null
+        from messages where recipient_id=$1 and read_at is null and deleted_at is null
         group by sender_id
       ) unread on unread.peer_id=latest.peer_id
       left join conversation_prefs p on p.owner_id=$1 and p.peer_id=latest.peer_id
@@ -117,6 +117,22 @@ export const postgresStore = {
   async messages(me,peer) {
     const r=await dbQuery("select * from messages where (sender_id=$1 and recipient_id=$2) or (sender_id=$2 and recipient_id=$1) order by created_at",[me,peer]);
     return r.rows.map(mapMessage);
+  },
+  async editMessage(me,id,text) {
+    // Atomic owner check: neither the recipient nor an attacker can edit it.
+    const r=await dbQuery(
+      "update messages set text=$3,edited_at=now() where id=$1 and sender_id=$2 and deleted_at is null returning *",
+      [id,me,text]
+    );
+    return r.rows[0] ? mapMessage(r.rows[0]) : null;
+  },
+  async deleteMessage(me,id) {
+    // Keep an explicit tombstone for older clients, inbox previews and receipts.
+    const r=await dbQuery(
+      "update messages set text='Сообщение удалено',deleted_at=coalesce(deleted_at,now()) where id=$1 and sender_id=$2 returning *",
+      [id,me]
+    );
+    return r.rows[0] ? mapMessage(r.rows[0]) : null;
   },
   async saveMessage(m) {
     if(m.clientMessageId){
