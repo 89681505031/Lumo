@@ -30,6 +30,8 @@ export async function initDatabase() {
   await pool.query(`create index if not exists sessions_expiry_idx on sessions(expires_at)`);
   await pool.query(`create table if not exists messages (id uuid primary key, sender_id uuid not null references users(id) on delete cascade, recipient_id uuid not null references users(id) on delete cascade, text varchar(4000) not null, created_at timestamptz not null default now(), delivered_at timestamptz, read_at timestamptz)`);
   await pool.query(`alter table messages add column if not exists client_message_id uuid`);
+  await pool.query(`alter table messages add column if not exists edited_at timestamptz`);
+  await pool.query(`alter table messages add column if not exists deleted_at timestamptz`);
   await pool.query(`create unique index if not exists messages_sender_client_id_uidx on messages(sender_id, client_message_id) where client_message_id is not null`);
   await pool.query(`create index if not exists messages_sender_idx on messages(sender_id, created_at desc)`);
   await pool.query(`create index if not exists messages_recipient_idx on messages(recipient_id, created_at desc)`);
@@ -57,10 +59,12 @@ export async function dbHealth() {
     to_regclass('messages') as messages_table,
     to_regclass('conversation_prefs') as conversation_prefs_table,
     to_regclass('user_blocks') as user_blocks_table,
+    exists(select 1 from information_schema.columns where table_schema=current_schema() and table_name='messages' and column_name='edited_at') as edited_column,
+    exists(select 1 from information_schema.columns where table_schema=current_schema() and table_name='messages' and column_name='deleted_at') as deleted_column,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.conversation_prefs_table && row.user_blocks_table && row.password_column && row.session_expiry_column), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.conversation_prefs_table && row.user_blocks_table && row.edited_column && row.deleted_column && row.password_column && row.session_expiry_column), now:row.now };
 }
