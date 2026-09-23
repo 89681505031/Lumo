@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { dbHealth, hasDatabase, initDatabase } from "./db.js";
 import { postgresStore } from "./postgres-store.js";
+import { hashPassword, verifyPassword, validPassword } from "./password.js";
 
 if (hasDatabase) { try { await initDatabase(); console.log("Lumo PostgreSQL schema ready"); } catch (error) { console.error("Lumo PostgreSQL initialization failed", error); } }
 
@@ -22,7 +23,7 @@ const sessions = new Map();
 const messages = [];
 const rateBuckets = new Map();
 function clientAddress(req){const direct=req.socket.remoteAddress||"unknown";if(process.env.TRUST_PROXY==="true"){const forwarded=req.headers["x-forwarded-for"];if(forwarded)return forwarded.toString().split(",")[0].trim();}return direct;}
-function rateLimit({windowMs,max}){return (req,res,next)=>{const key=clientAddress(req);const now=Date.now();let b=rateBuckets.get(key);if(!b||now-b.start>=windowMs)b={start:now,count:0};b.count++;rateBuckets.set(key,b);if(b.count>max)return res.status(429).json({error:"rate_limited"});next();};}
+function rateLimit({windowMs,max}){return (req,res,next)=>{const key=`${windowMs}:${max}:${clientAddress(req)}`;const now=Date.now();let b=rateBuckets.get(key);if(!b||now-b.start>=windowMs)b={start:now,count:0};b.count++;rateBuckets.set(key,b);if(b.count>max)return res.status(429).json({error:"rate_limited"});next();};}
 setInterval(()=>{const cutoff=Date.now()-10*60_000;for(const [key,b] of rateBuckets)if(b.start<cutoff)rateBuckets.delete(key);},10*60_000).unref?.();
 
 function publicUser(user) {
@@ -56,15 +57,38 @@ app.post("/api/register", requireDatabase, rateLimit({windowMs:60_000,max:10}), 
   try {
     const username = String(req.body?.username || "").trim().toLowerCase();
     const displayName = String(req.body?.displayName || "").trim();
-    if (!/^[a-z0-9_]{3,24}$/.test(username) || !displayName || displayName.length > 50) return res.status(400).json({ error: "invalid_profile" });
+    const password = req.body?.password;
+    if (!/^[a-z0-9_]{3,24}$/.test(username) || !displayName || displayName.length > 50)
+      return res.status(400).json({ error: "invalid_profile" });
+    if (!validPassword(password)) return res.status(400).json({ error: "invalid_password" });
     const token = randomUUID();
-    let user;
-    if (hasDatabase) { user = await postgresStore.createUser({ id:randomUUID(), username, displayName, token }); if(!user) return res.status(409).json({error:"username_taken"}); }
-    else { if ([...users.values()].some(u => u.username === username)) return res.status(409).json({ error: "username_taken" }); user={id:randomUUID(),username,displayName}; users.set(user.id,user); sessions.set(token,user.id); }
+    const passwordHash = await hashPassword(password);
+    const user = await postgresStore.createUser({ id:randomUUID(), username, displayName, passwordHash, token });
+    if (!user) return res.status(409).json({ error: "username_taken" });
     res.status(201).json({ token, user: publicUser(user) });
   } catch (error) {
     console.error("Registration failed", error);
     res.status(503).json({ error: "service_unavailable" });
+  }
+});
+
+const dummyPasswordHash = await hashPassword("LumoInvalidAccountTimingPlaceholder");
+app.post("/api/login", requireDatabase, rateLimit({windowMs:15*60_000,max:10}), async (req,res) => {
+  const username = typeof req.body?.username === "string" ? req.body.username.trim().toLowerCase() : "";
+  const password = req.body?.password;
+  if (!/^[a-z0-9_]{3,24}$/.test(username) || !validPassword(password))
+    return res.status(401).json({error:"invalid_credentials"});
+  try {
+    const account=await postgresStore.authUserByUsername(username);
+    const verified=await verifyPassword(password,account?.password_hash || dummyPasswordHash);
+    if (!verified || !account?.password_hash)
+      return res.status(401).json({error:"invalid_credentials"});
+    const token=randomUUID();
+    await postgresStore.createSession(account.id,token);
+    return res.json({token,user:publicUser({id:account.id,username:account.username,displayName:account.display_name})});
+  }catch(error){
+    console.error("Login database error",error);
+    return res.status(503).json({error:"service_unavailable"});
   }
 });
 
