@@ -198,6 +198,8 @@ class MainActivity:ComponentActivity(){
  val context=LocalContext.current
  val scope=rememberCoroutineScope()
  var editing by remember{mutableStateOf(false)};var name by remember(me.displayName){mutableStateOf(me.displayName)};var saving by remember{mutableStateOf(false)};var profileError by remember{mutableStateOf("")}
+ var loggingOut by remember{mutableStateOf(false)}
+ var logoutError by remember{mutableStateOf("")}
  var update by remember{mutableStateOf<UpdateInfo?>(null)};var checking by remember{mutableStateOf(true)};var updateText by remember{mutableStateOf("Проверяем обновления…")};var progress by remember{mutableIntStateOf(-1)}
  LaunchedEffect(Unit){runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.latestRelease()}}.onSuccess{info->update=info.takeIf{it.versionCode>BuildConfig.VERSION_CODE};updateText=if(update!=null)"Доступна новая версия Lumo" else "Установлена последняя версия"}.onFailure{updateText="Не удалось проверить обновления"};checking=false}
  Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
@@ -212,7 +214,27 @@ class MainActivity:ComponentActivity(){
    }else Button({editing=true},modifier=Modifier.fillMaxWidth()){Text("Редактировать профиль")}
   }}
   Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text("Обновление",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text(updateText);Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(checking)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp));if(progress>=0){Spacer(Modifier.height(12.dp));LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth());Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp))};update?.let{u->if(progress<0){Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl){p->scope.launch{progress=p;updateText=if(p<0)"Не удалось загрузить обновление" else if(p<100)"Загружаем обновление…" else "Устанавливаем обновление…"}}},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}}}}
-  Spacer(Modifier.height(14.dp));OutlinedButton(logout,modifier=Modifier.fillMaxWidth()){Text("Выйти из аккаунта")}
+  Spacer(Modifier.height(14.dp))
+  OutlinedButton(onClick={
+   loggingOut=true;logoutError=""
+   scope.launch{
+    runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.logout(token)}}
+     .onSuccess{logout()}
+     .onFailure{error->
+      if(error is SessionExpiredException)logout()
+      else logoutError="Не удалось завершить сессию на сервере. Попробуйте ещё раз."
+     }
+    loggingOut=false
+   }
+  },enabled=!loggingOut,modifier=Modifier.fillMaxWidth()){
+   Text(if(loggingOut)"Завершаем сессию…" else "Выйти из аккаунта")
+  }
+  if(logoutError.isNotEmpty()){
+   Text(logoutError,color=MaterialTheme.colorScheme.error)
+   TextButton(onClick=logout){Text("Выйти только с устройства")}
+   Text("При локальном выходе серверная сессия остаётся активной до истечения срока.",
+    style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+  }
  }
 }
 
@@ -348,6 +370,14 @@ object Api{
    }
    val obj=JSONObject(data)
    return obj.getString("token") to user(obj.getJSONObject("user"))
+  }
+ }
+ fun logout(t:String){
+  val request=Request.Builder().url(HTTP+"/api/logout")
+   .header("Authorization","Bearer "+t).post("".toRequestBody(null)).build()
+  c.newCall(request).execute().use{response->
+   if(response.code==401)throw SessionExpiredException()
+   if(!response.isSuccessful)error("Выход: "+response.code)
   }
  }
  fun updateMe(t:String,name:String):User{val j=JSONObject().put("displayName",name);val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).patch(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Профиль: "+x.code);return user(JSONObject(x.body!!.string()))}}
