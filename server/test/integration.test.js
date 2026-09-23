@@ -195,6 +195,22 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(blockedOutgoing.json.error,"user_blocked");
     assert.equal(blockedIncoming.status,403);
     assert.equal(blockedIncoming.json.error,"user_blocked");
+    const blockedSocket=new WebSocket(`ws://127.0.0.1:${port}/ws`,{headers:{Authorization:"Bearer "+c.token}});
+    try {
+      const connected=await new Promise((resolve,reject)=>{
+        const timeout=setTimeout(()=>reject(new Error("Blocked-message socket did not connect")),3000);
+        blockedSocket.once("message",data=>{clearTimeout(timeout);resolve(JSON.parse(data.toString()));});
+        blockedSocket.once("error",error=>{clearTimeout(timeout);reject(error);});
+      });
+      assert.equal(connected.type,"ready");
+      const rejected=await new Promise((resolve,reject)=>{
+        const timeout=setTimeout(()=>reject(new Error("WebSocket bypassed the user block")),3000);
+        blockedSocket.once("message",data=>{clearTimeout(timeout);resolve(JSON.parse(data.toString()));});
+        blockedSocket.send(JSON.stringify({type:"message",to:b.user.id,text:"blocked WS",clientMessageId:randomUUID()}));
+      });
+      assert.equal(rejected.type,"error");
+      assert.equal(rejected.error,"user_blocked");
+    }finally{blockedSocket.terminate();}
     const searchBlockedA=await request("/api/users?q="+c.user.username,"GET",b.token);
     const searchBlockedB=await request("/api/users?q="+b.user.username,"GET",c.token);
     assert.ok(searchBlockedA.json.every(user=>user.id!==c.user.id));
