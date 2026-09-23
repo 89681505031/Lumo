@@ -36,7 +36,7 @@ jobs:
       - name: Verify release manifest does not request staging microphone permissions
         run: |
           gradle processReleaseMainManifest
-          manifest="$(find app/build/intermediates/merged_manifests/release -name AndroidManifest.xml -print -quit)"
+          manifest="$(find app/build/intermediates -name AndroidManifest.xml -path '*/release/*' -print -quit)"
           if [ -z "$manifest" ] || [ ! -f "$manifest" ]; then
             echo "Could not locate merged release manifest"
             exit 1
