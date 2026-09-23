@@ -372,6 +372,13 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  var deleteTarget by remember{mutableStateOf<Msg?>(null)}
  var mutationBusy by remember{mutableStateOf(false)}
  var mutationError by remember{mutableStateOf("")}
+ var showSearch by remember(peer.id){mutableStateOf(false)}
+ var searchText by remember(peer.id){mutableStateOf("")}
+ var searchResults by remember(peer.id){mutableStateOf<List<Msg>>(emptyList())}
+ var searchBusy by remember{mutableStateOf(false)}
+ var searchPerformed by remember{mutableStateOf(false)}
+ var searchError by remember{mutableStateOf("")}
+
  DisposableEffect(peer.id){
   scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{historyError=false;val merged=mergeChatMessages(msgs,it);msgs.clear();msgs.addAll(merged);val unread=it.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true}}
   fun syncHistory(){scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{fresh->historyError=false;val byId=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(byId);val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->scope.launch{if(m.from==peer.id||m.to==peer.id){if(m.from==me.id&&m.clientMessageId.isNotBlank()){pending.removeAll{it.clientMessageId==m.clientMessageId};savePending()};val existing=msgs.indexOfFirst{it.id==m.id};if(existing>=0){msgs[existing]=mergeChatMessages(listOf(msgs[existing]),listOf(m)).first()}else msgs.add(m);if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}}},{r->scope.launch{val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=old.deliveredAt.ifBlank{r.deliveredAt},readAt=old.readAt.ifBlank{r.readAt})}}},{e->scope.launch{socketError=when(e){"service_unavailable"->"Сервер временно недоступен. Переподключаемся…";"recipient_not_found"->"Получатель больше не найден.";"message_too_long"->"Сообщение слишком длинное.";"empty_message"->"Пустое сообщение не отправлено.";"client_message_id_conflict"->"Конфликт повторной отправки. Сообщение сохранено.";"invalid_client_message_id"->"Ошибка идентификатора сообщения.";"invalid_recipient_id"->"Некорректный получатель.";"invalid_server_message"->"Получен некорректный ответ сервера.";"cannot_message_self"->"Нельзя отправить сообщение самому себе.";"user_blocked"->"Сообщение отклонено: один из участников заблокировал переписку." ;else->"Не удалось отправить сообщение"};if(e=="user_blocked"){pending.clear();savePending()};if(e=="service_unavailable"){connected=false;ws?.close(1012,"retry")}}},{scope.launch{connected=true;socketError="";for(p in pending.toList()){val sent=ws?.send(JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId).toString())==true;if(!sent){connected=false;ws?.close(1012,"retry");break}};syncHistory()}},{scope.launch{if(generation==socketGeneration){connected=false;kotlinx.coroutines.delay(2000);if(generation==socketGeneration)connect()}}})};connect()
@@ -454,8 +461,33 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    }
    if(historyError){Surface(color=MaterialTheme.colorScheme.errorContainer,modifier=Modifier.fillMaxWidth()){Text("Не удалось загрузить историю. Повторим после подключения.",modifier=Modifier.padding(10.dp),color=MaterialTheme.colorScheme.onErrorContainer)}}
    if(mutationError.isNotEmpty())Text(mutationError,modifier=Modifier.padding(10.dp),color=MaterialTheme.colorScheme.error)
+   Row(Modifier.fillMaxWidth().padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically){
+    TextButton(onClick={showSearch=!showSearch;searchResults=emptyList();searchPerformed=false;searchError=""}){
+     Text(if(showSearch)"‹ К переписке" else "⌕ Поиск в переписке")
+    }
+    if(showSearch)Text("До 50 совпадений",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   }
+   if(showSearch){
+    Row(Modifier.fillMaxWidth().padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically){
+     OutlinedTextField(searchText,{searchText=it.take(100);searchPerformed=false;searchResults=emptyList()},label={Text("Найти сообщение")},singleLine=true,modifier=Modifier.weight(1f))
+     Spacer(Modifier.width(8.dp))
+     Button(onClick={
+      searchBusy=true;searchError=""
+      scope.launch{
+       runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.searchMessages(token,peer.id,searchText)}}
+        .onSuccess{searchResults=it;searchPerformed=true}
+        .onFailure{searchError="Поиск временно недоступен"}
+       searchBusy=false
+      }
+     },enabled=!searchBusy&&searchText.trim().length in 2..100){Text("Найти")}
+    }
+    if(searchBusy)LinearProgressIndicator(Modifier.fillMaxWidth())
+    if(searchError.isNotBlank())Text(searchError,modifier=Modifier.padding(8.dp),color=MaterialTheme.colorScheme.error)
+    if(searchPerformed&&searchResults.isEmpty())Text("Совпадений не найдено",modifier=Modifier.padding(8.dp))
+   }
+
    LazyColumn(Modifier.weight(1f).fillMaxWidth(),contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-    items(msgs,key={it.id}){m->
+    items(if(showSearch)searchResults else msgs.toList(),key={it.id}){m->
      Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.from==me.id)Arrangement.End else Arrangement.Start){
       Surface(shape=RoundedCornerShape(18.dp),color=if(m.from==me.id)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,modifier=Modifier.widthIn(max=300.dp)){
        Column(Modifier.padding(14.dp,8.dp)){
@@ -468,7 +500,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
            Text(if(m.readAt.isNotBlank())"✓✓" else if(m.deliveredAt.isNotBlank())"✓✓" else "✓",style=MaterialTheme.typography.labelSmall,color=if(m.readAt.isNotBlank())MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
           }
          }
-         if(m.from==me.id&&m.deletedAt.isBlank()){
+         if(!showSearch&&m.from==me.id&&m.deletedAt.isBlank()){
           Row(Modifier.align(Alignment.End)){
            TextButton(onClick={editDraft=m.text;editTarget=m;mutationError=""}){Text("Изменить")}
            TextButton(onClick={deleteTarget=m;mutationError=""}){Text("Удалить")}
@@ -478,7 +510,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       }
      }
     }
-    items(pending.filter{p->msgs.none{it.from==me.id&&it.clientMessageId==p.clientMessageId}},key={"pending-"+it.clientMessageId}){p->
+    items(if(showSearch)emptyList<PendingMessage>() else pending.filter{p->msgs.none{it.from==me.id&&it.clientMessageId==p.clientMessageId}},key={"pending-"+it.clientMessageId}){p->
      Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
       Surface(shape=RoundedCornerShape(18.dp),color=MaterialTheme.colorScheme.primaryContainer,modifier=Modifier.widthIn(max=300.dp)){
        Column(Modifier.padding(14.dp,8.dp)){
@@ -543,6 +575,11 @@ fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/
   val body=JSONObject().put("to",to).put("text",p.text).put("clientMessageId",p.clientMessageId)
   val request=Request.Builder().url(HTTP+"/api/messages").header("Authorization","Bearer "+t).post(body.toString().toRequestBody("application/json".toMediaType())).build()
   c.newCall(request).execute().use{response->if(!response.isSuccessful)error("Отправка: "+response.code);return msg(JSONObject(response.body!!.string()))}
+ }
+ fun searchMessages(t:String,peerId:String,q:String):List<Msg>{
+  val url=(HTTP+"/api/messages/search/"+peerId).toHttpUrl().newBuilder().addQueryParameter("q",q.trim()).build()
+  val request=Request.Builder().url(url).header("Authorization","Bearer "+t).build()
+  c.newCall(request).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return (0 until a.length()).map{msg(a.getJSONObject(it))}}
  }
  fun editMessage(t:String,messageId:String,text:String):Msg{
   val body=JSONObject().put("text",text)
