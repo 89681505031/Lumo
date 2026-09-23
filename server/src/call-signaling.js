@@ -87,14 +87,18 @@ export function callRouter(auth) {
     res.json(r.rows.map(publicCall));
   }));
 
-  // A serialized, database-wide per-caller rate limit survives Vercel replicas.
+  // Serialize both participants, including simultaneous cross-instance invitations.
   router.post("/", guard(async (req,res) => {
     const to = req.body?.to;
     const kind = req.body?.kind;
     if (typeof to !== "string" || !uuid.test(to) || to === req.user.id ||
         !["audio","video"].includes(kind)) return res.status(400).json({error:"invalid_call"});
     const result = await transaction(async c => {
-      await c.query("select pg_advisory_xact_lock(hashtext($1))", [req.user.id]);
+      // Stable lock order prevents reciprocal calls A→B and B→A from deadlocking.
+      // The same user cannot start overlapping calls with different recipients.
+      for (const id of [req.user.id,to].sort()) {
+        await c.query("select pg_advisory_xact_lock(31524, hashtext($1::text))", [id]);
+      }
       const recipient = await c.query("select 1 from users where id=$1", [to]);
       if (!recipient.rowCount) return {status:404,body:{error:"recipient_not_found"}};
       if (await blocked(c,req.user.id,to)) return {status:403,body:{error:"user_blocked"}};
@@ -106,10 +110,18 @@ export function callRouter(auth) {
             (status in ('ringing','accepted') and expires_at>now()))`,
         [req.user.id]
       );
-      if (limit.rows[0].attempts >= 3 || limit.rows[0].active >= 1)
+      if (limit.rows[0].attempts >= 3)
         return {status:429,body:{error:"call_rate_limited"}};
-      await c.query("delete from call_signals where created_at<now()-interval '1 hour'");
-      await c.query("delete from calls where created_at<now()-interval '24 hours' and expires_at<now()");
+      // Include recipients, not just outgoing calls. A ringing invitation occupies
+      // both sides until accepted, declined, ended or expired.
+      const occupied = await c.query(
+        `select id from calls where status in ('ringing','accepted')
+            and expires_at>now()
+            and (caller_id=any($1::uuid[]) or callee_id=any($1::uuid[]))
+            limit 1`,
+        [[req.user.id,to]]
+      );
+      if (occupied.rowCount) return {status:409,body:{error:"call_busy"}};
       const r = await c.query(
         `insert into calls(id,caller_id,callee_id,kind)
          values($1,$2,$3,$4) returning *`,

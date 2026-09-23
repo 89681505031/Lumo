@@ -74,6 +74,8 @@ export async function initDatabase() {
     primary key(call_id,seq),
     unique(call_id,sender_id,client_signal_id)
   )`);
+  await pool.query("create index if not exists calls_expires_idx on calls(expires_at)");
+  await pool.query("create index if not exists call_signals_created_idx on call_signals(created_at)");
   return true;
 }
 export async function dbHealth() {

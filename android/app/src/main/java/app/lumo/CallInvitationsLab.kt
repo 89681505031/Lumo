@@ -19,6 +19,7 @@ private fun callError(error: Throwable): String = when (error) {
     is CallsApiException -> when (error.code) {
         "user_blocked" -> "Звонок недоступен: переписка заблокирована."
         "call_rate_limited" -> "Слишком много приглашений. Повторите позже."
+        "call_busy" -> "Один из участников уже занят другим вызовом."
         "call_inactive", "invalid_call_state" -> "Приглашение уже завершено или устарело."
         "recipient_not_found" -> "Пользователь больше не найден."
         "not_call_recipient" -> "Принять вызов может только получатель."

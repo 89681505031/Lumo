@@ -33,6 +33,8 @@ jobs:
         env:
           LUMO_VERSION_CODE: ${{ github.run_number }}
         run: gradle assembleDebug
+      - name: Unit-test call startup cancellation
+        run: gradle testDebugUnitTest
       - name: Verify release manifest does not request staging microphone permissions
         run: |
           gradle processReleaseMainManifest
