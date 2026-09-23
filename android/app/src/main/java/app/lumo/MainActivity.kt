@@ -93,45 +93,106 @@ class MainActivity:ComponentActivity(){
  var name by remember{mutableStateOf("")}
  var login by remember{mutableStateOf("")}
  var password by remember{mutableStateOf("")}
+ var passwordVisible by remember{mutableStateOf(false)}
  var err by remember{mutableStateOf("")}
  var busy by remember{mutableStateOf(false)}
- LumoBackdrop(Modifier.fillMaxSize()){Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center){
-  Box(Modifier.fillMaxWidth().height(156.dp),contentAlignment=Alignment.Center){LumoPlanetIcon(140.dp)}
-  Spacer(Modifier.height(18.dp))
-  Text("Lumo",style=MaterialTheme.typography.displayLarge,fontWeight=FontWeight.Bold,color=Color.White)
-  Spacer(Modifier.height(8.dp))
-  Text(if(loginMode)"С возвращением" else "Ближе к важным людям",style=MaterialTheme.typography.titleMedium,color=Color.White.copy(alpha=.92f))
-  Spacer(Modifier.height(28.dp))
-  Column(Modifier.fillMaxWidth().lumoGlass(30).padding(20.dp)){
-  if(!loginMode){
-   OutlinedTextField(name,{name=it},label={Text("Имя")},singleLine=true,shape=RoundedCornerShape(20.dp),modifier=Modifier.fillMaxWidth())
-   Spacer(Modifier.height(10.dp))
-  }
-  OutlinedTextField(login,{login=it},label={Text("Логин")},singleLine=true,shape=RoundedCornerShape(20.dp),modifier=Modifier.fillMaxWidth())
-  Spacer(Modifier.height(10.dp))
-  OutlinedTextField(password,{password=it},label={Text("Пароль")},singleLine=true,visualTransformation=PasswordVisualTransformation(),shape=RoundedCornerShape(20.dp),modifier=Modifier.fillMaxWidth())
-  if(!loginMode)Text("Пароль: минимум 10 символов",style=MaterialTheme.typography.bodySmall,modifier=Modifier.padding(top=6.dp))
-  if(err.isNotEmpty())Text(err,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(top=8.dp))
-  Spacer(Modifier.height(16.dp))
-  Button({
-   busy=true;err=""
-   scope.launch{
-    runCatching{
-     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
-      if(loginMode)Api.login(login,password) else Api.register(login,name,password)
+ val fieldColors=OutlinedTextFieldDefaults.colors(
+  focusedTextColor=Color.White,unfocusedTextColor=Color.White,
+  focusedBorderColor=LumoCyan,unfocusedBorderColor=Color(0xFFACCFFF),
+  focusedLabelColor=Color.White,unfocusedLabelColor=Color(0xFFE0EAFF),
+  focusedContainerColor=Color(0x862C4AAB),
+  unfocusedContainerColor=Color(0x70233D91),
+  cursorColor=LumoCyan
+ )
+ LumoBackdrop(Modifier.fillMaxSize()){
+  Column(
+   Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+    .padding(horizontal=24.dp,vertical=30.dp),
+   verticalArrangement=Arrangement.Center,
+   horizontalAlignment=Alignment.CenterHorizontally
+  ){
+   LumoPlanetIcon(140.dp)
+   Spacer(Modifier.height(15.dp))
+   Text("Lumo",style=MaterialTheme.typography.displayLarge,
+    fontWeight=FontWeight.ExtraBold,color=Color.White)
+   Text(if(loginMode)"С возвращением" else "Ближе к важным людям",
+    style=MaterialTheme.typography.titleMedium,color=Color.White)
+   Spacer(Modifier.height(24.dp))
+   Column(Modifier.fillMaxWidth().lumoGlass(28).padding(18.dp)){
+    if(!loginMode){
+     OutlinedTextField(
+      name,{name=it},label={Text("Имя")},singleLine=true,
+      shape=RoundedCornerShape(20.dp),colors=fieldColors,
+      modifier=Modifier.fillMaxWidth()
+     )
+     Spacer(Modifier.height(10.dp))
+    }
+    OutlinedTextField(
+     login,{login=it},label={Text("Логин")},singleLine=true,
+     shape=RoundedCornerShape(20.dp),colors=fieldColors,
+     modifier=Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(10.dp))
+    OutlinedTextField(
+     password,{password=it},label={Text("Пароль")},singleLine=true,
+     visualTransformation=if(passwordVisible)
+      androidx.compose.ui.text.input.VisualTransformation.None
+      else PasswordVisualTransformation(),
+     trailingIcon={
+      TextButton({passwordVisible=!passwordVisible}){
+       Text(if(passwordVisible)"Скрыть" else "◉",color=Color.White)
+      }
+     },
+     shape=RoundedCornerShape(20.dp),colors=fieldColors,
+     modifier=Modifier.fillMaxWidth()
+    )
+    if(!loginMode)Text("Пароль: минимум 10 символов",
+     style=MaterialTheme.typography.bodySmall,
+     color=MaterialTheme.colorScheme.onSurfaceVariant,
+     modifier=Modifier.padding(top=6.dp))
+    if(err.isNotEmpty())Text(err,color=MaterialTheme.colorScheme.error,
+     modifier=Modifier.padding(top=8.dp))
+    Spacer(Modifier.height(16.dp))
+    LumoNeonButton(
+     text=if(busy)"Подключаем…" else if(loginMode)"Войти" else "Создать аккаунт",
+     enabled=!busy&&login.isNotBlank()&&password.isNotBlank()
+      &&(loginMode||(name.isNotBlank()&&password.length>=10)),
+     modifier=Modifier.fillMaxWidth(),
+     onClick={
+      busy=true;err=""
+      scope.launch{
+       runCatching{
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+         if(loginMode)Api.login(login,password) else Api.register(login,name,password)
+        }
+       }.onSuccess{password="";done(it.first,it.second)}
+        .onFailure{err=it.message?:"Ошибка подключения"}
+       busy=false
+      }
      }
-    }.onSuccess{password="";done(it.first,it.second)}
-     .onFailure{err=it.message?:"Ошибка подключения"}
-    busy=false
+    )
+    Spacer(Modifier.height(12.dp))
+    Text(
+     if(loginMode)"Ещё нет аккаунта?" else "Уже есть аккаунт?",
+     color=MaterialTheme.colorScheme.onSurfaceVariant,
+     style=MaterialTheme.typography.bodySmall,
+     modifier=Modifier.align(Alignment.CenterHorizontally)
+    )
+    Spacer(Modifier.height(8.dp))
+    OutlinedButton(
+     onClick={loginMode=!loginMode;password="";err="";passwordVisible=false},
+     enabled=!busy,
+     modifier=Modifier.fillMaxWidth().height(48.dp),
+     shape=RoundedCornerShape(24.dp),
+     border=androidx.compose.foundation.BorderStroke(1.4.dp,LumoPink),
+     colors=ButtonDefaults.outlinedButtonColors(contentColor=Color.White)
+    ){
+     Text(if(loginMode)"Создать аккаунт" else "Войти",
+      style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+    }
    }
-  },enabled=!busy&&login.isNotBlank()&&password.isNotBlank()&&(loginMode||(name.isNotBlank()&&password.length>=10)),modifier=Modifier.fillMaxWidth().height(52.dp)){
-   Text(if(busy)"Подключаем..." else if(loginMode)"Войти" else "Создать аккаунт")
   }
-  TextButton(onClick={loginMode=!loginMode;password="";err=""},enabled=!busy,modifier=Modifier.fillMaxWidth()){
-   Text(if(loginMode)"Нет аккаунта? Зарегистрироваться" else "Уже есть аккаунт? Войти")
-  }
-  }
- }}
+ }
 }
 
 @Composable fun Home(token:String,me:User,open:(User)->Unit,profileChanged:(User)->Unit,logout:()->Unit){
