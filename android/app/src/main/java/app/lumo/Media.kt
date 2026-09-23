@@ -1,9 +1,9 @@
 package app.lumo
 
 import android.Manifest
-import android.content.ActivityNotFoundException
+import android.graphics.BitmapFactory
 import android.content.Context
-import android.content.Intent
+import android.widget.VideoView
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.net.Uri
@@ -13,10 +13,15 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import java.io.File
@@ -218,6 +223,12 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
    r.setAudioEncodingBitRate(64000)
    r.setAudioSamplingRate(44100)
    r.setOutputFile(file.absolutePath)
+   r.setMaxDuration(120_000)
+   r.setMaxFileSize(MAX_VOICE_BYTES)
+   r.setOnInfoListener{_,code,_->
+    if(code==MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED ||
+       code==MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED)stopRecording(false)
+   }
    r.prepare()
    r.start()
    voiceFile=file
@@ -333,14 +344,86 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
  }
 }
 
+
+private fun fetchImageBitmap(url:String):ImageBitmap{
+ val request=Request.Builder().url(url).get().build()
+ Api.httpClient.newCall(request).execute().use{response->
+  if(!response.isSuccessful)error("Не удалось получить изображение")
+  val body=response.body?:error("Изображение недоступно")
+  if(body.contentLength()>8L*1024*1024)error("Изображение слишком большое")
+  val data=body.byteStream().use{input->
+   val output=java.io.ByteArrayOutputStream()
+   val buffer=ByteArray(65536)
+   var total=0L
+   while(true){
+    val count=input.read(buffer)
+    if(count<0)break
+    total+=count
+    if(total>8L*1024*1024)error("Изображение слишком большое")
+    output.write(buffer,0,count)
+   }
+   output.toByteArray()
+  }
+  val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+  BitmapFactory.decodeByteArray(data,0,data.size,bounds)
+  if(bounds.outWidth<=0 || bounds.outHeight<=0 ||
+     bounds.outWidth.toLong()*bounds.outHeight.toLong()>100_000_000L)
+    error("Неподдерживаемое изображение")
+  val options=BitmapFactory.Options()
+  var scale=1
+  while(bounds.outWidth/scale>1600 || bounds.outHeight/scale>1600)scale*=2
+  options.inSampleSize=scale
+  val bitmap=BitmapFactory.decodeByteArray(data,0,data.size,options)
+    ?:error("Изображение повреждено")
+  return bitmap.asImageBitmap()
+ }
+}
+
 @Composable
 fun MediaAttachmentButton(token:String,assetId:String){
- val context=LocalContext.current
  val scope=rememberCoroutineScope()
- var busy by remember{mutableStateOf(false)}
- var error by remember{mutableStateOf("")}
- var player by remember{mutableStateOf<MediaPlayer?>(null)}
- DisposableEffect(assetId){onDispose{player?.release();player=null}}
+ var busy by remember(assetId){mutableStateOf(false)}
+ var error by remember(assetId){mutableStateOf("")}
+ var player by remember(assetId){mutableStateOf<MediaPlayer?>(null)}
+ var photo by remember(assetId){mutableStateOf<ImageBitmap?>(null)}
+ var showPhoto by remember(assetId){mutableStateOf(false)}
+ var videoUrl by remember(assetId){mutableStateOf<String?>(null)}
+ var videoView by remember(assetId){mutableStateOf<VideoView?>(null)}
+ DisposableEffect(assetId){
+  onDispose{
+   player?.release()
+   player=null
+   videoView?.stopPlayback()
+   videoView=null
+  }
+ }
+ if(showPhoto&&photo!=null)AlertDialog(
+  onDismissRequest={showPhoto=false},
+  title={Text("Фото")},
+  text={Image(bitmap=photo!!,contentDescription="Вложенное изображение",modifier=Modifier.fillMaxWidth())},
+  confirmButton={TextButton(onClick={showPhoto=false}){Text("Закрыть")}}
+ )
+ videoUrl?.let{url->
+  Dialog(onDismissRequest={videoView?.stopPlayback();videoView=null;videoUrl=null}){
+   Surface{
+    Column(Modifier.padding(12.dp)){
+     Text("Видео",style=MaterialTheme.typography.titleMedium)
+     AndroidView(factory={ctx->
+      VideoView(ctx).also{view->
+       videoView=view
+       view.setVideoURI(Uri.parse(url))
+       view.setOnPreparedListener{it.isLooping=false;view.start()}
+       view.setOnErrorListener{_,_,_->error="Не удалось воспроизвести видео";true}
+       view.setMediaController(android.widget.MediaController(ctx).also{it.setAnchorView(view)})
+      }
+     },modifier=Modifier.fillMaxWidth().height(240.dp))
+     TextButton(onClick={videoView?.stopPlayback();videoView=null;videoUrl=null}){
+      Text("Закрыть")
+     }
+    }
+   }
+  }
+ }
  Column{
   TextButton(onClick={
    busy=true
@@ -348,24 +431,27 @@ fun MediaAttachmentButton(token:String,assetId:String){
    scope.launch{
     runCatching{withContext(Dispatchers.IO){MediaApi.link(token,assetId)}}
      .onSuccess{link->
-      if(link.mime.startsWith("audio/")){
-       runCatching{
-        player?.release()
-        val mp=MediaPlayer()
-        mp.setDataSource(link.url)
-        mp.setOnPreparedListener{it.start();busy=false}
-        mp.setOnCompletionListener{it.reset();it.release();if(player===it)player=null}
-        mp.setOnErrorListener{it,_,_->it.release();if(player===it)player=null;busy=false;true}
-        player=mp
-        mp.prepareAsync()
-       }.onFailure{error="Не удалось воспроизвести голосовое";busy=false}
-      }else{
-       try{
-        context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(link.url)).apply{
-         addCategory(Intent.CATEGORY_BROWSABLE)
-        })
-       }catch(_:ActivityNotFoundException){error="Нет приложения для открытия файла"}
-       busy=false
+      when{
+       link.mime.startsWith("audio/")->{
+        runCatching{
+         player?.release()
+         val mp=MediaPlayer()
+         mp.setDataSource(link.url)
+         mp.setOnPreparedListener{it.start();busy=false}
+         mp.setOnCompletionListener{it.reset();it.release();if(player===it)player=null}
+         mp.setOnErrorListener{it,_,_->it.release();if(player===it)player=null;busy=false;error="Не удалось воспроизвести аудио";true}
+         player=mp
+         mp.prepareAsync()
+        }.onFailure{error="Не удалось воспроизвести аудио";busy=false}
+       }
+       link.mime.startsWith("image/")->{
+        runCatching{withContext(Dispatchers.IO){fetchImageBitmap(link.url)}}
+         .onSuccess{photo=it;showPhoto=true}
+         .onFailure{error="Не удалось открыть фотографию"}
+        busy=false
+       }
+       link.mime=="video/mp4"->{videoUrl=link.url;busy=false}
+       else->{error="Неизвестный формат медиа";busy=false}
       }
      }
      .onFailure{error="Не удалось открыть вложение";busy=false}
