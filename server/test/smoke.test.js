@@ -36,6 +36,7 @@ test("liveness works while database-dependent routes fail safely", { timeout: 15
       body: JSON.stringify({ username: "smoketest", displayName: "Smoke Test" })
     });
     assert.equal(register.status, 503);
+    assert.equal(register.headers.get("cache-control"), "no-store");
     assert.equal((await register.json()).error, "database_unavailable");
     const malformed = await fetch(base + "/api/register", {
       method: "POST", headers: { "content-type": "application/json" }, body: "{"
