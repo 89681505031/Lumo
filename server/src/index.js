@@ -33,6 +33,8 @@ async function auth(req, res, next) {
   try {
     const header = req.headers.authorization || "";
     const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    if (!token) return res.status(401).json({ error: "unauthorized" });
+    if (!hasDatabase) return res.status(503).json({ error: "database_unavailable" });
     const userId = sessions.get(token);
     const user = hasDatabase ? await postgresStore.userBySession(token) : users.get(userId);
     if (!user) return res.status(401).json({ error: "unauthorized" });
