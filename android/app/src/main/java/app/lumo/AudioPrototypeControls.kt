@@ -26,7 +26,7 @@ fun AudioPrototypeControls(
     call: LumoCall,
     activeAudioId: String?,
     onStart: (String) -> Unit,
-    onStop: () -> Unit
+    onStop: (String) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -45,7 +45,7 @@ fun AudioPrototypeControls(
         engine = null
         busy = false
         status = message
-        onStop()
+        onStop(call.id)
     }
 
     fun start() {
@@ -173,7 +173,7 @@ fun AudioPrototypeControls(
             senderJob?.cancel()
             outbound?.close()
             engine?.stop()
-            onStop()
+            onStop(call.id)
         }
     }
 
