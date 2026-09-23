@@ -93,7 +93,7 @@ class MainActivity:ComponentActivity(){
  var password by remember{mutableStateOf("")}
  var err by remember{mutableStateOf("")}
  var busy by remember{mutableStateOf(false)}
- Column(Modifier.fillMaxSize().background(LumoGradient).padding(24.dp),verticalArrangement=Arrangement.Center){
+ LumoBackdrop(Modifier.fillMaxSize()){Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center){
   Box(Modifier.fillMaxWidth().height(108.dp),contentAlignment=Alignment.Center){Box(Modifier.size(88.dp).clip(RoundedCornerShape(30.dp)).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text("✦",style=MaterialTheme.typography.displayLarge,color=Color.White)}}
   Spacer(Modifier.height(18.dp))
   Text("Lumo",style=MaterialTheme.typography.displayLarge,fontWeight=FontWeight.Bold)
@@ -127,29 +127,29 @@ class MainActivity:ComponentActivity(){
   TextButton(onClick={loginMode=!loginMode;password="";err=""},enabled=!busy,modifier=Modifier.fillMaxWidth()){
    Text(if(loginMode)"Нет аккаунта? Зарегистрироваться" else "Уже есть аккаунт? Войти")
   }
- }
+ }}
 }
 
 @Composable fun Home(token:String,me:User,open:(User)->Unit,profileChanged:(User)->Unit,logout:()->Unit){
  var tab by remember{mutableIntStateOf(0)}
- Scaffold(containerColor=Color.Transparent,
+ LumoBackdrop(Modifier.fillMaxSize()){Scaffold(containerColor=Color.Transparent,
   topBar={Surface(color=Color.Transparent,shadowElevation=0.dp){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(20.dp,14.dp),verticalAlignment=Alignment.CenterVertically){
    Text("Lumo",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);Spacer(Modifier.weight(1f));Box(Modifier.lumoGlass(18).padding(horizontal=12.dp,vertical=8.dp)){Text(me.displayName,style=MaterialTheme.typography.labelLarge)}
   }}},
-  bottomBar={NavigationBar(containerColor=Color(0xFF304360)){
+  bottomBar={Box(Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=8.dp).lumoGlass(30)){NavigationBar(containerColor=Color.Transparent){
    NavigationBarItem(selected=tab==0,onClick={tab=0},icon={Text("◉")},label={Text("Чаты")})
    NavigationBarItem(selected=tab==1,onClick={tab=1},icon={Text("⌕")},label={Text("Люди")})
    NavigationBarItem(selected=tab==2,onClick={tab=2},icon={Text("◌")},label={Text("Профиль")})
-  }}
+  }}}
  ){pad->
-  Box(Modifier.padding(pad).fillMaxSize().background(LumoGradient)){
+  Box(Modifier.padding(pad).fillMaxSize()){
    when(tab){
     0->Chats(token,{tab=1},open)
     1->People(token,open)
     else->Profile(token,me,profileChanged,logout)
    }
   }
- }
+ }}
 }
 
 @Composable fun Chats(token:String,find:()->Unit,open:(User)->Unit){
@@ -224,7 +224,7 @@ class MainActivity:ComponentActivity(){
  var logoutError by remember{mutableStateOf("")}
  var update by remember{mutableStateOf<UpdateInfo?>(null)};var checking by remember{mutableStateOf(true)};var updateText by remember{mutableStateOf("Проверяем обновления…")};var progress by remember{mutableIntStateOf(-1)}
  LaunchedEffect(Unit){runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.latestRelease()}}.onSuccess{info->update=info.takeIf{it.versionCode>BuildConfig.VERSION_CODE};updateText=if(update!=null)"Доступна новая версия Lumo" else "Установлена последняя версия"}.onFailure{updateText="Не удалось проверить обновления"};checking=false}
- Column(Modifier.fillMaxSize().background(LumoGradient).padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
+ Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
   Spacer(Modifier.height(24.dp));Box(Modifier.size(92.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(me.displayName.take(1).uppercase(),style=MaterialTheme.typography.displaySmall,fontWeight=FontWeight.Bold)}
   Spacer(Modifier.height(16.dp));Text(me.displayName,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text("@"+me.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
   Spacer(Modifier.height(20.dp));Card(Modifier.fillMaxWidth().lumoGlass()){Column(Modifier.padding(18.dp)){
@@ -379,7 +379,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
      }
     }
    }
-   Surface(color=Color(0xFF304360),shadowElevation=4.dp){Row(Modifier.fillMaxWidth().imePadding().padding(10.dp),verticalAlignment=Alignment.Bottom){
+   Surface(color=Color(0xAA7486B5),shadowElevation=4.dp){Row(Modifier.fillMaxWidth().imePadding().padding(10.dp),verticalAlignment=Alignment.Bottom){
     OutlinedTextField(input,{input=it},placeholder={Text("Сообщение")},modifier=Modifier.weight(1f),maxLines=4,shape=RoundedCornerShape(24.dp))
     Spacer(Modifier.width(8.dp));Button({val text=input.trim();if(text.isNotEmpty()){val p=PendingMessage(java.util.UUID.randomUUID().toString(),text);pending.add(p);savePending();if(connected){val sent=ws?.send(JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId).toString())==true;if(!sent){connected=false;ws?.close(1012,"retry")}};input=""}},enabled=input.isNotBlank(),contentPadding=PaddingValues(horizontal=18.dp,vertical=16.dp)){Text("➤")}
    }}
