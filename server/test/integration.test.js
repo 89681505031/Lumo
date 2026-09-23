@@ -90,6 +90,21 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(history.status,200);
     assert.equal(history.json.length,1);
     assert.ok(history.json[0].readAt,"Sender can recover read status across instances");
+    const socketClosed=new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>reject(new Error("Logged-out WebSocket remains open")),3000);
+      socket.once("close",code=>{clearTimeout(timer);resolve(code);});
+      socket.once("error",error=>{clearTimeout(timer);reject(error);});
+    });
+    const logout=await fetch(base+"/api/logout",{
+      method:"POST",headers:{Authorization:"Bearer "+a.token}
+    });
+    assert.equal(logout.status,204);
+    assert.equal(await socketClosed,1008);
+    const revoked=await request("/api/me","GET",a.token);
+    assert.equal(revoked.status,401);
+    const otherSession=await request("/api/me","GET",relogin.json.token);
+    assert.equal(otherSession.status,200);
+    assert.equal(otherSession.json.id,a.user.id);
   }finally{
     socket?.terminate();
     child.kill();
