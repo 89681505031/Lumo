@@ -4,6 +4,8 @@ import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
+import android.provider.Settings
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,6 +15,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -49,6 +54,31 @@ fun PushSettings(session: String, me: User) {
     var requestEnable by remember(session, me.id) { mutableIntStateOf(0) }
     var revokePending by remember(session, me.id) {
         mutableStateOf(PushOptState.revokePending(context, me.id, session))
+    }
+
+    // Settings changes occur while another Android activity is foreground.
+    // Synchronize the Profile UI after returning, without silently opting in.
+    val lifecycleOwner = context as? LifecycleOwner
+    DisposableEffect(lifecycleOwner, session, me.id) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                PushLifecycle.onAppResume(context)
+                enabled = PushOptState.consented(context, me.id, session)
+                revokePending = PushOptState.revokePending(context, me.id, session)
+                if (revokePending) {
+                    notice = "Уведомления выключены настройками Android. " +
+                        "Удаление регистрации на сервере будет повторено при наличии сети."
+                }
+            }
+        }
+        lifecycleOwner?.lifecycle?.addObserver(observer)
+        onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
+    }
+
+    fun openAndroidNotificationSettings() {
+        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        context.startActivity(intent)
     }
     fun retryServerRevoke() {
         if (busy || !revokePending) return
@@ -211,7 +241,8 @@ fun PushSettings(session: String, me: User) {
                     }
                 } else if (enabled) {
                     Text(if (PushOptState.permissionGranted(context)) "Включено" else
-                        "Разрешение отключено в настройках Android")
+                        "Настройки Android запрещают уведомления — при возвращении " +
+                            "регистрация будет отключена")
                     Button(
                         onClick = {
                             if (busy) return@Button
@@ -229,13 +260,22 @@ fun PushSettings(session: String, me: User) {
                     Button(
                         onClick = {
                             if (Build.VERSION.SDK_INT >= 33 &&
-                                !PushOptState.permissionGranted(context)) {
+                                !PushOptState.runtimePermissionGranted(context)) {
                                 permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else if (!PushOptState.permissionGranted(context)) {
+                                openAndroidNotificationSettings()
+                                notice = "Разрешите уведомления приложения и канала Lumo " +
+                                    "в настройках Android, затем включите их снова."
                             } else {
                                 requestEnable++
                             }
                         }, enabled = !busy
                     ) { Text(if (busy) "Подключаем…" else "Включить тестовые уведомления") }
+                }
+                if (!PushOptState.permissionGranted(context)) {
+                    TextButton(onClick = { openAndroidNotificationSettings() }, enabled = !busy) {
+                        Text("Открыть настройки уведомлений Android")
+                    }
                 }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (notice.isNotBlank()) Text(notice, style = MaterialTheme.typography.bodySmall)
