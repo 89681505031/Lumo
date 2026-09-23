@@ -31,3 +31,21 @@ create table if not exists messages (
 create unique index if not exists messages_sender_client_id_uidx on messages(sender_id, client_message_id) where client_message_id is not null;
 create index if not exists messages_sender_idx on messages(sender_id, created_at desc);
 create index if not exists messages_recipient_idx on messages(recipient_id, created_at desc);
+
+-- Per-user chat organization; intentionally does not modify message history.
+create table if not exists conversation_prefs (
+  owner_id uuid not null references users(id) on delete cascade,
+  peer_id uuid not null references users(id) on delete cascade,
+  pinned boolean not null default false,
+  primary key (owner_id,peer_id)
+);
+
+-- Blocking prevents new direct messages in both directions; existing history is retained.
+create table if not exists user_blocks (
+  blocker_id uuid not null references users(id) on delete cascade,
+  blocked_id uuid not null references users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (blocker_id,blocked_id),
+  constraint no_self_block check (blocker_id<>blocked_id)
+);
+create index if not exists user_blocks_blocked_idx on user_blocks(blocked_id,blocker_id);
