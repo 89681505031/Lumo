@@ -26,6 +26,7 @@ export async function initDatabase() {
 }
 export async function dbHealth() {
   if (!pool) return { configured:false };
-  const r=await pool.query("select now() as now");
-  return { configured:true, ok:true, now:r.rows[0].now };
+  const r=await pool.query("select now() as now, to_regclass('users') as users_table, to_regclass('sessions') as sessions_table, to_regclass('messages') as messages_table");
+  const row=r.rows[0];
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table), now:row.now };
 }
