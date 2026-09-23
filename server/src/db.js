@@ -17,7 +17,17 @@ export async function initDatabase() {
   if (!pool) return false;
   await pool.query(`create table if not exists users (id uuid primary key, username varchar(24) unique not null, display_name varchar(50) not null, created_at timestamptz not null default now())`);
   await pool.query(`alter table users add column if not exists password_hash text`);
-  await pool.query(`create table if not exists sessions (token uuid primary key, user_id uuid not null references users(id) on delete cascade, created_at timestamptz not null default now())`);
+  await pool.query(`create table if not exists sessions (
+    token uuid primary key,
+    user_id uuid not null references users(id) on delete cascade,
+    created_at timestamptz not null default now(),
+    expires_at timestamptz not null default (now() + interval '30 days')
+  )`);
+  await pool.query(`alter table sessions add column if not exists expires_at timestamptz`);
+  await pool.query(`update sessions set expires_at=created_at + interval '30 days' where expires_at is null`);
+  await pool.query(`alter table sessions alter column expires_at set default (now() + interval '30 days')`);
+  await pool.query(`alter table sessions alter column expires_at set not null`);
+  await pool.query(`create index if not exists sessions_expiry_idx on sessions(expires_at)`);
   await pool.query(`create table if not exists messages (id uuid primary key, sender_id uuid not null references users(id) on delete cascade, recipient_id uuid not null references users(id) on delete cascade, text varchar(4000) not null, created_at timestamptz not null default now(), delivered_at timestamptz, read_at timestamptz)`);
   await pool.query(`alter table messages add column if not exists client_message_id uuid`);
   await pool.query(`create unique index if not exists messages_sender_client_id_uidx on messages(sender_id, client_message_id) where client_message_id is not null`);
@@ -32,7 +42,9 @@ export async function dbHealth() {
     to_regclass('sessions') as sessions_table,
     to_regclass('messages') as messages_table,
     exists(select 1 from information_schema.columns
-      where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column`);
+      where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column,
+    exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.password_column), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.password_column && row.session_expiry_column), now:row.now };
 }
