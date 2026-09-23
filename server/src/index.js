@@ -212,6 +212,33 @@ app.post("/api/messages", auth, requireDatabase, async (req,res)=>{
     return res.status(503).json({error:"service_unavailable"});
   }
 });
+// Editing and removal are limited to the authenticated original sender.
+// Existing clients understand an updated message with the same id; clients on
+// another Vercel instance also reconcile from PostgreSQL via HTTP polling.
+app.patch("/api/message/:id",auth,requireDatabase,async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))return res.status(400).json({error:"invalid_message_id"});
+  if(typeof req.body?.text!=="string" || !req.body.text.trim())
+    return res.status(400).json({error:"empty_message"});
+  const text=req.body.text.trim();
+  if(text.length>4000)return res.status(400).json({error:"message_too_long"});
+  try{
+    const message=await postgresStore.editMessage(req.user.id,req.params.id,text);
+    if(!message)return res.status(404).json({error:"message_not_editable"});
+    sendTo(message.from,{type:"message",message});
+    sendTo(message.to,{type:"message",message});
+    return res.json(message);
+  }catch(error){console.error("Edit message failed",error);return res.status(503).json({error:"service_unavailable"});}
+});
+app.delete("/api/message/:id",auth,requireDatabase,async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))return res.status(400).json({error:"invalid_message_id"});
+  try{
+    const message=await postgresStore.deleteMessage(req.user.id,req.params.id);
+    if(!message)return res.status(404).json({error:"message_not_editable"});
+    sendTo(message.from,{type:"message",message});
+    sendTo(message.to,{type:"message",message});
+    return res.json(message);
+  }catch(error){console.error("Delete message failed",error);return res.status(503).json({error:"service_unavailable"});}
+});
 app.post("/api/messages/read",auth,requireDatabase,async(req,res)=>{
   const ids=req.body?.ids;
   if(!Array.isArray(ids)||ids.length>200||ids.some(id=>typeof id!=="string"||!uuidPattern.test(id))) return res.status(400).json({error:"invalid_message_ids"});
