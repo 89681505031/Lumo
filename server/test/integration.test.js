@@ -19,7 +19,7 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
   await new Promise(resolve=>listener.close(resolve));
   const child=spawn(process.execPath,["src/index.js"],{
     cwd:process.cwd(),
-    env:{...process.env,PORT:String(port),DATABASE_URL:databaseUrl,DATABASE_SSL:"false"},
+    env:{...process.env,PORT:String(port),DATABASE_URL:databaseUrl,DATABASE_SSL:"false",LUMO_CALL_SIGNALING_ENABLED:"true"},
     stdio:"ignore"
   });
   let socket;
@@ -43,7 +43,7 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     await new Promise(resolve=>listener2.close(resolve));
     replica=spawn(process.execPath,["src/index.js"],{
       cwd:process.cwd(),
-      env:{...process.env,PORT:String(otherPort),DATABASE_URL:databaseUrl,DATABASE_SSL:"false"},
+      env:{...process.env,PORT:String(otherPort),DATABASE_URL:databaseUrl,DATABASE_SSL:"false",LUMO_CALL_SIGNALING_ENABLED:"true"},
       stdio:"ignore"
     });
     const otherBase=`http://127.0.0.1:${otherPort}`;
@@ -86,6 +86,60 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(second.status,201);
     assert.equal(third.status,201);
     const a=first.json,b=second.json,c=third.json;
+    // Feature-gated signaling uses the shared database, not an in-memory socket registry.
+    const callUnauth=await request("/api/calls");
+    assert.equal(callUnauth.status,401);
+    const selfCall=await request("/api/calls","POST",a.token,{to:a.user.id,kind:"audio"});
+    assert.equal(selfCall.status,400);
+    const invite=await request("/api/calls","POST",a.token,{to:b.user.id,kind:"audio"});
+    assert.equal(invite.status,201);
+    assert.equal(invite.json.status,"ringing");
+    const callId=invite.json.id;
+    const thirdPartyAction=await request("/api/calls/"+callId+"/respond","POST",c.token,{action:"accept"},otherBase);
+    assert.equal(thirdPartyAction.status,404,"An outsider must not discover a private call");
+    const incoming=await request("/api/calls","GET",b.token,null,otherBase);
+    assert.equal(incoming.status,200);
+    assert.equal(incoming.json.find(x=>x.id===callId).status,"ringing");
+    const cannotSelfAccept=await request("/api/calls/"+callId+"/respond","POST",a.token,{action:"accept"});
+    assert.equal(cannotSelfAccept.status,403);
+    const callAccepted=await request("/api/calls/"+callId+"/respond","POST",b.token,{action:"accept"},otherBase);
+    assert.equal(callAccepted.status,200);
+    assert.equal(callAccepted.json.status,"accepted");
+    const offer={clientSignalId:randomUUID(),type:"offer",payload:{sdp:"v=0\\r\\n"}};
+    const wrongRole=await request("/api/calls/"+callId+"/signals","POST",b.token,offer,otherBase);
+    assert.equal(wrongRole.status,403);
+    const firstSignal=await request("/api/calls/"+callId+"/signals","POST",a.token,offer);
+    assert.equal(firstSignal.status,201);
+    assert.equal(firstSignal.json.seq,1);
+    const replay=await request("/api/calls/"+callId+"/signals","POST",a.token,offer,otherBase);
+    assert.equal(replay.status,200,"Uncertain-network retry must not duplicate SDP");
+    assert.equal(replay.json.seq,1);
+    const conflictSignal=await request("/api/calls/"+callId+"/signals","POST",a.token,{
+      ...offer,payload:{sdp:"different"}
+    });
+    assert.equal(conflictSignal.status,409);
+    const bobSignals=await request("/api/calls/"+callId+"/signals?after=0","GET",b.token,null,otherBase);
+    assert.equal(bobSignals.status,200);
+    assert.equal(bobSignals.json.signals.length,1);
+    assert.equal(bobSignals.json.signals[0].payload.sdp,offer.payload.sdp);
+    const unauthorizedSignals=await request("/api/calls/"+callId+"/signals","GET",c.token);
+    assert.equal(unauthorizedSignals.status,404);
+    const secondSignal=await request("/api/calls/"+callId+"/signals","POST",b.token,{
+      clientSignalId:randomUUID(),type:"answer",payload:{sdp:"v=0\\r\\na=answer"}
+    },otherBase);
+    assert.equal(secondSignal.status,201);
+    assert.equal(secondSignal.json.seq,2);
+    const aliceSignals=await request("/api/calls/"+callId+"/signals?after=1","GET",a.token);
+    assert.equal(aliceSignals.json.signals.length,1);
+    assert.equal(aliceSignals.json.signals[0].seq,2);
+    const ended=await request("/api/calls/"+callId+"/respond","POST",a.token,{action:"end"});
+    assert.equal(ended.status,200);
+    const endSeen=await request("/api/calls","GET",b.token,null,otherBase);
+    assert.equal(endSeen.json.find(x=>x.id===callId).status,"ended");
+    const lateSignal=await request("/api/calls/"+callId+"/signals","POST",a.token,{
+      clientSignalId:randomUUID(),type:"ice",payload:{candidate:"candidate:late"}
+    });
+    assert.equal(lateSignal.status,409);
     // The inbox must load even before the user has sent any messages.
     const initialChats=await request("/api/conversations","GET",a.token);
     assert.equal(initialChats.status,200,"Empty inbox must not fail on ambiguous SQL columns");

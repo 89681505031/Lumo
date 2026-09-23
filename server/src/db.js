@@ -47,6 +47,33 @@ export async function initDatabase() {
     constraint no_self_block check (blocker_id<>blocked_id)
   )`);
   await pool.query(`create index if not exists user_blocks_blocked_idx on user_blocks(blocked_id,blocker_id)`);
+
+  // Call signaling data is separate from message history and is opt-in.
+  await pool.query(`create table if not exists calls (
+    id uuid primary key,
+    caller_id uuid not null references users(id) on delete cascade,
+    callee_id uuid not null references users(id) on delete cascade,
+    kind text not null check(kind in ('audio','video')),
+    status text not null default 'ringing' check(status in ('ringing','accepted','declined','ended')),
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    expires_at timestamptz not null default (now()+interval '45 seconds'),
+    last_signal_seq integer not null default 0,
+    constraint different_call_users check(caller_id<>callee_id)
+  )`);
+  await pool.query(`create index if not exists calls_caller_recent_idx on calls(caller_id,created_at desc)`);
+  await pool.query(`create index if not exists calls_callee_recent_idx on calls(callee_id,created_at desc)`);
+  await pool.query(`create table if not exists call_signals (
+    call_id uuid not null references calls(id) on delete cascade,
+    seq integer not null check(seq>0),
+    sender_id uuid not null references users(id) on delete cascade,
+    client_signal_id uuid not null,
+    type text not null check(type in ('offer','answer','ice')),
+    payload jsonb not null,
+    created_at timestamptz not null default now(),
+    primary key(call_id,seq),
+    unique(call_id,sender_id,client_signal_id)
+  )`);
   return true;
 }
 export async function dbHealth() {
@@ -57,10 +84,12 @@ export async function dbHealth() {
     to_regclass('messages') as messages_table,
     to_regclass('conversation_prefs') as conversation_prefs_table,
     to_regclass('user_blocks') as user_blocks_table,
+    to_regclass('calls') as calls_table,
+    to_regclass('call_signals') as call_signals_table,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.conversation_prefs_table && row.user_blocks_table && row.password_column && row.session_expiry_column), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.conversation_prefs_table && row.user_blocks_table && row.password_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
 }
