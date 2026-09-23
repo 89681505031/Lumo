@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { dbHealth, hasDatabase, initDatabase } from "./db.js";
 import { postgresStore } from "./postgres-store.js";
 import { mediaReady, mediaStore } from "./media-store.js";
+const mediaEnabled=mediaReady && process.env.MEDIA_ENABLE_UPLOADS==="true";
 import { hashPassword, verifyPassword, validPassword } from "./password.js";
 
 if (hasDatabase) { try { await initDatabase(); console.log("Lumo PostgreSQL schema ready"); } catch (error) { console.error("Lumo PostgreSQL initialization failed", error); } }
@@ -50,7 +51,7 @@ async function auth(req, res, next) {
 }
 
 app.get("/live", (_req, res) => res.json({ ok: true, service: "lumo-server" }));
-app.get("/api/capabilities",(_req,res)=>res.json({mediaReady}));
+app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled}));
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase,ok:false}; if(hasDatabase){try{database=await dbHealth()}catch(error){console.error("Database health check failed",error);database={configured:true,ok:false}}} const ok=database.configured===true&&database.ok===true; res.status(ok?200:503).json({ ok, service:"lumo-server", database }); });
 
@@ -238,7 +239,7 @@ function mediaError(res,error){
   return res.status(status).json({error});
 }
 app.post("/api/media/init",auth,requireDatabase,rateLimit({windowMs:60_000,max:20}),async(req,res)=>{
-  if(!mediaReady)return mediaError(res,"media_unavailable");
+  if(!mediaEnabled)return mediaError(res,"media_unavailable");
   const to=req.body?.to;
   if(typeof to!=="string" || !uuidPattern.test(to) || to===req.user.id)
     return mediaError(res,"invalid_recipient_id");
