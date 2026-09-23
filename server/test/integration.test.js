@@ -190,6 +190,19 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     const secondEdit=await request("/api/message/"+sent.json.id,"PATCH",a.token,{text:"live corrected"});
     assert.equal(secondEdit.status,200);
     assert.equal((await liveEdited).text,"live corrected");
+
+    const matching=await request("/api/messages/search/"+b.user.id+"?q=CORRECTED","GET",a.token,null,otherBase);
+    assert.equal(matching.status,200);
+    assert.deepEqual(matching.json.map(m=>m.id),[sent.json.id],"Substring search ignores case and scopes to the conversation");
+    const recipientSearch=await request("/api/messages/search/"+a.user.id+"?q=live","GET",b.token);
+    assert.equal(recipientSearch.json.length,1);
+    const thirdPartySearch=await request("/api/messages/search/"+b.user.id+"?q=live","GET",c.token);
+    assert.deepEqual(thirdPartySearch.json,[],"Search may not see someone else's conversation");
+    const literalSearch=await request("/api/messages/search/"+b.user.id+"?q=%25","GET",a.token);
+    assert.deepEqual(literalSearch.json,[],"SQL wildcards are interpreted as literal text");
+    assert.equal((await request("/api/messages/search/"+b.user.id+"?q=x","GET",a.token)).status,400);
+    assert.equal((await request("/api/messages/search/bad?q=valid","GET",a.token)).status,400);
+    assert.equal((await request("/api/messages/search/"+b.user.id+"?q=live","GET",null)).status,401);
     const received=await request("/api/messages/"+a.user.id,"GET",b.token,null,otherBase);
     assert.equal(received.status,200);
     assert.equal(received.json.length,1);
@@ -249,6 +262,9 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     const deletedPreview=await request("/api/conversations","GET",a.token);
     assert.equal(deletedPreview.json[0].lastMessage,"Сообщение удалено");
     assert.equal(deletedPreview.json[0].unreadCount,0,"Deleted content does not stay unread");
+
+    const hiddenSearch=await request("/api/messages/search/"+a.user.id+"?q=recent","GET",b.token);
+    assert.deepEqual(hiddenSearch.json,[],"Deleted content never appears in search results");
     const invalidSelfBlock=await request("/api/blocks/"+b.user.id,"PUT",b.token);
     assert.equal(invalidSelfBlock.status,400);
     const block=await request("/api/blocks/"+c.user.id,"PUT",b.token);
