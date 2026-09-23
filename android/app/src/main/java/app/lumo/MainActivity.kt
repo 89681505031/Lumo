@@ -154,6 +154,7 @@ class MainActivity:ComponentActivity(){
 
 @Composable fun Chats(token:String,find:()->Unit,open:(User)->Unit){
  var chats by remember{mutableStateOf<List<Conversation>>(emptyList())}
+ var chatQuery by remember{mutableStateOf("")}
  var loading by remember{mutableStateOf(true)}
  var loadError by remember{mutableStateOf(false)}
  var refreshError by remember{mutableStateOf(false)}
@@ -178,16 +179,17 @@ class MainActivity:ComponentActivity(){
   }
  } else {
   Column(Modifier.fillMaxSize()){
+   OutlinedTextField(chatQuery,{chatQuery=it},placeholder={Text("Поиск по чатам")},singleLine=true,shape=RoundedCornerShape(24.dp),modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=10.dp))
    if(refreshError){
     Text("Нет связи. Показываем последнюю загруженную историю чатов.",
      color=MaterialTheme.colorScheme.error,modifier=Modifier.fillMaxWidth().padding(12.dp))
    }
    LazyColumn(Modifier.fillMaxSize()){
-   items(chats,key={it.peer.id}){chat->
+   items(chats.filter{it.peer.displayName.contains(chatQuery,true)||it.peer.username.contains(chatQuery,true)},key={it.peer.id}){chat->
     Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(20).clickable{open(chat.peer)}.padding(14.dp),verticalAlignment=Alignment.CenterVertically){
      Box(Modifier.size(56.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(chat.peer.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleLarge)}
      Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(chat.peer.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium);Row(verticalAlignment=Alignment.CenterVertically){Text(chat.lastMessage,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f));if(chat.lastAt.isNotBlank()){Spacer(Modifier.width(8.dp));Text(formatMessageTime(chat.lastAt),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
-    };HorizontalDivider()
+    }
    }
    }
   }
@@ -198,13 +200,13 @@ class MainActivity:ComponentActivity(){
  var users by remember{mutableStateOf<List<User>>(emptyList())};var q by remember{mutableStateOf("")};var loading by remember{mutableStateOf(false)};var loadError by remember{mutableStateOf(false)};var retry by remember{mutableIntStateOf(0)}
  LaunchedEffect(token,q,retry){loading=true;loadError=false;users=emptyList();kotlinx.coroutines.delay(300);runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.users(token,q)}}.onSuccess{users=it}.onFailure{loadError=true};loading=false}
  Column(Modifier.fillMaxSize()){
-  OutlinedTextField(q,{q=it},label={Text("Поиск по имени или логину")},singleLine=true,modifier=Modifier.fillMaxWidth().padding(16.dp))
+  OutlinedTextField(q,{q=it},label={Text("Поиск по имени или логину")},singleLine=true,shape=RoundedCornerShape(24.dp),modifier=Modifier.fillMaxWidth().padding(16.dp))
   if(loading) LinearProgressIndicator(Modifier.fillMaxWidth())
   if(loadError){Column(Modifier.fillMaxWidth().padding(16.dp),horizontalAlignment=Alignment.CenterHorizontally){Text("Не удалось загрузить пользователей");Spacer(Modifier.height(8.dp));Button({retry++}){Text("Повторить")}}}
   if(!loading&&!loadError&&users.isEmpty()){Box(Modifier.fillMaxWidth().padding(24.dp),contentAlignment=Alignment.Center){Text(if(q.isBlank())"Пользователей пока нет" else "Ничего не найдено",color=MaterialTheme.colorScheme.onSurfaceVariant)}}
   LazyColumn(Modifier.fillMaxSize()){
    items(users,key={it.id}){u->
-    Row(Modifier.fillMaxWidth().clickable{open(u)}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){
+    Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(20).clickable{open(u)}.padding(14.dp),verticalAlignment=Alignment.CenterVertically){
      Box(Modifier.size(52.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(u.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleLarge)}
      Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(u.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium);Text("@"+u.username,color=MaterialTheme.colorScheme.onSurfaceVariant)}
      Text("›",style=MaterialTheme.typography.headlineSmall)
