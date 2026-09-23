@@ -248,8 +248,7 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
       .onFailure{error="Не удалось удалить группу";deleteGroupDialog=false}
      actionBusy=false
     }
-   },enabled=!actionBusy){Text("Удалить")},
-   },
+   },enabled=!actionBusy){Text("Удалить")}},
    dismissButton={TextButton(onClick={deleteGroupDialog=false},enabled=!actionBusy){Text("Отмена")}}
   )
  }
