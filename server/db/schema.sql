@@ -31,3 +31,12 @@ create table if not exists messages (
 create unique index if not exists messages_sender_client_id_uidx on messages(sender_id, client_message_id) where client_message_id is not null;
 create index if not exists messages_sender_idx on messages(sender_id, created_at desc);
 create index if not exists messages_recipient_idx on messages(recipient_id, created_at desc);
+-- Authenticated, idempotent direct-message reactions. Schema-only until feature flag.
+create table if not exists message_reactions (
+  message_id uuid not null references messages(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  emoji varchar(12) not null,
+  created_at timestamptz not null default now(),
+  primary key (message_id,user_id,emoji)
+);
+create index if not exists message_reactions_user_idx on message_reactions(user_id,created_at desc);
