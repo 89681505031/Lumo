@@ -15,21 +15,10 @@ class LumoDebugFirebaseService : FirebaseMessagingService() {
     override fun onNewToken(fcmToken: String) {
         if (!BuildConfig.LUMO_FCM_CONFIGURED || !PushOptState.permissionGranted(this)) return
         val current = PushOptState.activeAccount(this) ?: return
-        // This callback is allowed to run when the app is not open.
-        Thread({
-            val stillCurrent = PushOptState.activeAccount(this)
-            if (stillCurrent != current || !PushOptState.permissionGranted(this)) return@Thread
-            // No tokens, exception details, user IDs, or message data in logs.
-            runCatching {
-                LumoPushApi.register(current.second, fcmToken)
-                // A disable or logout might race the in-flight registration.
-                // Revoke the same session if its consent changed meanwhile.
-                if (PushOptState.activeAccount(this) != current ||
-                    !PushOptState.permissionGranted(this)) {
-                    LumoPushApi.revoke(current.second)
-                }
-            }
-        }, "lumo-push-token-refresh").start()
+        // Do not launch an untracked Thread: Android may terminate the
+        // background FCM service immediately after this callback returns.
+        // WorkManager re-fetches the latest token for the CURRENT session.
+        LumoPushSyncWorker.schedule(this)
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
@@ -56,12 +45,22 @@ class LumoDebugFirebaseService : FirebaseMessagingService() {
             .setContentIntent(pending)
             .setAutoCancel(true)
             .build()
-        manager.notify(System.currentTimeMillis().toInt(), notification)
+        // Permission or account can change while constructing the Android UI.
+        if (PushOptState.activeAccount(this) == null ||
+            !PushOptState.permissionGranted(this)) return
+        manager.notify("lumo_generic", 207, notification)
     }
 }
 
 internal object PushLifecycle {
+    fun onAppStart(context: Context) {
+        // The local-only offline disable survives app restarts and is retried
+        // automatically when Android reports network connectivity.
+        LumoPushSyncWorker.schedule(context)
+    }
+
     fun forgetOnLogout(context: Context) {
+        PushOptState.dismissVisibleNotifications(context)
         // Clearing consent is synchronous; token deletion may complete later.
         PushOptState.clear(context)
         if (BuildConfig.LUMO_FCM_CONFIGURED) {
