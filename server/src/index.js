@@ -212,9 +212,8 @@ function sendTo(userId, payload) {
 }
 
 wss.on("connection", async (ws, req) => {
-  const url = new URL(req.url, "http://localhost");
   const authorization = req.headers.authorization || "";
-  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : url.searchParams.get("token");
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : null;
   if (!token || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(token)) return ws.close(1008, "Unauthorized");
   let userId;
   try {
