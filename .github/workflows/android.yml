@@ -1,7 +1,7 @@
 name: Android
 on:
   push:
-    branches: [main, design/luma-glass-ui, feature/lumo-cosmic-personalization, feature/lumo-cosmic-media]
+    branches: [main, design/luma-glass-ui, feature/lumo-cosmic-personalization, feature/lumo-cosmic-media, feature/lumo-cosmic-calls-push-lab]
     paths:
       - "android/**"
       - ".github/workflows/android.yml"
@@ -36,7 +36,7 @@ jobs:
       - name: Build debug APK
         env:
           LUMO_VERSION_CODE: ${{ github.run_number }}
-        run: gradle assembleDebug
+        run: gradle testDebugUnitTest testReleaseUnitTest assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: lumo-debug-apk

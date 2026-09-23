@@ -51,7 +51,8 @@ private fun nullableJsonText(o:JSONObject,key:String):String=if(o.isNull(key))""
 class SessionExpiredException:Exception("Сессия недействительна")
 
 class MainActivity:ComponentActivity(){
- override fun onCreate(b:Bundle?){super.onCreate(b);setContent{LumoTheme{App()}}}
+ override fun onCreate(b:Bundle?){super.onCreate(b);PushLifecycle.onAppStart(this);setContent{LumoTheme{App()}}}
+ override fun onResume(){super.onResume();PushLifecycle.onAppResume(this)}
 }
 
 @Composable fun App(){
@@ -62,6 +63,7 @@ class MainActivity:ComponentActivity(){
  var peer by remember{mutableStateOf<User?>(null)}
  var activeGroup by remember{mutableStateOf<LumoGroup?>(null)}
  var viewingGroups by remember{mutableStateOf(false)}
+ var viewingCalls by remember{mutableStateOf(false)}
  var logoutNonce by remember{mutableIntStateOf(0)}
  var restoring by remember{mutableStateOf(token!=null)}
  var restoreError by remember{mutableStateOf(false)}
@@ -75,7 +77,7 @@ class MainActivity:ComponentActivity(){
    restoring=true;restoreError=false
    runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.me(t)}}
     .onSuccess{me=it}
-    .onFailure{error->if(error is SessionExpiredException){prefs.edit().remove("token").apply();token=null}else restoreError=true}
+    .onFailure{error->if(error is SessionExpiredException){PushLifecycle.forgetOnLogout(context);prefs.edit().remove("token").apply();token=null}else restoreError=true}
    restoring=false
   }
  }
@@ -86,7 +88,7 @@ class MainActivity:ComponentActivity(){
    Spacer(Modifier.height(16.dp));Button({restoreRetry++}){Text("Повторить")}
   }
   token==null || me==null -> Register{t,u->prefs.edit().putString("token",t).apply();token=t;me=u}
-  peer==null&&activeGroup==null&&!viewingGroups -> Home(token!!,me!!,{peer=it},{viewingGroups=true},{me=it},privacy){prefs.edit().clear().apply();token=null;me=null;peer=null;activeGroup=null;viewingGroups=false;logoutNonce++}
+  peer==null&&activeGroup==null&&!viewingGroups&&!viewingCalls -> Home(token!!,me!!,{peer=it},{viewingGroups=true},{viewingCalls=true},{me=it},privacy){PushLifecycle.forgetOnLogout(context);prefs.edit().clear().apply();token=null;me=null;peer=null;activeGroup=null;viewingGroups=false;viewingCalls=false;logoutNonce++}
   activeGroup!=null -> GroupRoom(token!!,me!!,activeGroup!!){activeGroup=null}
   viewingGroups -> LumoBackdrop(Modifier.fillMaxSize()){
    Column(Modifier.fillMaxSize().statusBarsPadding()){
@@ -94,6 +96,7 @@ class MainActivity:ComponentActivity(){
     GroupsScreen(token!!){activeGroup=it}
    }
   }
+  viewingCalls -> LumoCallsLab(token!!,me!!){viewingCalls=false}
   else -> Chat(token!!,me!!,peer!!){peer=null}
  }
 }
@@ -206,7 +209,7 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Home(token:String,me:User,open:(User)->Unit,openGroups:()->Unit,profileChanged:(User)->Unit,privacy:LumoPrivacy,logout:()->Unit){
+@Composable fun Home(token:String,me:User,open:(User)->Unit,openGroups:()->Unit,openCalls:()->Unit,profileChanged:(User)->Unit,privacy:LumoPrivacy,logout:()->Unit){
  var tab by remember{mutableIntStateOf(0)}
  LumoBackdrop(Modifier.fillMaxSize()){
   Scaffold(
@@ -229,7 +232,7 @@ class MainActivity:ComponentActivity(){
     when(tab){
      0->Chats(token,{tab=1},open,openGroups,privacy)
      1->People(token,open)
-     else->Profile(token,me,profileChanged,privacy,logout)
+     else->Profile(token,me,profileChanged,privacy,openCalls,logout)
     }
    }
   }
@@ -403,7 +406,7 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Profile(token:String,me:User,profileChanged:(User)->Unit,privacy:LumoPrivacy,logout:()->Unit){
+@Composable fun Profile(token:String,me:User,profileChanged:(User)->Unit,privacy:LumoPrivacy,openCalls:()->Unit,logout:()->Unit){
  val context=LocalContext.current
  val scope=rememberCoroutineScope()
  val profilePrefs=remember{context.getSharedPreferences("lumo_local_profile",Context.MODE_PRIVATE)}
@@ -509,6 +512,17 @@ class MainActivity:ComponentActivity(){
   LumoAppearanceControls()
   Spacer(Modifier.height(16.dp))
   LumoPrivacyControls(privacy)
+  Spacer(Modifier.height(16.dp))
+  PushSettings(token,me)
+  Spacer(Modifier.height(16.dp))
+  Column(Modifier.fillMaxWidth().lumoGlass(25).padding(17.dp)){
+   Text("Звонки",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=Color.White)
+   Spacer(Modifier.height(6.dp))
+   Text("Тестовая сигнализация вызовов. Микрофон и камера в этой сборке не включаются автоматически.",
+    style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   Spacer(Modifier.height(12.dp))
+   LumoNeonButton("Открыть лабораторию звонков",openCalls,Modifier.fillMaxWidth())
+  }
   Spacer(Modifier.height(16.dp))
   Column(Modifier.fillMaxWidth().lumoGlass(25).padding(18.dp)){
    Text("⚙   Обновление",style=MaterialTheme.typography.titleMedium,
@@ -923,7 +937,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
 fun formatMessageTime(iso:String):String=runCatching{java.time.format.DateTimeFormatter.ofPattern("HH:mm").withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.parse(iso))}.getOrDefault("")
 
 object Api{
- internal const val HTTP="https://lumo-gamma-seven.vercel.app";internal const val WS="wss://lumo-gamma-seven.vercel.app/ws";val httpClient=OkHttpClient.Builder().connectTimeout(15,java.util.concurrent.TimeUnit.SECONDS).readTimeout(30,java.util.concurrent.TimeUnit.SECONDS).writeTimeout(30,java.util.concurrent.TimeUnit.SECONDS).pingInterval(25,java.util.concurrent.TimeUnit.SECONDS).retryOnConnectionFailure(true).build();private val c=httpClient
+ internal val HTTP=BuildConfig.LUMO_HTTP_BASE;internal val WS=BuildConfig.LUMO_WS_BASE;val httpClient=OkHttpClient.Builder().connectTimeout(15,java.util.concurrent.TimeUnit.SECONDS).readTimeout(30,java.util.concurrent.TimeUnit.SECONDS).writeTimeout(30,java.util.concurrent.TimeUnit.SECONDS).pingInterval(25,java.util.concurrent.TimeUnit.SECONDS).retryOnConnectionFailure(true).build();private val c=httpClient
  fun register(login:String,name:String,password:String):Pair<String,User>{val j=JSONObject().put("username",login).put("displayName",name).put("password",password);val r=Request.Builder().url(HTTP+"/api/register").post(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->val body=x.body?.string().orEmpty();if(!x.isSuccessful){val code=runCatching{JSONObject(body).optString("error")}.getOrDefault("");error(when(code){"database_unavailable"->"Сервис временно недоступен: база данных не подключена";"username_taken"->"Этот логин уже занят";"invalid_profile"->"Проверь имя и логин";"invalid_password"->"Пароль должен содержать от 10 до 128 символов";else->"Ошибка регистрации ("+x.code+")"})};val o=JSONObject(body);return o.getString("token") to user(o.getJSONObject("user"))}}
  fun login(login:String,password:String):Pair<String,User>{
   val body=JSONObject().put("username",login).put("password",password)
