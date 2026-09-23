@@ -94,7 +94,7 @@ class MainActivity:ComponentActivity(){
  var err by remember{mutableStateOf("")}
  var busy by remember{mutableStateOf(false)}
  LumoBackdrop(Modifier.fillMaxSize()){Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center){
-  Box(Modifier.fillMaxWidth().height(108.dp),contentAlignment=Alignment.Center){Box(Modifier.size(88.dp).clip(RoundedCornerShape(30.dp)).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text("✦",style=MaterialTheme.typography.displayLarge,color=Color.White)}}
+  Box(Modifier.fillMaxWidth().height(156.dp),contentAlignment=Alignment.Center){LumoPlanetIcon(140.dp)}
   Spacer(Modifier.height(18.dp))
   Text("Lumo",style=MaterialTheme.typography.displayLarge,fontWeight=FontWeight.Bold,color=Color.White)
   Spacer(Modifier.height(8.dp))
@@ -102,12 +102,12 @@ class MainActivity:ComponentActivity(){
   Spacer(Modifier.height(28.dp))
   Column(Modifier.fillMaxWidth().lumoGlass(30).padding(20.dp)){
   if(!loginMode){
-   OutlinedTextField(name,{name=it},label={Text("Имя")},singleLine=true,modifier=Modifier.fillMaxWidth())
+   OutlinedTextField(name,{name=it},label={Text("Имя")},singleLine=true,shape=RoundedCornerShape(20.dp),modifier=Modifier.fillMaxWidth())
    Spacer(Modifier.height(10.dp))
   }
-  OutlinedTextField(login,{login=it},label={Text("Логин")},singleLine=true,modifier=Modifier.fillMaxWidth())
+  OutlinedTextField(login,{login=it},label={Text("Логин")},singleLine=true,shape=RoundedCornerShape(20.dp),modifier=Modifier.fillMaxWidth())
   Spacer(Modifier.height(10.dp))
-  OutlinedTextField(password,{password=it},label={Text("Пароль")},singleLine=true,visualTransformation=PasswordVisualTransformation(),modifier=Modifier.fillMaxWidth())
+  OutlinedTextField(password,{password=it},label={Text("Пароль")},singleLine=true,visualTransformation=PasswordVisualTransformation(),shape=RoundedCornerShape(20.dp),modifier=Modifier.fillMaxWidth())
   if(!loginMode)Text("Пароль: минимум 10 символов",style=MaterialTheme.typography.bodySmall,modifier=Modifier.padding(top=6.dp))
   if(err.isNotEmpty())Text(err,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(top=8.dp))
   Spacer(Modifier.height(16.dp))
