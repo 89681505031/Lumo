@@ -1,7 +1,7 @@
 import { dbQuery, hasDatabase } from "./db.js";
 
 const mapUser = r => ({ id:r.id, username:r.username, displayName:r.display_name });
-const mapMessage = r => ({ id:r.id, from:r.sender_id, to:r.recipient_id, text:r.text, createdAt:r.created_at?.toISOString?.() || r.created_at, deliveredAt:r.delivered_at?.toISOString?.() || r.delivered_at || null, readAt:r.read_at?.toISOString?.() || r.read_at || null, clientMessageId:r.client_message_id || null });
+const mapMessage = r => ({ id:r.id, from:r.sender_id, to:r.recipient_id, text:r.text, createdAt:r.created_at?.toISOString?.() || r.created_at, deliveredAt:r.delivered_at?.toISOString?.() || r.delivered_at || null, readAt:r.read_at?.toISOString?.() || r.read_at || null, clientMessageId:r.client_message_id || null, editedAt:r.edited_at?.toISOString?.() || r.edited_at || null, deletedAt:r.deleted_at?.toISOString?.() || r.deleted_at || null });
 
 export const postgresStore = {
   enabled: hasDatabase,
@@ -65,7 +65,7 @@ export const postgresStore = {
       join users u on u.id=latest.peer_id
       left join (
         select sender_id as peer_id, count(*)::integer as unread_count
-        from messages where recipient_id=$1 and read_at is null
+        from messages where recipient_id=$1 and read_at is null and deleted_at is null
         group by sender_id
       ) unread on unread.peer_id=latest.peer_id
       left join conversation_prefs p on p.owner_id=$1 and p.peer_id=latest.peer_id
@@ -118,16 +118,41 @@ export const postgresStore = {
     const r=await dbQuery("select * from messages where (sender_id=$1 and recipient_id=$2) or (sender_id=$2 and recipient_id=$1) order by created_at",[me,peer]);
     return r.rows.map(mapMessage);
   },
+  async searchMessages(me,peer,query) {
+    // strpos performs a literal substring match: user-supplied % and _ are
+    // search characters rather than SQL LIKE wildcards.
+    const r=await dbQuery(
+      "select * from messages where ((sender_id=$1 and recipient_id=$2) or (sender_id=$2 and recipient_id=$1)) and deleted_at is null and strpos(lower(text),lower($3))>0 order by created_at desc,id desc limit 50",
+      [me,peer,query]
+    );
+    return r.rows.map(mapMessage);
+  },
+  async editMessage(me,id,text) {
+    // Atomic owner check: neither the recipient nor an attacker can edit it.
+    const r=await dbQuery(
+      "update messages set text=$3,edited_at=now() where id=$1 and sender_id=$2 and deleted_at is null returning *",
+      [id,me,text]
+    );
+    return r.rows[0] ? mapMessage(r.rows[0]) : null;
+  },
+  async deleteMessage(me,id) {
+    // Keep an explicit tombstone for older clients, inbox previews and receipts.
+    const r=await dbQuery(
+      "update messages set text='Сообщение удалено',deleted_at=coalesce(deleted_at,now()) where id=$1 and sender_id=$2 returning *",
+      [id,me]
+    );
+    return r.rows[0] ? mapMessage(r.rows[0]) : null;
+  },
   async saveMessage(m) {
     if(m.clientMessageId){
-      const inserted=await dbQuery(`insert into messages(id,sender_id,recipient_id,text,created_at,delivered_at,read_at,client_message_id) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict (sender_id,client_message_id) where client_message_id is not null do nothing returning *`,[m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt,m.clientMessageId]);
+      const inserted=await dbQuery(`insert into messages(id,sender_id,recipient_id,text,created_at,delivered_at,read_at,client_message_id,original_text) values($1,$2,$3,$4,$5,$6,$7,$8,$4) on conflict (sender_id,client_message_id) where client_message_id is not null do nothing returning *`,[m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt,m.clientMessageId]);
       if(inserted.rows[0]) return {message:mapMessage(inserted.rows[0]),inserted:true};
       const existing=await dbQuery("select * from messages where sender_id=$1 and client_message_id=$2",[m.from,m.clientMessageId]);
       const row=existing.rows[0];
-      if(!row || row.recipient_id!==m.to || row.text!==m.text){const error=new Error("client_message_id_conflict");error.code="CLIENT_MESSAGE_ID_CONFLICT";throw error;}
+      if(!row || row.recipient_id!==m.to || (row.original_text ?? row.text)!==m.text){const error=new Error("client_message_id_conflict");error.code="CLIENT_MESSAGE_ID_CONFLICT";throw error;}
       return {message:mapMessage(row),inserted:false};
     }
-    await dbQuery("insert into messages(id,sender_id,recipient_id,text,created_at,delivered_at,read_at) values($1,$2,$3,$4,$5,$6,$7)",[m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt]);
+    await dbQuery("insert into messages(id,sender_id,recipient_id,text,created_at,delivered_at,read_at,original_text) values($1,$2,$3,$4,$5,$6,$7,$4)",[m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt]);
     return {message:m,inserted:true};
   },
   async markMessageDelivered(messageId,userId) {

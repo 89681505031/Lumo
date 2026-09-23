@@ -41,7 +41,7 @@ import org.json.JSONObject
 import kotlinx.coroutines.launch
 
 data class User(val id:String,val username:String,val displayName:String)
-data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="")
+data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="",val editedAt:String="",val deletedAt:String="")
 data class Conversation(val peer:User,val lastMessage:String,val lastAt:String="",val unreadCount:Int=0,val pinned:Boolean=false)
 data class UpdateInfo(val versionCode:Int,val downloadUrl:String)
 data class Receipt(val messageId:String,val deliveredAt:String,val readAt:String)
@@ -346,10 +346,15 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  val merged=LinkedHashMap<String,Msg>()
  for(m in current+incoming){
   val old=merged[m.id]
-  merged[m.id]=if(old==null)m else m.copy(
-   deliveredAt=old.deliveredAt.ifBlank{m.deliveredAt},
-   readAt=old.readAt.ifBlank{m.readAt},
-   clientMessageId=m.clientMessageId.ifBlank{old.clientMessageId}
+  // Do not let a delayed HTTP/WebSocket response restore older edited or deleted text.
+  val latest=if(old!=null && old.deletedAt.isNotBlank() && m.deletedAt.isBlank())old
+    else if(old!=null && old.editedAt.isNotBlank() && m.editedAt.isBlank() && m.deletedAt.isBlank())old
+    else if(old!=null && old.editedAt.isNotBlank() && m.editedAt.isNotBlank() && m.editedAt<old.editedAt && m.deletedAt.isBlank())old
+    else m
+  merged[m.id]=if(old==null)latest else latest.copy(
+   deliveredAt=old.deliveredAt.ifBlank{latest.deliveredAt},
+   readAt=old.readAt.ifBlank{latest.readAt},
+   clientMessageId=latest.clientMessageId.ifBlank{old.clientMessageId}
   )
  }
  return merged.values.sortedBy{it.createdAt}
@@ -362,6 +367,18 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  LaunchedEffect(token,peer.id){runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.blocks(token)}}.onSuccess{blockedByMe=it.any{u->u.id==peer.id}}}
  val msgs=remember{mutableStateListOf<Msg>()};var input by remember{mutableStateOf("")};var ws by remember{mutableStateOf<WebSocket?>(null)};var socketGeneration by remember{mutableIntStateOf(0)};var connected by remember{mutableStateOf(false)};var socketError by remember{mutableStateOf("")};var historyError by remember{mutableStateOf(false)};val pending=remember{mutableStateListOf<PendingMessage>().apply{val a=runCatching{JSONArray(queuePrefs.getString(queueKey,"[]"))}.getOrNull();if(a!=null)for(i in 0 until a.length()){val o=a.optJSONObject(i);if(o!=null){val id=o.optString("clientMessageId");val text=o.optString("text");if(id.isNotBlank()&&text.isNotBlank())add(PendingMessage(id,text))}else{val text=a.optString(i);if(text.isNotBlank())add(PendingMessage(java.util.UUID.randomUUID().toString(),text))}}}}
  fun savePending(){val a=JSONArray();pending.forEach{a.put(JSONObject().put("clientMessageId",it.clientMessageId).put("text",it.text))};queuePrefs.edit().putString(queueKey,a.toString()).apply()}
+ var editTarget by remember{mutableStateOf<Msg?>(null)}
+ var editDraft by remember{mutableStateOf("")}
+ var deleteTarget by remember{mutableStateOf<Msg?>(null)}
+ var mutationBusy by remember{mutableStateOf(false)}
+ var mutationError by remember{mutableStateOf("")}
+ var showSearch by remember(peer.id){mutableStateOf(false)}
+ var searchText by remember(peer.id){mutableStateOf("")}
+ var searchResults by remember(peer.id){mutableStateOf<List<Msg>>(emptyList())}
+ var searchBusy by remember{mutableStateOf(false)}
+ var searchPerformed by remember{mutableStateOf(false)}
+ var searchError by remember{mutableStateOf("")}
+
  DisposableEffect(peer.id){
   scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{historyError=false;val merged=mergeChatMessages(msgs,it);msgs.clear();msgs.addAll(merged);val unread=it.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true}}
   fun syncHistory(){scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{fresh->historyError=false;val byId=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(byId);val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->scope.launch{if(m.from==peer.id||m.to==peer.id){if(m.from==me.id&&m.clientMessageId.isNotBlank()){pending.removeAll{it.clientMessageId==m.clientMessageId};savePending()};val existing=msgs.indexOfFirst{it.id==m.id};if(existing>=0){msgs[existing]=mergeChatMessages(listOf(msgs[existing]),listOf(m)).first()}else msgs.add(m);if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}}},{r->scope.launch{val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=old.deliveredAt.ifBlank{r.deliveredAt},readAt=old.readAt.ifBlank{r.readAt})}}},{e->scope.launch{socketError=when(e){"service_unavailable"->"Сервер временно недоступен. Переподключаемся…";"recipient_not_found"->"Получатель больше не найден.";"message_too_long"->"Сообщение слишком длинное.";"empty_message"->"Пустое сообщение не отправлено.";"client_message_id_conflict"->"Конфликт повторной отправки. Сообщение сохранено.";"invalid_client_message_id"->"Ошибка идентификатора сообщения.";"invalid_recipient_id"->"Некорректный получатель.";"invalid_server_message"->"Получен некорректный ответ сервера.";"cannot_message_self"->"Нельзя отправить сообщение самому себе.";"user_blocked"->"Сообщение отклонено: один из участников заблокировал переписку." ;else->"Не удалось отправить сообщение"};if(e=="user_blocked"){pending.clear();savePending()};if(e=="service_unavailable"){connected=false;ws?.close(1012,"retry")}}},{scope.launch{connected=true;socketError="";for(p in pending.toList()){val sent=ws?.send(JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId).toString())==true;if(!sent){connected=false;ws?.close(1012,"retry");break}};syncHistory()}},{scope.launch{if(generation==socketGeneration){connected=false;kotlinx.coroutines.delay(2000);if(generation==socketGeneration)connect()}}})};connect()
@@ -396,6 +413,37 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    }.onFailure{historyError=true}
   }
  }
+
+ editTarget?.let{target->
+  AlertDialog(onDismissRequest={if(!mutationBusy)editTarget=null},title={Text("Изменить сообщение")},
+   text={OutlinedTextField(editDraft,{editDraft=it.take(4000)},label={Text("Текст")},maxLines=5)},
+   confirmButton={TextButton(onClick={
+    mutationBusy=true;mutationError=""
+    scope.launch{
+     runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.editMessage(token,target.id,editDraft)}}
+      .onSuccess{changed->val merged=mergeChatMessages(msgs,listOf(changed));msgs.clear();msgs.addAll(merged);editTarget=null}
+      .onFailure{mutationError="Не удалось изменить сообщение. Попробуйте ещё раз.";editTarget=null}
+     mutationBusy=false
+    }
+   },enabled=!mutationBusy&&editDraft.trim().isNotEmpty()&&editDraft.trim().length<=4000){Text("Сохранить")}},
+   dismissButton={TextButton(onClick={editTarget=null},enabled=!mutationBusy){Text("Отмена")}}
+  )
+ }
+ deleteTarget?.let{target->
+  AlertDialog(onDismissRequest={if(!mutationBusy)deleteTarget=null},title={Text("Удалить сообщение?")},
+   text={Text("Текст будет заменён пометкой об удалении в истории переписки.")},
+   confirmButton={TextButton(onClick={
+    mutationBusy=true;mutationError=""
+    scope.launch{
+     runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.deleteMessage(token,target.id)}}
+      .onSuccess{changed->val merged=mergeChatMessages(msgs,listOf(changed));msgs.clear();msgs.addAll(merged);deleteTarget=null}
+      .onFailure{mutationError="Не удалось удалить сообщение. Попробуйте ещё раз.";deleteTarget=null}
+     mutationBusy=false
+    }
+   },enabled=!mutationBusy){Text("Удалить")}},
+   dismissButton={TextButton(onClick={deleteTarget=null},enabled=!mutationBusy){Text("Отмена")}}
+  )
+ }
  Scaffold(
   topBar={Surface(shadowElevation=2.dp){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp),verticalAlignment=Alignment.CenterVertically){
    TextButton(back){Text("‹ Назад")};Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(peer.displayName.take(1).uppercase())};Spacer(Modifier.width(10.dp));Column(Modifier.weight(1f)){Text(peer.displayName,fontWeight=FontWeight.Bold);Text("@"+peer.username,style=MaterialTheme.typography.bodySmall)};TextButton(onClick={
@@ -412,15 +460,57 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
     }
    }
    if(historyError){Surface(color=MaterialTheme.colorScheme.errorContainer,modifier=Modifier.fillMaxWidth()){Text("Не удалось загрузить историю. Повторим после подключения.",modifier=Modifier.padding(10.dp),color=MaterialTheme.colorScheme.onErrorContainer)}}
+   if(mutationError.isNotEmpty())Text(mutationError,modifier=Modifier.padding(10.dp),color=MaterialTheme.colorScheme.error)
+   Row(Modifier.fillMaxWidth().padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically){
+    TextButton(onClick={showSearch=!showSearch;searchResults=emptyList();searchPerformed=false;searchError=""}){
+     Text(if(showSearch)"‹ К переписке" else "⌕ Поиск в переписке")
+    }
+    if(showSearch)Text("До 50 совпадений",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   }
+   if(showSearch){
+    Row(Modifier.fillMaxWidth().padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically){
+     OutlinedTextField(searchText,{searchText=it.take(100);searchPerformed=false;searchResults=emptyList()},label={Text("Найти сообщение")},singleLine=true,modifier=Modifier.weight(1f))
+     Spacer(Modifier.width(8.dp))
+     Button(onClick={
+      searchBusy=true;searchError=""
+      scope.launch{
+       runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.searchMessages(token,peer.id,searchText)}}
+        .onSuccess{searchResults=it;searchPerformed=true}
+        .onFailure{searchError="Поиск временно недоступен"}
+       searchBusy=false
+      }
+     },enabled=!searchBusy&&searchText.trim().length in 2..100){Text("Найти")}
+    }
+    if(searchBusy)LinearProgressIndicator(Modifier.fillMaxWidth())
+    if(searchError.isNotBlank())Text(searchError,modifier=Modifier.padding(8.dp),color=MaterialTheme.colorScheme.error)
+    if(searchPerformed&&searchResults.isEmpty())Text("Совпадений не найдено",modifier=Modifier.padding(8.dp))
+   }
+
    LazyColumn(Modifier.weight(1f).fillMaxWidth(),contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-    items(msgs,key={it.id}){m->
+    items(if(showSearch)searchResults else msgs.toList(),key={it.id}){m->
      Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.from==me.id)Arrangement.End else Arrangement.Start){
       Surface(shape=RoundedCornerShape(18.dp),color=if(m.from==me.id)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,modifier=Modifier.widthIn(max=300.dp)){
-       Column(Modifier.padding(14.dp,8.dp)){Text(m.text);Row(Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically){if(m.createdAt.isNotBlank())Text(formatMessageTime(m.createdAt),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(m.from==me.id){Spacer(Modifier.width(5.dp));Text(if(m.readAt.isNotBlank())"✓✓" else if(m.deliveredAt.isNotBlank())"✓✓" else "✓",style=MaterialTheme.typography.labelSmall,color=if(m.readAt.isNotBlank())MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)}}}
+       Column(Modifier.padding(14.dp,8.dp)){
+         Text(m.text,color=if(m.deletedAt.isNotBlank())MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
+         Row(Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically){
+          if(m.editedAt.isNotBlank()&&m.deletedAt.isBlank())Text("изменено",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+          if(m.createdAt.isNotBlank()){Spacer(Modifier.width(5.dp));Text(formatMessageTime(m.createdAt),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+          if(m.from==me.id){
+           Spacer(Modifier.width(5.dp))
+           Text(if(m.readAt.isNotBlank())"✓✓" else if(m.deliveredAt.isNotBlank())"✓✓" else "✓",style=MaterialTheme.typography.labelSmall,color=if(m.readAt.isNotBlank())MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+          }
+         }
+         if(!showSearch&&m.from==me.id&&m.deletedAt.isBlank()){
+          Row(Modifier.align(Alignment.End)){
+           TextButton(onClick={editDraft=m.text;editTarget=m;mutationError=""}){Text("Изменить")}
+           TextButton(onClick={deleteTarget=m;mutationError=""}){Text("Удалить")}
+          }
+         }
+        }
       }
      }
     }
-    items(pending.filter{p->msgs.none{it.from==me.id&&it.clientMessageId==p.clientMessageId}},key={"pending-"+it.clientMessageId}){p->
+    items(if(showSearch)emptyList<PendingMessage>() else pending.filter{p->msgs.none{it.from==me.id&&it.clientMessageId==p.clientMessageId}},key={"pending-"+it.clientMessageId}){p->
      Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
       Surface(shape=RoundedCornerShape(18.dp),color=MaterialTheme.colorScheme.primaryContainer,modifier=Modifier.widthIn(max=300.dp)){
        Column(Modifier.padding(14.dp,8.dp)){
@@ -486,6 +576,21 @@ fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/
   val request=Request.Builder().url(HTTP+"/api/messages").header("Authorization","Bearer "+t).post(body.toString().toRequestBody("application/json".toMediaType())).build()
   c.newCall(request).execute().use{response->if(!response.isSuccessful)error("Отправка: "+response.code);return msg(JSONObject(response.body!!.string()))}
  }
+ fun searchMessages(t:String,peerId:String,q:String):List<Msg>{
+  val url=(HTTP+"/api/messages/search/"+peerId).toHttpUrl().newBuilder().addQueryParameter("q",q.trim()).build()
+  val request=Request.Builder().url(url).header("Authorization","Bearer "+t).build()
+  c.newCall(request).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return (0 until a.length()).map{msg(a.getJSONObject(it))}}
+ }
+ fun editMessage(t:String,messageId:String,text:String):Msg{
+  val body=JSONObject().put("text",text)
+  val r=Request.Builder().url(HTTP+"/api/message/"+messageId).header("Authorization","Bearer "+t)
+   .patch(body.toString().toRequestBody("application/json".toMediaType())).build()
+  c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Редактирование: "+x.code);return msg(JSONObject(x.body!!.string()))}
+ }
+ fun deleteMessage(t:String,messageId:String):Msg{
+  val r=Request.Builder().url(HTTP+"/api/message/"+messageId).header("Authorization","Bearer "+t).delete().build()
+  c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Удаление: "+x.code);return msg(JSONObject(x.body!!.string()))}
+ }
  fun readMessages(t:String,ids:List<String>){
   if(ids.isEmpty())return
   val body=JSONObject().put("ids",JSONArray(ids.take(200)))
@@ -495,5 +600,5 @@ fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/
  fun latestRelease():UpdateInfo{val r=Request.Builder().url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest").header("Accept","application/vnd.github+json").build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Обновление: "+x.code);val o=JSONObject(x.body!!.string());val code=Regex("versionCode=(\\d+)").find(o.optString("body"))?.groupValues?.get(1)?.toIntOrNull()?:0;val a=o.getJSONArray("assets");for(i in 0 until a.length()){val asset=a.getJSONObject(i);if(asset.optString("name")=="app-debug.apk" || asset.optString("name")=="app-release.apk" || asset.optString("label")=="Lumo.apk")return UpdateInfo(code,asset.getString("browser_download_url"))};error("APK не найден")}}
  fun socket(t:String,onMessage:(Msg)->Unit,onReceipt:(Receipt)->Unit,onError:(String)->Unit,onReady:()->Unit,onDisconnected:()->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS).header("Authorization","Bearer "+t).build(),object:WebSocketListener(){override fun onOpen(w:WebSocket,response:Response){};override fun onMessage(w:WebSocket,s:String){runCatching{val o=JSONObject(s);when(o.optString("type")){"ready"->onReady();"message"->onMessage(msg(o.getJSONObject("message")));"receipt"->onReceipt(Receipt(o.getString("messageId"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt")));"error"->onError(o.optString("error"));else->Unit}}.onFailure{onError("invalid_server_message")}};override fun onClosed(w:WebSocket,code:Int,reason:String)=onDisconnected();override fun onFailure(w:WebSocket,t:Throwable,response:Response?)=onDisconnected()})}
  private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"))
- private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"))
+ private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"),nullableJsonText(o,"editedAt"),nullableJsonText(o,"deletedAt"))
 }

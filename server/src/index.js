@@ -154,6 +154,16 @@ app.get("/api/messages/:peerId", auth, async (req, res) => {
   catch(error){console.error("Message history failed",error);res.status(503).json({error:"service_unavailable"});}
 });
 
+app.get("/api/messages/search/:peerId",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  const id=req.params.peerId;
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) || id===req.user.id)
+    return res.status(400).json({error:"invalid_peer_id"});
+  const q=typeof req.query.q==="string" ? req.query.q.trim() : "";
+  if(q.length<2 || q.length>100)return res.status(400).json({error:"invalid_search_query"});
+  try{return res.json(await postgresStore.searchMessages(req.user.id,id,q));}
+  catch(error){console.error("Search messages failed",error);return res.status(503).json({error:"service_unavailable"});}
+});
+
 // HTTP transport is a durable fallback when WebSocket peers connect to different instances.
 const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -211,6 +221,33 @@ app.post("/api/messages", auth, requireDatabase, async (req,res)=>{
     console.error("HTTP message send failed",error);
     return res.status(503).json({error:"service_unavailable"});
   }
+});
+// Editing and removal are limited to the authenticated original sender.
+// Existing clients understand an updated message with the same id; clients on
+// another Vercel instance also reconcile from PostgreSQL via HTTP polling.
+app.patch("/api/message/:id",auth,requireDatabase,async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))return res.status(400).json({error:"invalid_message_id"});
+  if(typeof req.body?.text!=="string" || !req.body.text.trim())
+    return res.status(400).json({error:"empty_message"});
+  const text=req.body.text.trim();
+  if(text.length>4000)return res.status(400).json({error:"message_too_long"});
+  try{
+    const message=await postgresStore.editMessage(req.user.id,req.params.id,text);
+    if(!message)return res.status(404).json({error:"message_not_editable"});
+    sendTo(message.from,{type:"message",message});
+    sendTo(message.to,{type:"message",message});
+    return res.json(message);
+  }catch(error){console.error("Edit message failed",error);return res.status(503).json({error:"service_unavailable"});}
+});
+app.delete("/api/message/:id",auth,requireDatabase,async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))return res.status(400).json({error:"invalid_message_id"});
+  try{
+    const message=await postgresStore.deleteMessage(req.user.id,req.params.id);
+    if(!message)return res.status(404).json({error:"message_not_editable"});
+    sendTo(message.from,{type:"message",message});
+    sendTo(message.to,{type:"message",message});
+    return res.json(message);
+  }catch(error){console.error("Delete message failed",error);return res.status(503).json({error:"service_unavailable"});}
 });
 app.post("/api/messages/read",auth,requireDatabase,async(req,res)=>{
   const ids=req.body?.ids;
