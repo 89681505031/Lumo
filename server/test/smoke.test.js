@@ -63,6 +63,18 @@ test("liveness works while database-dependent routes fail safely", { timeout: 15
       ws.once("error", error => { clearTimeout(timer); reject(error); });
     });
     assert.equal(closeCode, 1008);
+    const headerWs = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+      headers: { Authorization: "Bearer invalid" }
+    });
+    const headerCloseCode = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        headerWs.terminate();
+        reject(new Error("Unauthenticated header WebSocket was not closed"));
+      }, 3000);
+      headerWs.once("close", code => { clearTimeout(timer); resolve(code); });
+      headerWs.once("error", error => { clearTimeout(timer); reject(error); });
+    });
+    assert.equal(headerCloseCode, 1008);
   } finally {
     child.kill();
   }
