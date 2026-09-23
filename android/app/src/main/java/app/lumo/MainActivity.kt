@@ -143,13 +143,16 @@ class MainActivity:ComponentActivity(){
    NavigationBarItem(selected=tab==0,onClick={tab=0},icon={Text("●")},label={Text("Чаты")})
    NavigationBarItem(selected=tab==1,onClick={tab=1},icon={Text("⌕")},label={Text("Люди")})
    NavigationBarItem(selected=tab==2,onClick={tab=2},icon={Text("☺")},label={Text("Профиль")})
+   if(BuildConfig.DEBUG)NavigationBarItem(selected=tab==3,onClick={tab=3},icon={Text("☏")},label={Text("Тест звонков")})
   }}
  ){pad->
   Box(Modifier.padding(pad).fillMaxSize()){
    when(tab){
     0->Chats(token,{tab=1},open)
     1->People(token,open)
-    else->Profile(token,me,profileChanged,darkMode,onDarkModeChange,logout)
+    2->Profile(token,me,profileChanged,darkMode,onDarkModeChange,logout)
+    3->if(BuildConfig.DEBUG)CallInvitationsLab(token,me) else Chats(token,{tab=1},open)
+    else->Chats(token,{tab=1},open)
    }
   }
  }
@@ -443,6 +446,7 @@ fun formatMessageTime(iso:String):String=runCatching{java.time.format.DateTimeFo
 
 object Api{
  private const val HTTP="https://lumo-gamma-seven.vercel.app";private const val WS="wss://lumo-gamma-seven.vercel.app/ws";val httpClient=OkHttpClient.Builder().connectTimeout(15,java.util.concurrent.TimeUnit.SECONDS).readTimeout(30,java.util.concurrent.TimeUnit.SECONDS).writeTimeout(30,java.util.concurrent.TimeUnit.SECONDS).pingInterval(25,java.util.concurrent.TimeUnit.SECONDS).retryOnConnectionFailure(true).build();private val c=httpClient
+ val callClient by lazy { LumoCallApi(HTTP, httpClient) }
  fun register(login:String,name:String,password:String):Pair<String,User>{val j=JSONObject().put("username",login).put("displayName",name).put("password",password);val r=Request.Builder().url(HTTP+"/api/register").post(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->val body=x.body?.string().orEmpty();if(!x.isSuccessful){val code=runCatching{JSONObject(body).optString("error")}.getOrDefault("");error(when(code){"database_unavailable"->"Сервис временно недоступен: база данных не подключена";"username_taken"->"Этот логин уже занят";"invalid_profile"->"Проверь имя и логин";"invalid_password"->"Пароль должен содержать от 10 до 128 символов";else->"Ошибка регистрации ("+x.code+")"})};val o=JSONObject(body);return o.getString("token") to user(o.getJSONObject("user"))}}
  fun login(login:String,password:String):Pair<String,User>{
   val body=JSONObject().put("username",login).put("password",password)
