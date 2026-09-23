@@ -134,12 +134,12 @@ class MainActivity:ComponentActivity(){
  var tab by remember{mutableIntStateOf(0)}
  Scaffold(containerColor=Color.Transparent,
   topBar={Surface(color=Color.Transparent,shadowElevation=0.dp){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(20.dp,14.dp),verticalAlignment=Alignment.CenterVertically){
-   Text("Lumo",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);Spacer(Modifier.weight(1f));Text(me.displayName,style=MaterialTheme.typography.labelLarge)
+   Text("Lumo",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);Spacer(Modifier.weight(1f));Box(Modifier.lumoGlass(18).padding(horizontal=12.dp,vertical=8.dp)){Text(me.displayName,style=MaterialTheme.typography.labelLarge)}
   }}},
   bottomBar={NavigationBar(containerColor=Color(0xFF304360)){
-   NavigationBarItem(selected=tab==0,onClick={tab=0},icon={Text("●")},label={Text("Чаты")})
+   NavigationBarItem(selected=tab==0,onClick={tab=0},icon={Text("◉")},label={Text("Чаты")})
    NavigationBarItem(selected=tab==1,onClick={tab=1},icon={Text("⌕")},label={Text("Люди")})
-   NavigationBarItem(selected=tab==2,onClick={tab=2},icon={Text("☺")},label={Text("Профиль")})
+   NavigationBarItem(selected=tab==2,onClick={tab=2},icon={Text("◌")},label={Text("Профиль")})
   }}
  ){pad->
   Box(Modifier.padding(pad).fillMaxSize().background(LumoGradient)){
@@ -223,7 +223,7 @@ class MainActivity:ComponentActivity(){
  var update by remember{mutableStateOf<UpdateInfo?>(null)};var checking by remember{mutableStateOf(true)};var updateText by remember{mutableStateOf("Проверяем обновления…")};var progress by remember{mutableIntStateOf(-1)}
  LaunchedEffect(Unit){runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.latestRelease()}}.onSuccess{info->update=info.takeIf{it.versionCode>BuildConfig.VERSION_CODE};updateText=if(update!=null)"Доступна новая версия Lumo" else "Установлена последняя версия"}.onFailure{updateText="Не удалось проверить обновления"};checking=false}
  Column(Modifier.fillMaxSize().background(LumoGradient).padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
-  Spacer(Modifier.height(24.dp));Box(Modifier.size(92.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(me.displayName.take(1).uppercase(),style=MaterialTheme.typography.displaySmall,fontWeight=FontWeight.Bold)}
+  Spacer(Modifier.height(24.dp));Box(Modifier.size(92.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(me.displayName.take(1).uppercase(),style=MaterialTheme.typography.displaySmall,fontWeight=FontWeight.Bold)}
   Spacer(Modifier.height(16.dp));Text(me.displayName,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text("@"+me.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
   Spacer(Modifier.height(20.dp));Card(Modifier.fillMaxWidth().lumoGlass()){Column(Modifier.padding(18.dp)){
    Text("Профиль",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(8.dp))
@@ -347,7 +347,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  }
  Scaffold(
   topBar={Surface(color=Color(0xFF304360)){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp),verticalAlignment=Alignment.CenterVertically){
-   TextButton(back){Text("‹ Назад")};Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(peer.displayName.take(1).uppercase())};Spacer(Modifier.width(10.dp));Column{Text(peer.displayName,fontWeight=FontWeight.Bold);Text("@"+peer.username,style=MaterialTheme.typography.bodySmall)}
+   TextButton(back){Text("‹ Назад")};Box(Modifier.size(40.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(peer.displayName.take(1).uppercase())};Spacer(Modifier.width(10.dp));Column{Text(peer.displayName,fontWeight=FontWeight.Bold);Text("@"+peer.username,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
   }}}
  ){pad->
   Column(Modifier.padding(pad).fillMaxSize().background(LumoGradient)){
