@@ -47,6 +47,31 @@ export async function initDatabase() {
     constraint no_self_block check (blocker_id<>blocked_id)
   )`);
   await pool.query(`create index if not exists user_blocks_blocked_idx on user_blocks(blocked_id,blocker_id)`);
+  await pool.query(`create table if not exists chat_groups (
+    id uuid primary key,
+    title varchar(80) not null,
+    owner_id uuid not null references users(id),
+    created_at timestamptz not null default now()
+  )`);
+  await pool.query(`create table if not exists chat_group_members (
+    group_id uuid not null references chat_groups(id) on delete cascade,
+    user_id uuid not null references users(id) on delete cascade,
+    role varchar(10) not null check (role in ('owner','admin','member')),
+    joined_at timestamptz not null default now(),
+    primary key(group_id,user_id)
+  )`);
+  await pool.query(`create index if not exists chat_group_members_user_idx on chat_group_members(user_id,group_id)`);
+  await pool.query(`create table if not exists chat_group_messages (
+    id uuid primary key,
+    group_id uuid not null references chat_groups(id) on delete cascade,
+    sender_id uuid not null references users(id),
+    text varchar(4000) not null,
+    client_message_id uuid not null,
+    created_at timestamptz not null default now(),
+    unique(group_id,sender_id,client_message_id)
+  )`);
+  await pool.query(`create index if not exists chat_group_messages_history_idx on chat_group_messages(group_id,created_at desc,id desc)`);
+
   return true;
 }
 export async function dbHealth() {
@@ -57,10 +82,13 @@ export async function dbHealth() {
     to_regclass('messages') as messages_table,
     to_regclass('conversation_prefs') as conversation_prefs_table,
     to_regclass('user_blocks') as user_blocks_table,
+    to_regclass('chat_groups') as groups_table,
+    to_regclass('chat_group_members') as group_members_table,
+    to_regclass('chat_group_messages') as group_messages_table,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.conversation_prefs_table && row.user_blocks_table && row.password_column && row.session_expiry_column), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.conversation_prefs_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.password_column && row.session_expiry_column), now:row.now };
 }
