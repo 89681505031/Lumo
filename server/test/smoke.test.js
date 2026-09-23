@@ -51,6 +51,7 @@ test("liveness works while database-dependent routes fail safely", { timeout: 15
     assert.equal((await oversized.json()).error, "payload_too_large");
     const unauthorized = await fetch(base + "/api/me");
     assert.equal(unauthorized.status, 401);
+    assert.equal(unauthorized.headers.get("cache-control"), "no-store");
     assert.equal((await unauthorized.json()).error, "unauthorized");
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=invalid`);
     const closeCode = await new Promise((resolve, reject) => {
