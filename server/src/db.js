@@ -27,7 +27,12 @@ export async function initDatabase() {
 }
 export async function dbHealth() {
   if (!pool) return { configured:false };
-  const r=await pool.query("select now() as now, to_regclass('users') as users_table, to_regclass('sessions') as sessions_table, to_regclass('messages') as messages_table");
+  const r=await pool.query(`select now() as now,
+    to_regclass('users') as users_table,
+    to_regclass('sessions') as sessions_table,
+    to_regclass('messages') as messages_table,
+    exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.password_column), now:row.now };
 }
