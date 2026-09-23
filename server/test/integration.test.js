@@ -47,6 +47,13 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(first.status,201);
     assert.equal(second.status,201);
     const a=first.json,b=second.json;
+    assert.equal(a.user.password_hash,undefined);
+    const invalidLogin=await request("/api/login","POST",null,{username:a.user.username,password:"invalid-"+randomUUID()});
+    assert.equal(invalidLogin.status,401);
+    const relogin=await request("/api/login","POST",null,{username:a.user.username,password:testPass});
+    assert.equal(relogin.status,200);
+    assert.equal(relogin.json.user.id,a.user.id);
+    assert.notEqual(relogin.json.token,a.token);
     socket=new WebSocket(`ws://127.0.0.1:${port}/ws`,{headers:{Authorization:"Bearer "+a.token}});
     const ready=await new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>reject(new Error("No authenticated WebSocket ready event")),3000);
