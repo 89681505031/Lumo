@@ -41,7 +41,7 @@ import org.json.JSONObject
 import kotlinx.coroutines.launch
 
 data class User(val id:String,val username:String,val displayName:String)
-data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="")
+data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="",val editedAt:String="",val deletedAt:String="")
 data class Conversation(val peer:User,val lastMessage:String,val lastAt:String="",val unreadCount:Int=0,val pinned:Boolean=false)
 data class UpdateInfo(val versionCode:Int,val downloadUrl:String)
 data class Receipt(val messageId:String,val deliveredAt:String,val readAt:String)
@@ -346,10 +346,15 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  val merged=LinkedHashMap<String,Msg>()
  for(m in current+incoming){
   val old=merged[m.id]
-  merged[m.id]=if(old==null)m else m.copy(
-   deliveredAt=old.deliveredAt.ifBlank{m.deliveredAt},
-   readAt=old.readAt.ifBlank{m.readAt},
-   clientMessageId=m.clientMessageId.ifBlank{old.clientMessageId}
+  // Do not let a delayed HTTP/WebSocket response restore older edited or deleted text.
+  val latest=if(old!=null && old.deletedAt.isNotBlank() && m.deletedAt.isBlank())old
+    else if(old!=null && old.editedAt.isNotBlank() && m.editedAt.isBlank() && m.deletedAt.isBlank())old
+    else if(old!=null && old.editedAt.isNotBlank() && m.editedAt.isNotBlank() && m.editedAt<old.editedAt && m.deletedAt.isBlank())old
+    else m
+  merged[m.id]=if(old==null)latest else latest.copy(
+   deliveredAt=old.deliveredAt.ifBlank{latest.deliveredAt},
+   readAt=old.readAt.ifBlank{latest.readAt},
+   clientMessageId=latest.clientMessageId.ifBlank{old.clientMessageId}
   )
  }
  return merged.values.sortedBy{it.createdAt}
@@ -486,6 +491,16 @@ fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/
   val request=Request.Builder().url(HTTP+"/api/messages").header("Authorization","Bearer "+t).post(body.toString().toRequestBody("application/json".toMediaType())).build()
   c.newCall(request).execute().use{response->if(!response.isSuccessful)error("Отправка: "+response.code);return msg(JSONObject(response.body!!.string()))}
  }
+ fun editMessage(t:String,messageId:String,text:String):Msg{
+  val body=JSONObject().put("text",text)
+  val r=Request.Builder().url(HTTP+"/api/message/"+messageId).header("Authorization","Bearer "+t)
+   .patch(body.toString().toRequestBody("application/json".toMediaType())).build()
+  c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Редактирование: "+x.code);return msg(JSONObject(x.body!!.string()))}
+ }
+ fun deleteMessage(t:String,messageId:String):Msg{
+  val r=Request.Builder().url(HTTP+"/api/message/"+messageId).header("Authorization","Bearer "+t).delete().build()
+  c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Удаление: "+x.code);return msg(JSONObject(x.body!!.string()))}
+ }
  fun readMessages(t:String,ids:List<String>){
   if(ids.isEmpty())return
   val body=JSONObject().put("ids",JSONArray(ids.take(200)))
@@ -495,5 +510,5 @@ fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/
  fun latestRelease():UpdateInfo{val r=Request.Builder().url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest").header("Accept","application/vnd.github+json").build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Обновление: "+x.code);val o=JSONObject(x.body!!.string());val code=Regex("versionCode=(\\d+)").find(o.optString("body"))?.groupValues?.get(1)?.toIntOrNull()?:0;val a=o.getJSONArray("assets");for(i in 0 until a.length()){val asset=a.getJSONObject(i);if(asset.optString("name")=="app-debug.apk" || asset.optString("name")=="app-release.apk" || asset.optString("label")=="Lumo.apk")return UpdateInfo(code,asset.getString("browser_download_url"))};error("APK не найден")}}
  fun socket(t:String,onMessage:(Msg)->Unit,onReceipt:(Receipt)->Unit,onError:(String)->Unit,onReady:()->Unit,onDisconnected:()->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS).header("Authorization","Bearer "+t).build(),object:WebSocketListener(){override fun onOpen(w:WebSocket,response:Response){};override fun onMessage(w:WebSocket,s:String){runCatching{val o=JSONObject(s);when(o.optString("type")){"ready"->onReady();"message"->onMessage(msg(o.getJSONObject("message")));"receipt"->onReceipt(Receipt(o.getString("messageId"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt")));"error"->onError(o.optString("error"));else->Unit}}.onFailure{onError("invalid_server_message")}};override fun onClosed(w:WebSocket,code:Int,reason:String)=onDisconnected();override fun onFailure(w:WebSocket,t:Throwable,response:Response?)=onDisconnected()})}
  private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"))
- private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"))
+ private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"),nullableJsonText(o,"editedAt"),nullableJsonText(o,"deletedAt"))
 }
