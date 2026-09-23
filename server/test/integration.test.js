@@ -82,6 +82,13 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(relogin.status,200);
     assert.equal(relogin.json.user.id,a.user.id);
     assert.notEqual(relogin.json.token,a.token);
+    const queryTokenSocket=new WebSocket(`ws://127.0.0.1:${port}/ws?token=${a.token}`);
+    const queryTokenClose=await new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{queryTokenSocket.terminate();reject(new Error("Query-token WebSocket accepted"));},3000);
+      queryTokenSocket.once("close",code=>{clearTimeout(timer);resolve(code);});
+      queryTokenSocket.once("error",error=>{clearTimeout(timer);reject(error);});
+    });
+    assert.equal(queryTokenClose,1008,"Valid session tokens in URLs must not authenticate");
     socket=new WebSocket(`ws://127.0.0.1:${port}/ws`,{headers:{Authorization:"Bearer "+a.token}});
     const ready=await new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>reject(new Error("No authenticated WebSocket ready event")),3000);
