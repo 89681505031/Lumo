@@ -165,7 +165,7 @@ export function callRouter(auth) {
     const urls = raw.split(",").map(v=>v.trim()).filter(Boolean);
     // Fail closed: never hand out unusable or arbitrary ICE URLs.
     if (secret.length < 32 || urls.length < 1 || urls.length > 3 ||
-        urls.some(v=>!/^turns?:[^/?#@\\s]+(?::[0-9]{1,5})?(?:\\?transport=(?:udp|tcp))?$/.test(v)))
+        urls.some(v=>!/^turns?:[a-zA-Z0-9.-]+(?::[0-9]{1,5})?(?:[?]transport=(?:udp|tcp))?$/.test(v)))
       return res.status(503).json({error:"turn_unavailable"});
     // 35-minute upper bound covers an accepted 30-minute lab call.
     const remaining = Math.max(1,Math.ceil((new Date(call.expires_at).getTime()-Date.now())/1000));
