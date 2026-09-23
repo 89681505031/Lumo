@@ -15,6 +15,9 @@ Lumo is a modern messaging application.
 - `server/` — backend API and WebSocket server
 - `android/` — Android client
 
+## Automated checks
+The server workflow runs syntax checks, smoke tests without a database, and integration tests against an ephemeral PostgreSQL service in GitHub Actions. The CI database is separate from production; successful CI does not configure Vercel's `DATABASE_URL`.
+
 ## Run backend
 Requires Node.js 20+.
 
@@ -35,6 +38,6 @@ To finish the Vercel database setup:
 3. Redeploy the production deployment so the new environment variable is loaded. The server attempts to create its tables and indexes on startup.
 4. Check `/live` for process liveness (HTTP 200) and `/health` for database readiness (HTTP 200 with `database.ok: true`). If `/health` returns 503, inspect Vercel runtime logs without posting credentials.
 
-**Important:** Vercel serverless deployments are not guaranteed to support the long-lived WebSocket connections used by the current `/ws` implementation. A successful HTTP health check does not prove realtime messaging works. Validate Android-to-Android delivery on the deployed environment before calling this production-ready.
+**Realtime note:** Vercel WebSockets are available in beta with Fluid Compute, but each connection is pinned to a single function instance. Lumo's in-memory socket registry cannot immediately forward events to another instance. While a chat is open, Android therefore reconciles message history and receipts every five seconds through PostgreSQL-backed HTTP, and sends queued messages over HTTP if WebSocket is disconnected. This fallback is not background push; production-grade cross-instance realtime messaging still requires shared pub/sub (for example, Redis) and deployment testing. See https://vercel.com/docs/functions/websockets.
 
 > The current registration returns a session token but has no secure login or account recovery. Do not use this build for real private conversations or public launch until authentication, realtime hosting compatibility, and security have been validated.
