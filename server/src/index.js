@@ -107,7 +107,8 @@ app.get("/api/messages/:peerId", auth, async (req, res) => {
     if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(peerId)) return res.status(400).json({error:"invalid_peer_id"});
     if(hasDatabase) {
       const history=await postgresStore.messages(req.user.id,peerId);
-      const delivered=await postgresStore.markDeliveredFromPeer(req.user.id,peerId);
+      const pendingIds=history.filter(m=>m.from===peerId&&!m.deliveredAt).map(m=>m.id);
+      const delivered=await postgresStore.markDeliveredFromPeer(req.user.id,peerId,pendingIds);
       const changed=new Map(delivered.map(m=>[m.id,m]));
       for(const m of delivered) sendTo(m.from,{type:"receipt",messageId:m.id,deliveredAt:m.deliveredAt,readAt:m.readAt});
       return res.json(history.map(m=>changed.get(m.id)||m));
