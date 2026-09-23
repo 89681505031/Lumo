@@ -45,12 +45,14 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     const testPass="test-"+randomUUID()+"-Secure";
     const first=await request("/api/register","POST",null,{username:"a"+randomUUID().slice(0,8),displayName:"Alice",password:testPass});
     const second=await request("/api/register","POST",null,{username:"b"+randomUUID().slice(0,8),displayName:"Bob",password:testPass});
+    const third=await request("/api/register","POST",null,{username:"c"+randomUUID().slice(0,8),displayName:"Charlie",password:testPass});
     const weak=await request("/api/register","POST",null,{username:"weak"+randomUUID().slice(0,8),displayName:"Weak",password:"short"});
     assert.equal(weak.status,400);
     assert.equal(weak.json.error,"invalid_password");
     assert.equal(first.status,201);
     assert.equal(second.status,201);
-    const a=first.json,b=second.json;
+    assert.equal(third.status,201);
+    const a=first.json,b=second.json,c=third.json;
     assert.equal(a.user.password_hash,undefined);
     const invalidLogin=await request("/api/login","POST",null,{username:a.user.username,password:"invalid-"+randomUUID()});
     assert.equal(invalidLogin.status,401);
@@ -79,10 +81,18 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(conflict.json.error,"client_message_id_conflict");
     const invalid=await request("/api/messages","POST",a.token,{...payload,to:"bad"});
     assert.equal(invalid.status,400);
+    const fromCharlie=await request("/api/messages","POST",c.token,{
+      to:b.user.id,text:"from another conversation",clientMessageId:randomUUID()
+    });
+    assert.equal(fromCharlie.status,201);
     const received=await request("/api/messages/"+a.user.id,"GET",b.token);
     assert.equal(received.status,200);
     assert.equal(received.json.length,1);
     assert.ok(received.json[0].deliveredAt,"Fetching history records delivery");
+    const unopened=await request("/api/messages/"+b.user.id,"GET",c.token);
+    assert.equal(unopened.status,200);
+    assert.equal(unopened.json.length,1);
+    assert.equal(unopened.json[0].deliveredAt,null,"Fetching Alice must not mark Charlie delivered");
     const read=await request("/api/messages/read","POST",b.token,{ids:[sent.json.id]});
     assert.equal(read.status,200);
     assert.equal(read.json.receipts.length,1);
