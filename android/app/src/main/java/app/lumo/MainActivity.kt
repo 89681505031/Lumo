@@ -403,11 +403,13 @@ class MainActivity:ComponentActivity(){
   horizontalAlignment=Alignment.CenterHorizontally
  ){
   Spacer(Modifier.height(6.dp))
-  LumoNeonAvatar(me.displayName,size=122.dp)
+  LumoEditableAvatar(me.id,me.displayName,size=122.dp)
   Spacer(Modifier.height(14.dp))
   Text(me.displayName,style=MaterialTheme.typography.headlineMedium,
    fontWeight=FontWeight.Bold,color=Color.White)
   Text("@"+me.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
+  Text("Фото профиля хранится только на этом телефоне",
+   style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
   Spacer(Modifier.height(24.dp))
 
   Column(Modifier.fillMaxWidth().lumoGlass(26).padding(17.dp)){
