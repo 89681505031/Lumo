@@ -58,6 +58,13 @@ test("liveness works while database-dependent routes fail safely", { timeout: 15
     });
     assert.equal(temporarilyUnavailable.status,503);
     assert.equal((await temporarilyUnavailable.json()).error,"database_unavailable");
+    const malformedSession=await fetch(base+"/api/me",{
+      headers:{Authorization:"Bearer not-a-uuid"}
+    });
+    assert.equal(malformedSession.status,401);
+    assert.equal((await malformedSession.json()).error,"unauthorized");
+    const logoutWithoutToken=await fetch(base+"/api/logout",{method:"POST"});
+    assert.equal(logoutWithoutToken.status,401);
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=invalid`);
     const closeCode = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
