@@ -80,10 +80,21 @@ internal object PushOptState {
     fun clear(context: Context) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().clear().commit()
     }
-    fun permissionGranted(context: Context): Boolean =
+    // Runtime permission and Android's app/channel switches are independent.
+    // If an OS switch is turned off after opt-in, treat it as withdrawal of
+    // consent rather than silently reactivating when permission returns.
+    fun runtimePermissionGranted(context: Context): Boolean =
         Build.VERSION.SDK_INT < 33 ||
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
                 PackageManager.PERMISSION_GRANTED
+
+    fun permissionGranted(context: Context): Boolean {
+        if (!runtimePermissionGranted(context)) return false
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (!manager.areNotificationsEnabled()) return false
+        val channel = manager.getNotificationChannel("lumo_messages")
+        return channel == null || channel.importance != NotificationManager.IMPORTANCE_NONE
+    }
 }
 
 /** Registration never sends a Firebase credential in a query string or log. */

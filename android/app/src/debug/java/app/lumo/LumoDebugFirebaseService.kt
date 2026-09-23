@@ -13,8 +13,10 @@ import com.google.firebase.messaging.RemoteMessage
 /** Debug variant only: every notification is generic and consent scoped. */
 class LumoDebugFirebaseService : FirebaseMessagingService() {
     override fun onNewToken(fcmToken: String) {
-        if (!BuildConfig.LUMO_FCM_CONFIGURED || !PushOptState.permissionGranted(this)) return
+        if (!BuildConfig.LUMO_FCM_CONFIGURED) return
+        PushLifecycle.onAppResume(this)
         val current = PushOptState.activeAccount(this) ?: return
+        if (!PushOptState.permissionGranted(this)) return
         // Do not launch an untracked Thread: Android may terminate the
         // background FCM service immediately after this callback returns.
         // WorkManager re-fetches the latest token for the CURRENT session.
@@ -22,8 +24,11 @@ class LumoDebugFirebaseService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        if (!BuildConfig.LUMO_FCM_CONFIGURED ||
-            !LumoPushPayload.accepts(message.data["kind"], message.notification != null) ||
+        if (!BuildConfig.LUMO_FCM_CONFIGURED) return
+        // FCM may wake us while app settings have changed in the background.
+        // Withdrawal starts an authenticated remote revoke, not just filtering.
+        PushLifecycle.onAppResume(this)
+        if (!LumoPushPayload.accepts(message.data["kind"], message.notification != null) ||
             PushOptState.activeAccount(this) == null ||
             !PushOptState.permissionGranted(this)) return
         // Only the generic title/body is displayed even if an unexpected
@@ -54,8 +59,21 @@ class LumoDebugFirebaseService : FirebaseMessagingService() {
 
 internal object PushLifecycle {
     fun onAppStart(context: Context) {
+        onAppResume(context)
         // The local-only offline disable survives app restarts and is retried
         // automatically when Android reports network connectivity.
+        LumoPushSyncWorker.schedule(context)
+    }
+
+    fun onAppResume(context: Context) {
+        if (!BuildConfig.LUMO_FCM_CONFIGURED) return
+        val account = PushOptState.activeAccount(context) ?: return
+        if (PushOptState.permissionGranted(context)) return
+        // OS notifications or this notification channel were explicitly
+        // disabled. Revoke local consent before networking; never auto opt-in
+        // again just because the OS switch is later re-enabled.
+        PushOptState.disableLocally(context, account.first, account.second)
+        FirebaseMessaging.getInstance().isAutoInitEnabled = false
         LumoPushSyncWorker.schedule(context)
     }
 

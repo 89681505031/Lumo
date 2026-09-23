@@ -62,5 +62,6 @@ dependencies {
  debugImplementation(platform("com.google.firebase:firebase-bom:34.19.0"))
  debugImplementation("com.google.firebase:firebase-messaging")
  debugImplementation("androidx.work:work-runtime-ktx:2.10.0")
+ debugImplementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
  testImplementation("junit:junit:4.13.2")
 }
