@@ -7,6 +7,8 @@ internal object PushSyncPolicy {
     fun choose(pendingRevoke: Boolean, consented: Boolean, osPermissionGranted: Boolean): PushSyncAction =
         when {
             pendingRevoke -> PushSyncAction.REVOKE
+            // Withdrawing notification permission is an opt-out, not a pause.
+            consented && !osPermissionGranted -> PushSyncAction.REVOKE
             consented && osPermissionGranted -> PushSyncAction.REGISTER
             else -> PushSyncAction.NONE
         }
