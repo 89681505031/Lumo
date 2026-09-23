@@ -51,6 +51,7 @@ class SessionExpiredException:Exception("Сессия недействитель
 
 class MainActivity:ComponentActivity(){
  override fun onCreate(b:Bundle?){super.onCreate(b);PushLifecycle.onAppStart(this);setContent{App()}}
+ override fun onResume(){super.onResume();PushLifecycle.onAppResume(this)}
 }
 
 @Composable fun App(){
