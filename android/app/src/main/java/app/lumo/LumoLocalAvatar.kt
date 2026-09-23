@@ -175,7 +175,7 @@ fun LumoEditableAvatar(userId:String,displayName:String,size:Dp=122.dp){
                 runCatching {
                     withContext(Dispatchers.IO) {
                         val file=avatarFile(context,userId)
-                        if(file.exists() && !file.delete())error("Не удалось удалить фото")
+                        if(file.exists() && !file.delete())throw IllegalStateException("Не удалось удалить фото")
                     }
                 }.onSuccess { reload++ }
                  .onFailure { error=it.message?:"Не удалось удалить фото" }
