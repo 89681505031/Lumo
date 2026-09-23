@@ -100,8 +100,54 @@ app.get("/api/conversations", auth, async (req, res) => {
 });
 
 app.get("/api/messages/:peerId", auth, async (req, res) => {
-  try { const peerId = req.params.peerId; if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(peerId))return res.status(400).json({error:"invalid_peer_id"}); if(hasDatabase) return res.json(await postgresStore.messages(req.user.id,peerId)); res.json(messages.filter(m => (m.from === req.user.id && m.to === peerId) || (m.from === peerId && m.to === req.user.id))); }
+  try {
+    const peerId = req.params.peerId;
+    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(peerId)) return res.status(400).json({error:"invalid_peer_id"});
+    if(hasDatabase) {
+      const history=await postgresStore.messages(req.user.id,peerId);
+      const delivered=await postgresStore.markDeliveredFromPeer(req.user.id,peerId);
+      const changed=new Map(delivered.map(m=>[m.id,m]));
+      for(const m of delivered) sendTo(m.from,{type:"receipt",messageId:m.id,deliveredAt:m.deliveredAt,readAt:m.readAt});
+      return res.json(history.map(m=>changed.get(m.id)||m));
+    }
+    res.json(messages.filter(m=>(m.from===req.user.id&&m.to===peerId)||(m.from===peerId&&m.to===req.user.id)));
+  }
   catch(error){console.error("Message history failed",error);res.status(503).json({error:"service_unavailable"});}
+});
+
+// HTTP transport is a durable fallback when WebSocket peers connect to different instances.
+const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+app.post("/api/messages", auth, requireDatabase, async (req,res)=>{
+  const to=req.body?.to;
+  const clientMessageId=req.body?.clientMessageId;
+  const messageText=req.body?.text;
+  if(typeof to!=="string" || !uuidPattern.test(to) || to===req.user.id) return res.status(400).json({error:"invalid_recipient_id"});
+  if(typeof clientMessageId!=="string" || !uuidPattern.test(clientMessageId)) return res.status(400).json({error:"invalid_client_message_id"});
+  if(typeof messageText!=="string" || !messageText.trim()) return res.status(400).json({error:"empty_message"});
+  const text=messageText.trim();
+  if(text.length>4000) return res.status(400).json({error:"message_too_long"});
+  try{
+    if(!await postgresStore.userExists(to)) return res.status(404).json({error:"recipient_not_found"});
+    const saved=await postgresStore.saveMessage({id:randomUUID(),from:req.user.id,to,text,createdAt:new Date().toISOString(),deliveredAt:null,readAt:null,clientMessageId});
+    let message=saved.message;
+    if((saved.inserted||!message.deliveredAt) && sendTo(to,{type:"message",message})){
+      message=await postgresStore.markMessageDelivered(message.id,to)||message;
+    }
+    return res.status(saved.inserted?201:200).json(message);
+  }catch(error){
+    if(error?.code==="CLIENT_MESSAGE_ID_CONFLICT") return res.status(409).json({error:"client_message_id_conflict"});
+    console.error("HTTP message send failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+app.post("/api/messages/read",auth,requireDatabase,async(req,res)=>{
+  const ids=req.body?.ids;
+  if(!Array.isArray(ids)||ids.length>200||ids.some(id=>typeof id!=="string"||!uuidPattern.test(id))) return res.status(400).json({error:"invalid_message_ids"});
+  try{
+    const receipts=await postgresStore.markRead([...new Set(ids)],req.user.id);
+    for(const m of receipts) sendTo(m.from,{type:"receipt",messageId:m.id,deliveredAt:m.deliveredAt,readAt:m.readAt});
+    return res.json({receipts:receipts.map(m=>({messageId:m.id,deliveredAt:m.deliveredAt,readAt:m.readAt}))});
+  }catch(error){console.error("HTTP read receipt failed",error);return res.status(503).json({error:"service_unavailable"});}
 });
 
 const server = createServer(app);
