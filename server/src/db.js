@@ -33,6 +33,20 @@ export async function initDatabase() {
   await pool.query(`create unique index if not exists messages_sender_client_id_uidx on messages(sender_id, client_message_id) where client_message_id is not null`);
   await pool.query(`create index if not exists messages_sender_idx on messages(sender_id, created_at desc)`);
   await pool.query(`create index if not exists messages_recipient_idx on messages(recipient_id, created_at desc)`);
+  await pool.query(`create table if not exists conversation_prefs (
+    owner_id uuid not null references users(id) on delete cascade,
+    peer_id uuid not null references users(id) on delete cascade,
+    pinned boolean not null default false,
+    primary key (owner_id,peer_id)
+  )`);
+  await pool.query(`create table if not exists user_blocks (
+    blocker_id uuid not null references users(id) on delete cascade,
+    blocked_id uuid not null references users(id) on delete cascade,
+    created_at timestamptz not null default now(),
+    primary key (blocker_id,blocked_id),
+    constraint no_self_block check (blocker_id<>blocked_id)
+  )`);
+  await pool.query(`create index if not exists user_blocks_blocked_idx on user_blocks(blocked_id,blocker_id)`);
   return true;
 }
 export async function dbHealth() {
@@ -41,10 +55,12 @@ export async function dbHealth() {
     to_regclass('users') as users_table,
     to_regclass('sessions') as sessions_table,
     to_regclass('messages') as messages_table,
+    to_regclass('conversation_prefs') as conversation_prefs_table,
+    to_regclass('user_blocks') as user_blocks_table,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.password_column && row.session_expiry_column), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.conversation_prefs_table && row.user_blocks_table && row.password_column && row.session_expiry_column), now:row.now };
 }

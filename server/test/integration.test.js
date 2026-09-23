@@ -72,7 +72,8 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
         headers:{...(token?{Authorization:"Bearer "+token}:{}),...(body?{"content-type":"application/json"}:{})},
         ...(body?{body:JSON.stringify(body)}:{})
       });
-      return {status:r.status,json:await r.json()};
+      const raw=await r.text();
+      return {status:r.status,json:raw ? JSON.parse(raw) : null};
     }
     const testPass="test-"+randomUUID()+"-Secure";
     const first=await request("/api/register","POST",null,{username:"a"+randomUUID().slice(0,8),displayName:"Alice",password:testPass});
@@ -89,6 +90,8 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     const initialChats=await request("/api/conversations","GET",a.token);
     assert.equal(initialChats.status,200,"Empty inbox must not fail on ambiguous SQL columns");
     assert.deepEqual(initialChats.json,[]);
+    const prematurePin=await request("/api/conversations/"+b.user.id+"/pin","PUT",a.token);
+    assert.equal(prematurePin.status,404,"Cannot pin a conversation before any messages");
     assert.equal(a.user.password_hash,undefined);
     const invalidLogin=await request("/api/login","POST",null,{username:a.user.username,password:"invalid-"+randomUUID()});
     assert.equal(invalidLogin.status,401);
@@ -137,6 +140,18 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(bobChats.status,200);
     assert.equal(bobChats.json.length,2,"Inbox includes both conversation peers");
     assert.deepEqual(new Set(bobChats.json.map(chat=>chat.peer.id)),new Set([a.user.id,c.user.id]));
+    assert.equal(bobChats.json.find(chat=>chat.peer.id===a.user.id).unreadCount,1);
+    assert.equal(bobChats.json.find(chat=>chat.peer.id===c.user.id).unreadCount,1);
+    assert.equal(aliceChats.json[0].unreadCount,0);
+    const pinAlice=await request("/api/conversations/"+a.user.id+"/pin","PUT",b.token);
+    assert.equal(pinAlice.status,200);
+    assert.equal(pinAlice.json.pinned,true);
+    const pinnedChats=await request("/api/conversations","GET",b.token,null,otherBase);
+    assert.equal(pinnedChats.status,200);
+    assert.equal(pinnedChats.json[0].peer.id,a.user.id,"Pins are persisted across server instances");
+    assert.equal(pinnedChats.json[0].pinned,true);
+    const otherUserView=await request("/api/conversations","GET",a.token);
+    assert.equal(otherUserView.json[0].pinned,false,"Pins belong only to the user");
     const received=await request("/api/messages/"+a.user.id,"GET",b.token,null,otherBase);
     assert.equal(received.status,200);
     assert.equal(received.json.length,1);
@@ -149,6 +164,12 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(read.status,200);
     assert.equal(read.json.receipts.length,1);
     assert.ok(read.json.receipts[0].readAt);
+    const afterRead=await request("/api/conversations","GET",b.token);
+    assert.equal(afterRead.json.find(chat=>chat.peer.id===a.user.id).unreadCount,0);
+    assert.equal(afterRead.json.find(chat=>chat.peer.id===c.user.id).unreadCount,1);
+    const unpinAlice=await request("/api/conversations/"+a.user.id+"/pin","DELETE",b.token);
+    assert.equal(unpinAlice.status,200);
+    assert.equal(unpinAlice.json.pinned,false);
     const history=await request("/api/messages/"+b.user.id,"GET",a.token);
     assert.equal(history.status,200);
     assert.equal(history.json.length,1);
@@ -159,6 +180,50 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(updatedChats.status,200);
     assert.equal(updatedChats.json.length,1);
     assert.equal(updatedChats.json[0].lastMessage,"most recent message");
+    const invalidSelfBlock=await request("/api/blocks/"+b.user.id,"PUT",b.token);
+    assert.equal(invalidSelfBlock.status,400);
+    const block=await request("/api/blocks/"+c.user.id,"PUT",b.token);
+    assert.equal(block.status,200);
+    assert.equal(block.json.blocked,true);
+    const blocks=await request("/api/blocks","GET",b.token,null,otherBase);
+    assert.equal(blocks.status,200);
+    assert.equal(blocks.json.length,1);
+    assert.equal(blocks.json[0].id,c.user.id);
+    const blockedOutgoing=await request("/api/messages","POST",b.token,{to:c.user.id,text:"blocked outgoing",clientMessageId:randomUUID()});
+    const blockedIncoming=await request("/api/messages","POST",c.token,{to:b.user.id,text:"blocked incoming",clientMessageId:randomUUID()},otherBase);
+    assert.equal(blockedOutgoing.status,403);
+    assert.equal(blockedOutgoing.json.error,"user_blocked");
+    assert.equal(blockedIncoming.status,403);
+    assert.equal(blockedIncoming.json.error,"user_blocked");
+    const blockedSocket=new WebSocket(`ws://127.0.0.1:${port}/ws`,{headers:{Authorization:"Bearer "+c.token}});
+    try {
+      const connected=await new Promise((resolve,reject)=>{
+        const timeout=setTimeout(()=>reject(new Error("Blocked-message socket did not connect")),3000);
+        blockedSocket.once("message",data=>{clearTimeout(timeout);resolve(JSON.parse(data.toString()));});
+        blockedSocket.once("error",error=>{clearTimeout(timeout);reject(error);});
+      });
+      assert.equal(connected.type,"ready");
+      const rejected=await new Promise((resolve,reject)=>{
+        const timeout=setTimeout(()=>reject(new Error("WebSocket bypassed the user block")),3000);
+        blockedSocket.once("message",data=>{clearTimeout(timeout);resolve(JSON.parse(data.toString()));});
+        blockedSocket.send(JSON.stringify({type:"message",to:b.user.id,text:"blocked WS",clientMessageId:randomUUID()}));
+      });
+      assert.equal(rejected.type,"error");
+      assert.equal(rejected.error,"user_blocked");
+    }finally{blockedSocket.terminate();}
+    const searchBlockedA=await request("/api/users?q="+c.user.username,"GET",b.token);
+    const searchBlockedB=await request("/api/users?q="+b.user.username,"GET",c.token);
+    assert.ok(searchBlockedA.json.every(user=>user.id!==c.user.id));
+    assert.ok(searchBlockedB.json.every(user=>user.id!==b.user.id));
+    const blockedHistory=await request("/api/messages/"+c.user.id,"GET",b.token);
+    assert.equal(blockedHistory.status,200,"Blocking does not delete already exchanged messages");
+    assert.equal(blockedHistory.json.length,1);
+    const unblock=await request("/api/blocks/"+c.user.id,"DELETE",b.token);
+    assert.equal(unblock.status,204);
+    const cleared=await request("/api/blocks","GET",b.token);
+    assert.deepEqual(cleared.json,[]);
+    const restored=await request("/api/messages","POST",c.token,{to:b.user.id,text:"after unblock",clientMessageId:randomUUID()});
+    assert.equal(restored.status,201);
     const socketClosed=new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>reject(new Error("Logged-out WebSocket remains open")),3000);
       socket.once("close",code=>{clearTimeout(timer);resolve(code);});
