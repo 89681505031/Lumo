@@ -44,11 +44,11 @@ class LumoAppearance(private val prefs:SharedPreferences) {
         theme=value
         prefs.edit().putString("theme",value.name).apply()
     }
-    fun setAnimated(value:Boolean){
+    fun updateAnimationEnabled(value:Boolean){
         animated=value
         prefs.edit().putBoolean("animated",value).apply()
     }
-    fun setLowPower(value:Boolean){
+    fun updateLowPowerMode(value:Boolean){
         lowPower=value
         prefs.edit().putBoolean("low_power",value).apply()
     }
@@ -122,7 +122,7 @@ fun LumoAppearanceControls(){
             }
             Switch(
                 checked=appearance.animated,
-                onCheckedChange=appearance::setAnimated,
+                onCheckedChange=appearance::updateAnimationEnabled,
                 enabled=!appearance.lowPower && appearance.theme!=LumoVisualTheme.MINIMAL
             )
         }
@@ -132,7 +132,7 @@ fun LumoAppearanceControls(){
                 Text("Без анимации и крупных планет",style=MaterialTheme.typography.bodySmall,
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Switch(checked=appearance.lowPower,onCheckedChange=appearance::setLowPower)
+            Switch(checked=appearance.lowPower,onCheckedChange=appearance::updateLowPowerMode)
         }
     }
 }
