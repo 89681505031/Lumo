@@ -41,6 +41,22 @@ internal object PushOptState {
             .putBoolean("enabled", true)
             .commit()
     }
+    fun revokePending(context: Context, userId: String, session: String): Boolean {
+        val p = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        return p.getBoolean("pending_revoke", false) &&
+            p.getString("user_id", "") == userId &&
+            p.getString("session_hash", "") == fingerprint(session)
+    }
+    // Make the local opt-out effective BEFORE attempting a network request.
+    // A private pending flag lets the current session retry its server revoke.
+    fun disableLocally(context: Context, userId: String, session: String) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+            .putString("user_id", userId)
+            .putString("session_hash", fingerprint(session))
+            .putBoolean("enabled", false)
+            .putBoolean("pending_revoke", true)
+            .commit()
+    }
     fun clear(context: Context) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().clear().commit()
     }

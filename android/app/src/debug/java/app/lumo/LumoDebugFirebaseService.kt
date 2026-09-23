@@ -20,12 +20,21 @@ class LumoDebugFirebaseService : FirebaseMessagingService() {
             val stillCurrent = PushOptState.activeAccount(this)
             if (stillCurrent != current || !PushOptState.permissionGranted(this)) return@Thread
             // No tokens, exception details, user IDs, or message data in logs.
-            runCatching { LumoPushApi.register(current.second, fcmToken) }
+            runCatching {
+                LumoPushApi.register(current.second, fcmToken)
+                // A disable or logout might race the in-flight registration.
+                // Revoke the same session if its consent changed meanwhile.
+                if (PushOptState.activeAccount(this) != current ||
+                    !PushOptState.permissionGranted(this)) {
+                    LumoPushApi.revoke(current.second)
+                }
+            }
         }, "lumo-push-token-refresh").start()
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
         if (!BuildConfig.LUMO_FCM_CONFIGURED ||
+            !LumoPushPayload.accepts(message.data["kind"], message.notification != null) ||
             PushOptState.activeAccount(this) == null ||
             !PushOptState.permissionGranted(this)) return
         // Only the generic title/body is displayed even if an unexpected

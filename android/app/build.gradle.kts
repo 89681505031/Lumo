@@ -1,7 +1,9 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
 // The public debug CI build stays Firebase-free without explicit local staging setup.
+val normalHttp = "https://lumo-gamma-seven.vercel.app"
 val stagingBase = providers.gradleProperty("lumoStagingUrl").orNull?.trimEnd('/')
 if (stagingBase != null) {
+ require(stagingBase != normalHttp) { "Experimental staging cannot use the production Lumo API" }
  require(Regex("^https://[a-zA-Z0-9.-]+(:[0-9]{2,5})?$").matches(stagingBase)) {
   "Use a dedicated HTTPS staging origin (no credentials or URL paths)"
  }
@@ -11,7 +13,6 @@ val fcmConfigured = fcmRequested && stagingBase != null && file("google-services
 if (fcmRequested && !fcmConfigured)
  throw GradleException("FCM lab needs android/app/google-services.json and -PlumoStagingUrl=https://staging.example")
 if (fcmConfigured) apply(plugin="com.google.gms.google-services")
-val normalHttp = "https://lumo-gamma-seven.vercel.app"
 val httpForDebug = stagingBase ?: normalHttp
 val wsForDebug = httpForDebug.replaceFirst("https://", "wss://") + "/ws"
 
@@ -60,4 +61,5 @@ dependencies {
  implementation("com.squareup.okhttp3:okhttp:4.12.0")
  debugImplementation(platform("com.google.firebase:firebase-bom:34.19.0"))
  debugImplementation("com.google.firebase:firebase-messaging")
+ testImplementation("junit:junit:4.13.2")
 }

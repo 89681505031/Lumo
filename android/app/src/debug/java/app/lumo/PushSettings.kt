@@ -43,6 +43,35 @@ fun PushSettings(session: String, me: User) {
     var busy by remember(session, me.id) { mutableStateOf(false) }
     var notice by remember(session, me.id) { mutableStateOf("") }
     var requestEnable by remember(session, me.id) { mutableIntStateOf(0) }
+    var revokePending by remember(session, me.id) {
+        mutableStateOf(PushOptState.revokePending(context, me.id, session))
+    }
+    fun retryServerRevoke() {
+        if (busy || !revokePending) return
+        busy = true
+        scope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    val messaging = FirebaseMessaging.getInstance()
+                    messaging.isAutoInitEnabled = false
+                    runCatching { messaging.deleteToken() }
+                    LumoPushApi.revoke(session)
+                }
+            }
+            result.onSuccess {
+                // A successful remote revocation completes the local opt-out.
+                if (PushOptState.revokePending(context, me.id, session)) {
+                    PushOptState.clear(context)
+                }
+                revokePending = false
+                notice = "Уведомления отключены."
+            }.onFailure {
+                notice = "На этом телефоне уведомления выключены. " +
+                    "Удаление на сервере ещё не подтверждено — повторите позже."
+            }
+            busy = false
+        }
+    }
 
     val permission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -84,7 +113,9 @@ fun PushSettings(session: String, me: User) {
             notice = "Тестовые уведомления включены только для текущего аккаунта."
         }.onFailure {
             withContext(Dispatchers.IO) {
-                // An unsuccessful opt-in must not leave automatic FCM registration active.
+                // Registration may have succeeded before a later local failure:
+                // attempt to revoke the old session as well.
+                runCatching { LumoPushApi.revoke(session) }
                 runCatching {
                     val messaging = FirebaseMessaging.getInstance()
                     messaging.isAutoInitEnabled = false
@@ -113,34 +144,28 @@ fun PushSettings(session: String, me: User) {
                     style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(Modifier.height(12.dp))
-                if (enabled) {
+                if (revokePending) {
+                    Text(
+                        "На этом устройстве выключено. Требуется подтвердить удаление " +
+                            "регистрации на сервере.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Button(onClick = { retryServerRevoke() }, enabled = !busy) {
+                        Text(if (busy) "Повторяем…" else "Повторить отключение")
+                    }
+                } else if (enabled) {
                     Text(if (PushOptState.permissionGranted(context)) "Включено" else
                         "Разрешение отключено в настройках Android")
                     Button(
                         onClick = {
                             if (busy) return@Button
-                            busy = true
-                            notice = ""
-                            scope.launch {
-                                runCatching {
-                                    withContext(Dispatchers.IO) { LumoPushApi.revoke(session) }
-                                }.onSuccess {
-                                    PushOptState.clear(context)
-                                    enabled = false
-                                    withContext(Dispatchers.IO) {
-                                        runCatching {
-                                            val messaging = FirebaseMessaging.getInstance()
-                                            messaging.isAutoInitEnabled = false
-                                            messaging.deleteToken()
-                                        }
-                                    }
-                                    notice = "Уведомления отключены."
-                                }.onFailure {
-                                    notice = "Не удалось отключить уведомления на сервере. " +
-                                        "Проверьте подключение и повторите попытку."
-                                }
-                                busy = false
-                            }
+                            // Local permission takes precedence over network success.
+                            // Data-only FCM is always filtered through this local flag.
+                            PushOptState.disableLocally(context, me.id, session)
+                            enabled = false
+                            revokePending = true
+                            notice = "На устройстве выключено. Отзываем регистрацию на сервере…"
+                            retryServerRevoke()
                         }, enabled = !busy
                     ) { Text(if (busy) "Отключаем…" else "Отключить уведомления") }
                 } else {
