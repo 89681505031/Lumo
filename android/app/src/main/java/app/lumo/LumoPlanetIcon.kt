@@ -1,5 +1,10 @@
 package app.lumo
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -7,7 +12,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -22,9 +29,22 @@ import androidx.compose.ui.unit.dp
 /** Original vector interpretation of the approved Lumo planet-and-orbit logo. */
 @Composable
 fun LumoPlanetIcon(size: Dp = 132.dp, modifier: Modifier = Modifier) {
+    val appearance=LocalLumoAppearance.current
+    val move=appearance.animated && !appearance.lowPower && appearance.theme!=LumoVisualTheme.MINIMAL
+    val orbitAngle=if(move) {
+        val orbit=rememberInfiniteTransition(label="Lumo planet orbit")
+        val angle by orbit.animateFloat(
+            initialValue=-33f,targetValue=-13f,
+            animationSpec=infiniteRepeatable(tween(9000),RepeatMode.Reverse),
+            label="orbit tilt"
+        )
+        angle
+    } else -24f
     val shape = RoundedCornerShape(size * .27f)
     Box(
         modifier = modifier.size(size)
+            .shadow(if(move) 10.dp else 5.dp,shape,
+                ambientColor=LumoCyan,spotColor=LumoPink)
             .background(
                 Brush.linearGradient(
                     listOf(Color(0xFF48D8FF), Color(0xFF384CE8), Color(0xFFEF69DA))
@@ -51,7 +71,7 @@ fun LumoPlanetIcon(size: Dp = 132.dp, modifier: Modifier = Modifier) {
                 center = c
             )
             // The ring is deliberately visible outside the sphere.
-            rotate(-24f, c) {
+            rotate(orbitAngle, c) {
                 drawOval(
                     brush = Brush.linearGradient(
                         listOf(Color(0xFF7BEAFF), Color.White, Color(0xFFFF91F0))
