@@ -320,6 +320,27 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
       assert.equal(registration.rowCount,1,
         "Stale invalid-token callback must not delete the active registration");
 
+      // Four timed-out leases must not generate a fifth provider send or
+      // remain pending indefinitely when a serverless worker crashes.
+      const exhaustedMessage=await request("/api/messages","POST",c.token,{
+        to:b.user.id,text:"Exhausted lease must stay silent",clientMessageId:randomUUID()
+      });
+      assert.equal(exhaustedMessage.status,201);
+      await pushPool.query(`update push_outbox
+        set attempts=4,lease_until=now()-interval '1 second'
+        where message_id=$1`,[exhaustedMessage.json.id]);
+      const countBeforeExpiry=notificationRequests.length;
+      const reclaimed=await dispatchPushBatch({
+        db:pushPool,send:async p=>{notificationRequests.push(p);}
+      });
+      assert.ok(reclaimed.dropped>=1,"Exhausted lease should be dropped");
+      assert.equal(notificationRequests.length,countBeforeExpiry,
+        "A fifth attempt must never send another push");
+      const droppedRow=await pushPool.query(`select status,last_error_code from push_outbox
+        where message_id=$1`,[exhaustedMessage.json.id]);
+      assert.equal(droppedRow.rows[0].status,"dropped");
+      assert.equal(droppedRow.rows[0].last_error_code,"lease_exhausted");
+
       // Messages already read by the recipient should never generate late alerts.
       const readMessage=await request("/api/messages","POST",c.token,{
         to:b.user.id,text:"Read before worker",clientMessageId:randomUUID()
