@@ -54,7 +54,7 @@ test("private photo upload policy, ownership, direct delivery and signed reads",
  const server=spawn(process.execPath,["src/index.js"],{
   cwd:process.cwd(),stdio:"ignore",
   env:{...process.env,PORT:String(port),DATABASE_URL:databaseUrl,DATABASE_SSL:"false",
-   NODE_ENV:"test",MEDIA_TEST_ALLOW_HTTP_LOCAL:"true",
+   NODE_ENV:"test",MEDIA_TEST_ALLOW_HTTP_LOCAL:"true",MEDIA_ENABLE_UPLOADS:"true",
    MEDIA_BUCKET:"private-test",MEDIA_REGION:"us-east-1",
    MEDIA_ACCESS_KEY_ID:"test-key",MEDIA_SECRET_ACCESS_KEY:"test-secret",
    MEDIA_ENDPOINT:`http://127.0.0.1:${storagePort}`}
