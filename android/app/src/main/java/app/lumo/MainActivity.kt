@@ -867,7 +867,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
        Text("Ответ на сообщение",color=LumoCyan,style=MaterialTheme.typography.labelLarge)
        Text(
         (if(original.text.isBlank())"Вложение" else original.text)
-         .replace("\\n"," ").take(115),
+         .replace("\n"," ").take(115),
         color=Color.White.copy(alpha=.9f),
         style=MaterialTheme.typography.bodySmall,maxLines=1
        )
@@ -895,7 +895,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       onClick={
        val quote=replyTarget?.let{
         "↪ "+(if(it.text.isBlank())"Вложение" else it.text)
-         .replace("\\n"," ").take(120)+"\\n"
+         .replace("\n"," ").take(120)+"\n"
        }.orEmpty()
        val text=quote+input.trim()
        if(text.isNotBlank()&&text.length<=4000){
