@@ -43,7 +43,7 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     await new Promise(resolve=>listener2.close(resolve));
     replica=spawn(process.execPath,["src/index.js"],{
       cwd:process.cwd(),
-      env:{...process.env,PORT:String(otherPort),DATABASE_URL:databaseUrl,DATABASE_SSL:"false",LUMO_CALL_SIGNALING_ENABLED:"true",LUMO_TURN_URLS:"turn:127.0.0.1:3478?transport=udp",LUMO_TURN_SECRET:"ci-only-test-turn-secret-longer-than-32-chars"},
+      env:{...process.env,PORT:String(otherPort),DATABASE_URL:databaseUrl,DATABASE_SSL:"false",LUMO_CALL_SIGNALING_ENABLED:"true",LUMO_TURN_URLS:"turn:127.0.0.1:3478?transport=udp",LUMO_TURN_SECRET:"ci-only-test-turn-secret-longer-than-32-chars",CRON_SECRET:"ci-call-cleanup-only-secret-over-thirty-two-chars"},
       stdio:"ignore"
     });
     const otherBase=`http://127.0.0.1:${otherPort}`;
