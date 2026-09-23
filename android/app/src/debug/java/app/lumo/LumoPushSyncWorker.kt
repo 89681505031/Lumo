@@ -67,12 +67,21 @@ internal class LumoPushSyncWorker(
             val context = applicationContext
             val pending = PushOptState.pendingForCurrentSession(context)
             val enabled = PushOptState.activeAccount(context)
+            val allowedByOs = PushOptState.permissionGranted(context)
             when (PushSyncPolicy.choose(
                 pendingRevoke = pending != null,
                 consented = enabled != null,
-                osPermissionGranted = PushOptState.permissionGranted(context)
+                osPermissionGranted = allowedByOs
             )) {
-                PushSyncAction.REVOKE -> revoke(requireNotNull(pending))
+                PushSyncAction.REVOKE -> {
+                    val account = pending ?: requireNotNull(enabled)
+                    if (pending == null) {
+                        // OS settings were changed after opt-in: immediately
+                        // prevent ALL future local notices, even while offline.
+                        PushOptState.disableLocally(context, account.first, account.second)
+                    }
+                    revoke(account)
+                }
                 PushSyncAction.REGISTER -> refresh(requireNotNull(enabled))
                 PushSyncAction.NONE -> Result.success()
             }
@@ -105,13 +114,31 @@ internal class LumoPushSyncWorker(
         }
     }
 
+    /**
+     * Revalidate consent after EVERY suspension. In particular, an Android
+     * permission/channel switch may change while fetching or posting tokens.
+     * Marking opt-out durably prevents a later permission grant from silently
+     * re-enabling the old server registration.
+     */
+    private fun stillAllowed(account: Pair<String, String>): Boolean {
+        val context = applicationContext
+        if (PushOptState.activeAccount(context) != account) return false
+        if (PushOptState.permissionGranted(context)) return true
+        PushOptState.disableLocally(context, account.first, account.second)
+        FirebaseMessaging.getInstance().isAutoInitEnabled = false
+        return false
+    }
+
     private suspend fun refresh(account: Pair<String, String>): Result {
         val context = applicationContext
         return try {
+            if (!stillAllowed(account)) {
+                return if (PushOptState.revokePending(context, account.first, account.second))
+                    Result.retry() else Result.success()
+            }
             val latestToken = currentFirebaseToken()
-            if (PushOptState.activeAccount(context) != account ||
-                !PushOptState.permissionGranted(context)) {
-                return if (PushOptState.pendingForCurrentSession(context) != null)
+            if (!stillAllowed(account)) {
+                return if (PushOptState.revokePending(context, account.first, account.second))
                     Result.retry() else Result.success()
             }
             withContext(Dispatchers.IO) {
@@ -119,11 +146,13 @@ internal class LumoPushSyncWorker(
             }
             // Sign-out / opt-out may have happened during the HTTP request.
             // Never leave a newly registered token behind when that happens.
-            if (PushOptState.activeAccount(context) != account ||
-                !PushOptState.permissionGranted(context)) {
+            if (!stillAllowed(account)) {
                 withContext(Dispatchers.IO) { LumoPushApi.revoke(account.second) }
-                return if (PushOptState.pendingForCurrentSession(context) != null)
-                    Result.retry() else Result.success()
+                if (PushOptState.revokePending(context, account.first, account.second)) {
+                    PushOptState.clear(context)
+                    runCatching { deleteFirebaseToken() }
+                }
+                return Result.success()
             }
             Result.success()
         } catch (expired: SessionExpiredException) {
