@@ -60,6 +60,8 @@ class MainActivity:ComponentActivity(){
  var token by remember{mutableStateOf(prefs.getString("token",null))}
  var me by remember{mutableStateOf<User?>(null)}
  var peer by remember{mutableStateOf<User?>(null)}
+ var activeGroup by remember{mutableStateOf<LumoGroup?>(null)}
+ var viewingGroups by remember{mutableStateOf(false)}
  var logoutNonce by remember{mutableIntStateOf(0)}
  var restoring by remember{mutableStateOf(token!=null)}
  var restoreError by remember{mutableStateOf(false)}
@@ -82,7 +84,14 @@ class MainActivity:ComponentActivity(){
    Spacer(Modifier.height(16.dp));Button({restoreRetry++}){Text("Повторить")}
   }
   token==null || me==null -> Register{t,u->prefs.edit().putString("token",t).apply();token=t;me=u}
-  peer==null -> Home(token!!,me!!,{peer=it},{me=it}){prefs.edit().clear().apply();token=null;me=null;peer=null;logoutNonce++}
+  peer==null&&activeGroup==null&&!viewingGroups -> Home(token!!,me!!,{peer=it},{viewingGroups=true},{me=it}){prefs.edit().clear().apply();token=null;me=null;peer=null;activeGroup=null;viewingGroups=false;logoutNonce++}
+  activeGroup!=null -> GroupRoom(token!!,me!!,activeGroup!!){activeGroup=null}
+  viewingGroups -> LumoBackdrop(Modifier.fillMaxSize()){
+   Column(Modifier.fillMaxSize().statusBarsPadding()){
+    TextButton(onClick={viewingGroups=false}){Text("‹ К чатам",color=Color.White)}
+    GroupsScreen(token!!){activeGroup=it}
+   }
+  }
   else -> Chat(token!!,me!!,peer!!){peer=null}
  }
 }
@@ -195,7 +204,7 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Home(token:String,me:User,open:(User)->Unit,profileChanged:(User)->Unit,logout:()->Unit){
+@Composable fun Home(token:String,me:User,open:(User)->Unit,openGroups:()->Unit,profileChanged:(User)->Unit,logout:()->Unit){
  var tab by remember{mutableIntStateOf(0)}
  LumoBackdrop(Modifier.fillMaxSize()){
   Scaffold(
@@ -216,7 +225,7 @@ class MainActivity:ComponentActivity(){
   ){pad->
    Box(Modifier.fillMaxSize().padding(pad)){
     when(tab){
-     0->Chats(token,{tab=1},open)
+     0->Chats(token,{tab=1},open,openGroups)
      1->People(token,open)
      else->Profile(token,me,profileChanged,logout)
     }
@@ -225,9 +234,16 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Chats(token:String,find:()->Unit,open:(User)->Unit){
+@Composable fun Chats(token:String,find:()->Unit,open:(User)->Unit,openGroups:()->Unit){
  var chats by remember{mutableStateOf<List<Conversation>>(emptyList())}
  var chatQuery by remember{mutableStateOf("")}
+ var groupsReady by remember(token){mutableStateOf(false)}
+ LaunchedEffect(token){
+  while(true){
+   groupsReady=runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.listGroups(token);true}}.getOrDefault(false)
+   kotlinx.coroutines.delay(60_000)
+  }
+ }
  var loading by remember{mutableStateOf(true)}
  var loadError by remember{mutableStateOf(false)}
  var loadErrorDetail by remember{mutableStateOf("")}
@@ -258,6 +274,17 @@ class MainActivity:ComponentActivity(){
  }
  if(loading){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator(color=LumoCyan)};return}
  Column(Modifier.fillMaxSize()){
+  if(groupsReady){
+   Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp).lumoGlass(22).clickable{openGroups()}.padding(13.dp),verticalAlignment=Alignment.CenterVertically){
+    LumoNeonAvatar("Группы",size=44.dp)
+    Spacer(Modifier.width(12.dp))
+    Column(Modifier.weight(1f)){
+     Text("Группы",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=Color.White)
+     Text("Частные групповые чаты",color=MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    Text("›",color=Color.White)
+   }
+  }
   LumoSearchField(
    chatQuery,{chatQuery=it},"Поиск по чатам",
    modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp)
@@ -774,7 +801,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
 fun formatMessageTime(iso:String):String=runCatching{java.time.format.DateTimeFormatter.ofPattern("HH:mm").withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.parse(iso))}.getOrDefault("")
 
 object Api{
- internal const val HTTP="https://lumo-gamma-seven.vercel.app";private const val WS="wss://lumo-gamma-seven.vercel.app/ws";val httpClient=OkHttpClient.Builder().connectTimeout(15,java.util.concurrent.TimeUnit.SECONDS).readTimeout(30,java.util.concurrent.TimeUnit.SECONDS).writeTimeout(30,java.util.concurrent.TimeUnit.SECONDS).pingInterval(25,java.util.concurrent.TimeUnit.SECONDS).retryOnConnectionFailure(true).build();private val c=httpClient
+ internal const val HTTP="https://lumo-gamma-seven.vercel.app";internal const val WS="wss://lumo-gamma-seven.vercel.app/ws";val httpClient=OkHttpClient.Builder().connectTimeout(15,java.util.concurrent.TimeUnit.SECONDS).readTimeout(30,java.util.concurrent.TimeUnit.SECONDS).writeTimeout(30,java.util.concurrent.TimeUnit.SECONDS).pingInterval(25,java.util.concurrent.TimeUnit.SECONDS).retryOnConnectionFailure(true).build();private val c=httpClient
  fun register(login:String,name:String,password:String):Pair<String,User>{val j=JSONObject().put("username",login).put("displayName",name).put("password",password);val r=Request.Builder().url(HTTP+"/api/register").post(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->val body=x.body?.string().orEmpty();if(!x.isSuccessful){val code=runCatching{JSONObject(body).optString("error")}.getOrDefault("");error(when(code){"database_unavailable"->"Сервис временно недоступен: база данных не подключена";"username_taken"->"Этот логин уже занят";"invalid_profile"->"Проверь имя и логин";"invalid_password"->"Пароль должен содержать от 10 до 128 символов";else->"Ошибка регистрации ("+x.code+")"})};val o=JSONObject(body);return o.getString("token") to user(o.getJSONObject("user"))}}
  fun login(login:String,password:String):Pair<String,User>{
   val body=JSONObject().put("username",login).put("password",password)
