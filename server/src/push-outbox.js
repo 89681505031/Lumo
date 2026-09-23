@@ -52,7 +52,7 @@ export async function dispatchPushBatch({db,send,max=12}) {
     // Re-check ownership and consent for EACH job. If the user logs out,
     // un-registers, reads the message or blocks the sender before dispatch,
     // there is no new push. No message text or FCM token is ever logged.
-    const ready=await db.query(`select p.fcm_token,p.token_hash
+    const ready=await db.query(`select p.fcm_token,p.token_hash,p.xmin::text as device_revision
       from push_outbox o
       join push_devices p on p.session_token=o.session_token and p.user_id=o.recipient_id
       join sessions s on s.token=p.session_token and s.user_id=p.user_id and s.expires_at>now()
@@ -72,7 +72,7 @@ export async function dispatchPushBatch({db,send,max=12}) {
       dropped+=abandoned.rowCount;
       continue;
     }
-    const {fcm_token,token_hash}=ready.rows[0];
+    const {fcm_token,token_hash,device_revision}=ready.rows[0];
     try {
       await send(genericPushMessage(fcm_token));
       const completed=await db.query(`update push_outbox
@@ -86,12 +86,14 @@ export async function dispatchPushBatch({db,send,max=12}) {
         // Never delete another owner's replacement token.
         // A timed-out sender must NEVER erase a registration after a newer
         // worker reclaimed the job. Attempts is the monotonic fencing number.
+        // xmin also protects a re-registration of the SAME token and session.
         await db.query(`delete from push_devices p using push_outbox o
           where p.session_token=$1 and p.token_hash=$2
             and o.id=$3 and o.session_token=p.session_token
             and o.status='pending' and o.attempts=$4
-            and o.lease_until>now()`,
-          [job.session_token,token_hash,job.id,job.attempts]);
+            and o.lease_until>now()
+            and p.xmin::text=$5`,
+          [job.session_token,token_hash,job.id,job.attempts,device_revision]);
       }
       if(invalidPushTokenCode(code) || job.attempts>=4) {
         const rejected=await db.query(`update push_outbox
