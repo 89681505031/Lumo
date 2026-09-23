@@ -180,28 +180,71 @@ class MainActivity:ComponentActivity(){
    kotlinx.coroutines.delay(12_000)
   }
  }
- if(loadError){Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){Text("Не удалось загрузить чаты",style=MaterialTheme.typography.titleLarge,color=Color.White);Spacer(Modifier.height(8.dp));Text(loadErrorDetail,style=MaterialTheme.typography.bodyMedium,color=Color.White.copy(alpha=.85f));Spacer(Modifier.height(12.dp));Button({retry++}){Text("Повторить")};TextButton(find){Text("Найти людей")}};return}
- if(loading){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()};return}
- if(chats.isEmpty()){
-  Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
-   Text("Сообщений пока нет",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.SemiBold)
-   Spacer(Modifier.height(8.dp));Text("Найди человека и начни первый диалог",style=MaterialTheme.typography.bodyLarge)
-   Spacer(Modifier.height(20.dp));Button(find){Text("Найти людей")}
-  }
- } else {
-  Column(Modifier.fillMaxSize()){
-   OutlinedTextField(chatQuery,{chatQuery=it},placeholder={Text("Поиск по чатам")},singleLine=true,shape=RoundedCornerShape(24.dp),modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=10.dp))
-   if(refreshError){
-    Text("Нет связи. Показываем последнюю загруженную историю чатов.",
-     color=MaterialTheme.colorScheme.error,modifier=Modifier.fillMaxWidth().padding(12.dp))
+ if(loadError&&chats.isEmpty()){
+  Box(Modifier.fillMaxSize().padding(20.dp),contentAlignment=Alignment.Center){
+   Column(Modifier.fillMaxWidth().lumoGlass(28).padding(22.dp),horizontalAlignment=Alignment.CenterHorizontally){
+    Text("Чаты пока недоступны",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White)
+    Spacer(Modifier.height(12.dp))
+    Text(loadErrorDetail,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
+    Spacer(Modifier.height(18.dp))
+    LumoNeonButton("Повторить",onClick={retry++},modifier=Modifier.fillMaxWidth())
+    TextButton(find){Text("Найти людей",color=Color.White)}
    }
-   LazyColumn(Modifier.fillMaxSize()){
-   items(chats.filter{it.peer.displayName.contains(chatQuery,true)||it.peer.username.contains(chatQuery,true)},key={it.peer.id}){chat->
-    Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(20).clickable{open(chat.peer)}.padding(14.dp),verticalAlignment=Alignment.CenterVertically){
-     Box(Modifier.size(56.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(chat.peer.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleLarge)}
-     Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(chat.peer.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium,color=Color.White);Row(verticalAlignment=Alignment.CenterVertically){Text(chat.lastMessage,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f));if(chat.lastAt.isNotBlank()){Spacer(Modifier.width(8.dp));Text(formatMessageTime(chat.lastAt),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
+  }
+  return
+ }
+ if(loading){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator(color=LumoCyan)};return}
+ Column(Modifier.fillMaxSize()){
+  LumoSearchField(
+   chatQuery,{chatQuery=it},"Поиск по чатам",
+   modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp)
+  )
+  if(refreshError)Text(
+   "Нет связи. Показываем последнюю загруженную историю.",
+   color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(horizontal=18.dp,vertical=6.dp)
+  )
+  if(chats.isEmpty()){
+   Box(Modifier.fillMaxSize().padding(20.dp),contentAlignment=Alignment.Center){
+    Column(Modifier.fillMaxWidth().lumoGlass(28).padding(22.dp),horizontalAlignment=Alignment.CenterHorizontally){
+     Text("Сообщений пока нет",style=MaterialTheme.typography.titleLarge,color=Color.White,fontWeight=FontWeight.Bold)
+     Spacer(Modifier.height(8.dp))
+     Text("Найди человека и начни первый диалог",color=MaterialTheme.colorScheme.onSurfaceVariant)
+     Spacer(Modifier.height(16.dp))
+     LumoNeonButton("Найти людей",find,Modifier.fillMaxWidth())
     }
    }
+  }else{
+   val filtered=chats.filter{
+    it.peer.displayName.contains(chatQuery,true)||it.peer.username.contains(chatQuery,true)
+   }
+   if(filtered.isEmpty()) Text(
+    "Совпадений не найдено",color=Color.White,modifier=Modifier.padding(22.dp)
+   )
+   LazyColumn(
+    modifier=Modifier.fillMaxSize(),
+    contentPadding=PaddingValues(horizontal=12.dp,vertical=8.dp),
+    verticalArrangement=Arrangement.spacedBy(10.dp)
+   ){
+    items(filtered,key={it.peer.id}){chat->
+     Row(
+      Modifier.fillMaxWidth().lumoGlass(22).clickable{open(chat.peer)}.padding(12.dp),
+      verticalAlignment=Alignment.CenterVertically
+     ){
+      LumoNeonAvatar(chat.peer.displayName,size=54.dp)
+      Spacer(Modifier.width(12.dp))
+      Column(Modifier.weight(1f)){
+       Text(chat.peer.displayName,style=MaterialTheme.typography.titleMedium,
+        fontWeight=FontWeight.Bold,color=Color.White,maxLines=1)
+       Spacer(Modifier.height(3.dp))
+       Text(chat.lastMessage,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+      if(chat.lastAt.isNotBlank()){
+       Spacer(Modifier.width(8.dp))
+       Text(formatMessageTime(chat.lastAt),style=MaterialTheme.typography.labelSmall,
+        color=MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+     }
+    }
    }
   }
  }
