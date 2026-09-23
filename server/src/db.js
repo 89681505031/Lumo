@@ -47,6 +47,22 @@ export async function initDatabase() {
     constraint no_self_block check (blocker_id<>blocked_id)
   )`);
   await pool.query(`create index if not exists user_blocks_blocked_idx on user_blocks(blocked_id,blocker_id)`);
+  await pool.query(`create table if not exists media_assets (
+    id uuid primary key,
+    owner_id uuid not null references users(id) on delete cascade,
+    recipient_id uuid not null references users(id) on delete cascade,
+    object_key text not null unique,
+    mime varchar(80) not null,
+    file_name varchar(80) not null,
+    byte_length integer not null check(byte_length>0 and byte_length<=26214400),
+    expires_at timestamptz not null default (now() + interval '1 day'),
+    created_at timestamptz not null default now(),
+    uploaded_at timestamptz,
+    claimed_message_id uuid unique
+  )`);
+  await pool.query(`create index if not exists media_assets_owner_idx on media_assets(owner_id,created_at desc)`);
+  await pool.query(`alter table messages add column if not exists media_id uuid references media_assets(id)`);
+
   return true;
 }
 export async function dbHealth() {
@@ -57,10 +73,13 @@ export async function dbHealth() {
     to_regclass('messages') as messages_table,
     to_regclass('conversation_prefs') as conversation_prefs_table,
     to_regclass('user_blocks') as user_blocks_table,
+    to_regclass('media_assets') as media_assets_table,
+    exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='messages' and column_name='media_id') as media_column,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.conversation_prefs_table && row.user_blocks_table && row.password_column && row.session_expiry_column), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.conversation_prefs_table && row.user_blocks_table && row.media_assets_table && row.media_column && row.password_column && row.session_expiry_column), now:row.now };
 }
