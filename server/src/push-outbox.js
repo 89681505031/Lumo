@@ -27,7 +27,8 @@ export const retrySeconds = attempts => Math.min(300,20*Math.pow(2,Math.min(atte
 export async function dispatchPushBatch({db,send,max=12}) {
   const limit=Math.max(1,Math.min(20,Math.floor(max)));
   // Separate, short transactions: workers do not hold row locks across FCM.
-  // A two-minute lease prevents two serverless cron instances sending at once.
+  // A two-minute lease prevents simultaneous claims. The claim's monotonically
+  // increasing 'attempts' also fences off stale workers after lease expiry.
   const claimed=await db.query(`with due as (
     select id from push_outbox where status='pending'
       and available_at<=now() and (lease_until is null or lease_until<=now())
@@ -46,41 +47,55 @@ export async function dispatchPushBatch({db,send,max=12}) {
       join push_devices p on p.session_token=o.session_token and p.user_id=o.recipient_id
       join sessions s on s.token=p.session_token and s.user_id=p.user_id and s.expires_at>now()
       join messages m on m.id=o.message_id and m.recipient_id=o.recipient_id
-      where o.id=$1 and o.status='pending' and m.read_at is null
+      where o.id=$1 and o.status='pending'
+        and o.attempts=$2 and o.lease_until>now() and m.read_at is null
         and not exists (select 1 from user_blocks b where
           (b.blocker_id=m.sender_id and b.blocked_id=m.recipient_id)
           or (b.blocker_id=m.recipient_id and b.blocked_id=m.sender_id))
-      limit 1`,[job.id]);
+      limit 1`,[job.id,job.attempts]);
     const expired=Date.now()-new Date(job.created_at).getTime()>10*60*1000;
     if(!ready.rowCount || expired) {
-      await db.query("update push_outbox set status='dropped',processed_at=now(),lease_until=null,last_error_code=$2 where id=$1",
-        [job.id,expired?"stale":"no_consent"]);
-      dropped++;
+      const abandoned=await db.query(`update push_outbox
+        set status='dropped',processed_at=now(),lease_until=null,last_error_code=$3
+        where id=$1 and attempts=$2 and status='pending' and lease_until>now()`,
+        [job.id,job.attempts,expired?"stale":"no_consent"]);
+      dropped+=abandoned.rowCount;
       continue;
     }
     const {fcm_token,token_hash}=ready.rows[0];
     try {
       await send(genericPushMessage(fcm_token));
-      await db.query("update push_outbox set status='sent',processed_at=now(),lease_until=null,last_error_code=null where id=$1",
-        [job.id]);
-      sent++;
+      const completed=await db.query(`update push_outbox
+        set status='sent',processed_at=now(),lease_until=null,last_error_code=null
+        where id=$1 and attempts=$2 and status='pending' and lease_until>now()`,
+        [job.id,job.attempts]);
+      sent+=completed.rowCount;
     }catch(error) {
       const code=typeof error?.code==="string" ? error.code : "provider_error";
       if(invalidPushTokenCode(code)) {
         // Never delete another owner's replacement token.
-        await db.query("delete from push_devices where session_token=$1 and token_hash=$2",
-          [job.session_token,token_hash]);
+        // A timed-out sender must NEVER erase a registration after a newer
+        // worker reclaimed the job. Attempts is the monotonic fencing number.
+        await db.query(`delete from push_devices p using push_outbox o
+          where p.session_token=$1 and p.token_hash=$2
+            and o.id=$3 and o.session_token=p.session_token
+            and o.status='pending' and o.attempts=$4
+            and o.lease_until>now()`,
+          [job.session_token,token_hash,job.id,job.attempts]);
       }
       if(invalidPushTokenCode(code) || job.attempts>=4) {
-        await db.query("update push_outbox set status='dropped',processed_at=now(),lease_until=null,last_error_code=$2 where id=$1",
-          [job.id,invalidPushTokenCode(code)?"invalid_token":"send_failed"]);
-        dropped++;
+        const rejected=await db.query(`update push_outbox
+          set status='dropped',processed_at=now(),lease_until=null,last_error_code=$3
+          where id=$1 and attempts=$2 and status='pending' and lease_until>now()`,
+          [job.id,job.attempts,invalidPushTokenCode(code)?"invalid_token":"send_failed"]);
+        dropped+=rejected.rowCount;
       }else{
-        await db.query(`update push_outbox set lease_until=null,
-          available_at=now()+($2::int * interval '1 second'),
+        const postponed=await db.query(`update push_outbox set lease_until=null,
+          available_at=now()+($3::int * interval '1 second'),
           last_error_code='provider_retry'
-          where id=$1`,[job.id,retrySeconds(job.attempts)]);
-        retried++;
+          where id=$1 and attempts=$2 and status='pending' and lease_until>now()`,
+          [job.id,job.attempts,retrySeconds(job.attempts)]);
+        retried+=postponed.rowCount;
       }
     }
   }
