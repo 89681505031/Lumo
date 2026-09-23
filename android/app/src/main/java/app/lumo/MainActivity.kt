@@ -118,7 +118,10 @@ class MainActivity:ComponentActivity(){
 @Composable fun Chats(token:String,find:()->Unit,open:(User)->Unit){
  var chats by remember{mutableStateOf<List<Conversation>>(emptyList())}
  var loading by remember{mutableStateOf(true)}
- LaunchedEffect(token){runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.conversations(token)}}.onSuccess{chats=it};loading=false}
+ var loadError by remember{mutableStateOf(false)}
+ var retry by remember{mutableIntStateOf(0)}
+ LaunchedEffect(token,retry){loading=true;loadError=false;runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.conversations(token)}}.onSuccess{chats=it}.onFailure{loadError=true};loading=false}
+ if(loadError){Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){Text("Не удалось загрузить чаты");Spacer(Modifier.height(12.dp));Button({retry++}){Text("Повторить")}};return}
  if(loading){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()};return}
  if(chats.isEmpty()){
   Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
@@ -139,11 +142,12 @@ class MainActivity:ComponentActivity(){
 }
 
 @Composable fun People(token:String,open:(User)->Unit){
- var users by remember{mutableStateOf<List<User>>(emptyList())};var q by remember{mutableStateOf("")};var loading by remember{mutableStateOf(false)}
- LaunchedEffect(q){loading=true;kotlinx.coroutines.delay(300);runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.users(token,q)}}.onSuccess{users=it};loading=false}
+ var users by remember{mutableStateOf<List<User>>(emptyList())};var q by remember{mutableStateOf("")};var loading by remember{mutableStateOf(false)};var loadError by remember{mutableStateOf(false)};var retry by remember{mutableIntStateOf(0)}
+ LaunchedEffect(token,q,retry){loading=true;loadError=false;kotlinx.coroutines.delay(300);runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.users(token,q)}}.onSuccess{users=it}.onFailure{loadError=true};loading=false}
  Column(Modifier.fillMaxSize()){
   OutlinedTextField(q,{q=it},label={Text("Поиск по имени или логину")},singleLine=true,modifier=Modifier.fillMaxWidth().padding(16.dp))
   if(loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+  if(loadError){Column(Modifier.fillMaxWidth().padding(16.dp),horizontalAlignment=Alignment.CenterHorizontally){Text("Не удалось загрузить пользователей");Spacer(Modifier.height(8.dp));Button({retry++}){Text("Повторить")}}}
   LazyColumn(Modifier.fillMaxSize()){
    items(users,key={it.id}){u->
     Row(Modifier.fillMaxWidth().clickable{open(u)}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){
@@ -170,7 +174,7 @@ class MainActivity:ComponentActivity(){
    if(editing){
     OutlinedTextField(name,{name=it;profileError=""},label={Text("Имя")},singleLine=true,modifier=Modifier.fillMaxWidth())
     if(profileError.isNotEmpty())Text(profileError,color=MaterialTheme.colorScheme.error)
-    Spacer(Modifier.height(10.dp));Row{val scope=rememberCoroutineScope();Button({saving=true;scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.updateMe(token,name)}}.onSuccess{profileChanged(it);editing=false}.onFailure{profileError="Не удалось сохранить"};saving=false}},enabled=!saving&&name.isNotBlank()){Text(if(saving)"Сохраняем…" else "Сохранить")};Spacer(Modifier.width(8.dp));TextButton({name=me.displayName;editing=false}){Text("Отмена")}}
+    Spacer(Modifier.height(10.dp));Row{Button({saving=true;scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.updateMe(token,name)}}.onSuccess{profileChanged(it);editing=false}.onFailure{profileError="Не удалось сохранить"};saving=false}},enabled=!saving&&name.isNotBlank()){Text(if(saving)"Сохраняем…" else "Сохранить")};Spacer(Modifier.width(8.dp));TextButton({name=me.displayName;editing=false}){Text("Отмена")}}
    }else Button({editing=true},modifier=Modifier.fillMaxWidth()){Text("Редактировать профиль")}
   }}
   Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text("Обновление",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text(updateText);Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(checking)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp));if(progress>=0){Spacer(Modifier.height(12.dp));LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth());Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp))};update?.let{u->if(progress<0){Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl){p->scope.launch{progress=p;updateText=if(p<0)"Не удалось загрузить обновление" else if(p<100)"Загружаем обновление…" else "Устанавливаем обновление…"}}},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}}}}
