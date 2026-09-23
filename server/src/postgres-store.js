@@ -54,6 +54,13 @@ export const postgresStore = {
     const r=await dbQuery("update messages set delivered_at=coalesce(delivered_at,now()) where id=$1 and recipient_id=$2 returning *",[messageId,userId]);
     return r.rows[0] ? mapMessage(r.rows[0]) : null;
   },
+  async markDeliveredFromPeer(userId, peerId) {
+    const r=await dbQuery(
+      "update messages set delivered_at=now() where recipient_id=$1 and sender_id=$2 and delivered_at is null returning *",
+      [userId, peerId]
+    );
+    return r.rows.map(mapMessage);
+  },
   async markDelivered(userId) {
     const r=await dbQuery("update messages set delivered_at=coalesce(delivered_at,now()) where recipient_id=$1 and delivered_at is null returning *",[userId]);
     return r.rows.map(mapMessage);
