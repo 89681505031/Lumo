@@ -1,7 +1,7 @@
 name: Android
 on:
   push:
-    branches: [main]
+    branches: [main, design/luma-glass-ui]
     paths:
       - "android/**"
       - ".github/workflows/android.yml"
