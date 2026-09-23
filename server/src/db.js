@@ -57,6 +57,7 @@ export async function initDatabase() {
   )`);
   await pool.query(`create index if not exists push_devices_user_idx on push_devices(user_id)`);
 
+  await pool.query("-- Durable, session-scoped notification jobs. Never store message content here.\n-- A trigger enqueues only for devices with a currently valid session.\ncreate table if not exists push_outbox (\n  id bigserial primary key,\n  message_id uuid not null references messages(id) on delete cascade,\n  session_token uuid not null references sessions(token) on delete cascade,\n  recipient_id uuid not null references users(id) on delete cascade,\n  status varchar(16) not null default 'pending'\n    check (status in ('pending','sent','dropped')),\n  attempts int not null default 0,\n  available_at timestamptz not null default now(),\n  lease_until timestamptz,\n  processed_at timestamptz,\n  created_at timestamptz not null default now(),\n  last_error_code varchar(40),\n  unique (message_id,session_token)\n);\ncreate index if not exists push_outbox_claim_idx\n  on push_outbox(available_at,id) where status='pending';\n\ncreate or replace function lumo_enqueue_private_push() returns trigger as $$\nbegin\n  insert into push_outbox(message_id,session_token,recipient_id)\n  select new.id,p.session_token,new.recipient_id\n  from push_devices p\n  join sessions s on s.token=p.session_token and s.user_id=p.user_id and s.expires_at>now()\n  where p.user_id=new.recipient_id\n  on conflict (message_id,session_token) do nothing;\n  return new;\nend;\n$$ language plpgsql;\ncreate or replace trigger lumo_message_push_outbox after insert on messages\n  for each row execute function lumo_enqueue_private_push();\n");
   return true;
 }
 export async function dbHealth() {
@@ -68,10 +69,11 @@ export async function dbHealth() {
     to_regclass('conversation_prefs') as conversation_prefs_table,
     to_regclass('user_blocks') as user_blocks_table,
     to_regclass('push_devices') as push_devices_table,
+    to_regclass('push_outbox') as push_outbox_table,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.conversation_prefs_table && row.user_blocks_table && row.push_devices_table && row.password_column && row.session_expiry_column), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.conversation_prefs_table && row.user_blocks_table && row.push_devices_table && row.push_outbox_table && row.password_column && row.session_expiry_column), now:row.now };
 }
