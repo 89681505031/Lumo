@@ -5,10 +5,12 @@ import { randomUUID, createHash } from "node:crypto";
 import { dbHealth, hasDatabase, initDatabase } from "./db.js";
 import { postgresStore } from "./postgres-store.js";
 import { hashPassword, verifyPassword, validPassword } from "./password.js";
+import { registerPushDispatch } from "./push-outbox.js";
 
 if (hasDatabase) { try { await initDatabase(); console.log("Lumo PostgreSQL schema ready"); } catch (error) { console.error("Lumo PostgreSQL initialization failed", error); } }
 
 const app = express();
+registerPushDispatch(app);
 app.disable("x-powered-by");
 app.use("/api", (_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
 app.use(express.json({ limit: "64kb" }));
