@@ -133,8 +133,13 @@ fun PushSettings(session: String, me: User) {
     val permission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) requestEnable++
-        else notice = "Уведомления не включены: разрешение не предоставлено."
+        when {
+            granted && PushOptState.permissionGranted(context) -> requestEnable++
+            granted -> notice = "Android разрешил запрос, но уведомления приложения " +
+                "или канала Lumo по-прежнему выключены. Откройте настройки Android."
+            else -> notice = "Уведомления не включены: разрешение не предоставлено. " +
+                "При необходимости откройте настройки Android."
+        }
     }
 
     LaunchedEffect(requestEnable) {
