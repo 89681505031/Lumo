@@ -77,3 +77,7 @@ create table if not exists call_signals (
   primary key(call_id,seq),
   unique(call_id,sender_id,client_signal_id)
 );
+
+-- Efficient scheduled removal of expired private call and SDP/ICE metadata.
+create index if not exists calls_expires_idx on calls(expires_at);
+create index if not exists call_signals_created_idx on call_signals(created_at);
