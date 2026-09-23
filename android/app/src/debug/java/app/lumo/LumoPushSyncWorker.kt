@@ -40,7 +40,7 @@ private suspend fun currentFirebaseToken(): String = suspendCancellableCoroutine
     }
 }
 
-private suspend fun deleteFirebaseToken() {
+internal suspend fun deleteFirebaseToken() {
     suspendCancellableCoroutine<Unit> { continuation ->
         FirebaseMessaging.getInstance().deleteToken().addOnCompleteListener { task ->
             if (continuation.isActive) {
