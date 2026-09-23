@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
+import WebSocket from "ws";
 
 async function freePort() {
   const server = createServer();
@@ -50,6 +51,16 @@ test("liveness works while database-dependent routes fail safely", { timeout: 15
     const unauthorized = await fetch(base + "/api/me");
     assert.equal(unauthorized.status, 401);
     assert.equal((await unauthorized.json()).error, "unauthorized");
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=invalid`);
+    const closeCode = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        ws.terminate();
+        reject(new Error("Unauthenticated WebSocket was not closed"));
+      }, 3000);
+      ws.once("close", code => { clearTimeout(timer); resolve(code); });
+      ws.once("error", error => { clearTimeout(timer); reject(error); });
+    });
+    assert.equal(closeCode, 1008);
   } finally {
     child.kill();
   }
