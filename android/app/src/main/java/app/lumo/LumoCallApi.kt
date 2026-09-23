@@ -31,6 +31,8 @@ data class LumoSignal(
 class CallsUnavailableException : Exception("Call signaling is disabled")
 class CallsApiException(val statusCode: Int, val code: String) : Exception(code)
 
+data class LumoIceServer(val urls: List<String>, val username: String, val credential: String)
+
 class LumoCallApi(private val base: String, private val client: OkHttpClient) {
     private val uuid = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
@@ -91,6 +93,21 @@ class LumoCallApi(private val base: String, private val client: OkHttpClient) {
         require(uuid.matches(id) && uuid.matches(clientSignalId) && type in listOf("offer", "answer", "ice"))
         val body = JSONObject().put("clientSignalId", clientSignalId).put("type", type).put("payload", payload)
         return JSONObject(request(token, "POST", "/api/calls/$id/signals", body)).getInt("seq")
+    }
+
+    fun iceConfig(token: String, id: String): List<LumoIceServer> {
+        require(uuid.matches(id))
+        val root = JSONObject(request(token, "GET", "/api/calls/$id/ice-config"))
+        val array = root.getJSONArray("iceServers")
+        require(array.length() in 1..3) { "No ICE relay configured" }
+        return (0 until array.length()).map { index ->
+            val server = array.getJSONObject(index)
+            val urls = server.getJSONArray("urls")
+            LumoIceServer(
+                (0 until urls.length()).map { urls.getString(it) },
+                server.getString("username"), server.getString("credential")
+            )
+        }
     }
 
     fun signals(token: String, id: String, after: Int): List<LumoSignal> {
