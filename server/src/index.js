@@ -156,6 +156,38 @@ app.get("/api/messages/:peerId", auth, async (req, res) => {
 
 // HTTP transport is a durable fallback when WebSocket peers connect to different instances.
 const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function validOtherUser(me,peer){return typeof peer==="string" && uuidPattern.test(peer) && peer!==me;}
+app.put("/api/conversations/:peerId/pin",auth,requireDatabase,async(req,res)=>{
+  if(!validOtherUser(req.user.id,req.params.peerId))return res.status(400).json({error:"invalid_peer_id"});
+  try {
+    const found=await postgresStore.setPinned(req.user.id,req.params.peerId,true);
+    return found ? res.json({pinned:true}) : res.status(404).json({error:"conversation_not_found"});
+  }catch(error){console.error("Pin failed",error);return res.status(503).json({error:"service_unavailable"});}
+});
+app.delete("/api/conversations/:peerId/pin",auth,requireDatabase,async(req,res)=>{
+  if(!validOtherUser(req.user.id,req.params.peerId))return res.status(400).json({error:"invalid_peer_id"});
+  try {
+    const found=await postgresStore.setPinned(req.user.id,req.params.peerId,false);
+    return found ? res.json({pinned:false}) : res.status(404).json({error:"conversation_not_found"});
+  }catch(error){console.error("Unpin failed",error);return res.status(503).json({error:"service_unavailable"});}
+});
+app.get("/api/blocks",auth,requireDatabase,async(req,res)=>{
+  try{return res.json(await postgresStore.listBlocks(req.user.id));}
+  catch(error){console.error("Block list failed",error);return res.status(503).json({error:"service_unavailable"});}
+});
+app.put("/api/blocks/:peerId",auth,requireDatabase,async(req,res)=>{
+  if(!validOtherUser(req.user.id,req.params.peerId))return res.status(400).json({error:"invalid_peer_id"});
+  try {
+    const found=await postgresStore.blockUser(req.user.id,req.params.peerId);
+    return found ? res.status(200).json({blocked:true}) : res.status(404).json({error:"user_not_found"});
+  }catch(error){console.error("Block failed",error);return res.status(503).json({error:"service_unavailable"});}
+});
+app.delete("/api/blocks/:peerId",auth,requireDatabase,async(req,res)=>{
+  if(!validOtherUser(req.user.id,req.params.peerId))return res.status(400).json({error:"invalid_peer_id"});
+  try {await postgresStore.unblockUser(req.user.id,req.params.peerId);return res.status(204).end();}
+  catch(error){console.error("Unblock failed",error);return res.status(503).json({error:"service_unavailable"});}
+});
 app.post("/api/messages", auth, requireDatabase, async (req,res)=>{
   const to=req.body?.to;
   const clientMessageId=req.body?.clientMessageId;
@@ -167,6 +199,7 @@ app.post("/api/messages", auth, requireDatabase, async (req,res)=>{
   if(text.length>4000) return res.status(400).json({error:"message_too_long"});
   try{
     if(!await postgresStore.userExists(to)) return res.status(404).json({error:"recipient_not_found"});
+    if(await postgresStore.blockedBetween(req.user.id,to)) return res.status(403).json({error:"user_blocked"});
     const saved=await postgresStore.saveMessage({id:randomUUID(),from:req.user.id,to,text,createdAt:new Date().toISOString(),deliveredAt:null,readAt:null,clientMessageId});
     let message=saved.message;
     if((saved.inserted||!message.deliveredAt) && sendTo(to,{type:"message",message})){
@@ -259,6 +292,7 @@ wss.on("connection", async (ws, req) => {
       const recipientExists = hasDatabase ? await postgresStore.userExists(to) : users.has(to);
       if (sockets.get(userId) !== ws) return ws.close(1008, "Connection replaced");
       if (!recipientExists) return ws.send(JSON.stringify({type:"error",error:"recipient_not_found"}));
+      if (hasDatabase && await postgresStore.blockedBetween(userId,to)) return ws.send(JSON.stringify({type:"error",error:"user_blocked"}));
       if (!text) return ws.send(JSON.stringify({type:"error",error:"empty_message"}));
       if (text.length > 4000) return ws.send(JSON.stringify({type:"error",error:"message_too_long"}));
       let message = { id: randomUUID(), from: userId, to, text, createdAt: new Date().toISOString(), deliveredAt: null, readAt: null, clientMessageId };
