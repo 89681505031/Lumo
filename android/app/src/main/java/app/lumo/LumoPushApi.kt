@@ -34,11 +34,13 @@ internal object PushOptState {
         return if (userId.isNotBlank() && consented(context, userId, session))
             userId to session else null
     }
+    @Synchronized
     fun enable(context: Context, userId: String, session: String) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
             .putString("user_id", userId)
             .putString("session_hash", fingerprint(session))
             .putBoolean("enabled", true)
+            .putBoolean("pending_revoke", false)
             .commit()
     }
     fun revokePending(context: Context, userId: String, session: String): Boolean {
@@ -47,8 +49,19 @@ internal object PushOptState {
             p.getString("user_id", "") == userId &&
             p.getString("session_hash", "") == fingerprint(session)
     }
+    // Background work reads the *current* session from existing private prefs.
+    // Never put the session token or FCM token into WorkManager's job database.
+    fun pendingForCurrentSession(context: Context): Pair<String, String>? {
+        val session = context.getSharedPreferences("lumo_session", Context.MODE_PRIVATE)
+            .getString("token", null) ?: return null
+        val userId = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getString("user_id", "") ?: ""
+        return if (userId.isNotBlank() && revokePending(context, userId, session))
+            userId to session else null
+    }
     // Make the local opt-out effective BEFORE attempting a network request.
     // A private pending flag lets the current session retry its server revoke.
+    @Synchronized
     fun disableLocally(context: Context, userId: String, session: String) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
             .putString("user_id", userId)
@@ -57,6 +70,7 @@ internal object PushOptState {
             .putBoolean("pending_revoke", true)
             .commit()
     }
+    @Synchronized
     fun clear(context: Context) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().clear().commit()
     }
