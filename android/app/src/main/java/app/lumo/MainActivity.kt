@@ -42,7 +42,7 @@ import org.json.JSONObject
 import kotlinx.coroutines.launch
 
 data class User(val id:String,val username:String,val displayName:String)
-data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="")
+data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="",val attachmentId:String="")
 data class Conversation(val peer:User,val lastMessage:String,val lastAt:String="")
 data class UpdateInfo(val versionCode:Int,val downloadUrl:String)
 data class Receipt(val messageId:String,val deliveredAt:String,val readAt:String)
@@ -589,7 +589,8 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
   merged[m.id]=if(old==null)m else m.copy(
    deliveredAt=old.deliveredAt.ifBlank{m.deliveredAt},
    readAt=old.readAt.ifBlank{m.readAt},
-   clientMessageId=m.clientMessageId.ifBlank{old.clientMessageId}
+   clientMessageId=m.clientMessageId.ifBlank{old.clientMessageId},
+   attachmentId=m.attachmentId.ifBlank{old.attachmentId}
   )
  }
  return merged.values.sortedBy{it.createdAt}
@@ -689,7 +690,8 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
        }
        Box(Modifier.widthIn(max=290.dp).lumoBubble(own).padding(horizontal=14.dp,vertical=10.dp)){
         Column {
-         Text(m.text,color=Color.White)
+         if(m.text.isNotBlank())Text(m.text,color=Color.White)
+         if(m.attachmentId.isNotBlank())MediaAttachmentButton(token,m.attachmentId)
          Spacer(Modifier.height(5.dp))
          Row(
           Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically
@@ -726,6 +728,10 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
        }
       }
      }
+    }
+    MediaComposer(token,me,peer,allowSend=true){attached->
+     val merged=mergeChatMessages(msgs,listOf(attached))
+     msgs.clear();msgs.addAll(merged)
     }
     Row(
      Modifier.fillMaxWidth().imePadding().padding(horizontal=11.dp,vertical=8.dp)
@@ -766,7 +772,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
 fun formatMessageTime(iso:String):String=runCatching{java.time.format.DateTimeFormatter.ofPattern("HH:mm").withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.parse(iso))}.getOrDefault("")
 
 object Api{
- private const val HTTP="https://lumo-gamma-seven.vercel.app";private const val WS="wss://lumo-gamma-seven.vercel.app/ws";val httpClient=OkHttpClient.Builder().connectTimeout(15,java.util.concurrent.TimeUnit.SECONDS).readTimeout(30,java.util.concurrent.TimeUnit.SECONDS).writeTimeout(30,java.util.concurrent.TimeUnit.SECONDS).pingInterval(25,java.util.concurrent.TimeUnit.SECONDS).retryOnConnectionFailure(true).build();private val c=httpClient
+ internal const val HTTP="https://lumo-gamma-seven.vercel.app";private const val WS="wss://lumo-gamma-seven.vercel.app/ws";val httpClient=OkHttpClient.Builder().connectTimeout(15,java.util.concurrent.TimeUnit.SECONDS).readTimeout(30,java.util.concurrent.TimeUnit.SECONDS).writeTimeout(30,java.util.concurrent.TimeUnit.SECONDS).pingInterval(25,java.util.concurrent.TimeUnit.SECONDS).retryOnConnectionFailure(true).build();private val c=httpClient
  fun register(login:String,name:String,password:String):Pair<String,User>{val j=JSONObject().put("username",login).put("displayName",name).put("password",password);val r=Request.Builder().url(HTTP+"/api/register").post(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->val body=x.body?.string().orEmpty();if(!x.isSuccessful){val code=runCatching{JSONObject(body).optString("error")}.getOrDefault("");error(when(code){"database_unavailable"->"Сервис временно недоступен: база данных не подключена";"username_taken"->"Этот логин уже занят";"invalid_profile"->"Проверь имя и логин";"invalid_password"->"Пароль должен содержать от 10 до 128 символов";else->"Ошибка регистрации ("+x.code+")"})};val o=JSONObject(body);return o.getString("token") to user(o.getJSONObject("user"))}}
  fun login(login:String,password:String):Pair<String,User>{
   val body=JSONObject().put("username",login).put("password",password)
@@ -808,5 +814,5 @@ object Api{
  fun latestRelease():UpdateInfo{val r=Request.Builder().url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest").header("Accept","application/vnd.github+json").build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Обновление: "+x.code);val o=JSONObject(x.body!!.string());val code=Regex("versionCode=(\\d+)").find(o.optString("body"))?.groupValues?.get(1)?.toIntOrNull()?:0;val a=o.getJSONArray("assets");for(i in 0 until a.length()){val asset=a.getJSONObject(i);if(asset.optString("name")=="app-debug.apk" || asset.optString("name")=="app-release.apk" || asset.optString("label")=="Lumo.apk")return UpdateInfo(code,asset.getString("browser_download_url"))};error("APK не найден")}}
  fun socket(t:String,onMessage:(Msg)->Unit,onReceipt:(Receipt)->Unit,onError:(String)->Unit,onReady:()->Unit,onDisconnected:()->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS).header("Authorization","Bearer "+t).build(),object:WebSocketListener(){override fun onOpen(w:WebSocket,response:Response){};override fun onMessage(w:WebSocket,s:String){runCatching{val o=JSONObject(s);when(o.optString("type")){"ready"->onReady();"message"->onMessage(msg(o.getJSONObject("message")));"receipt"->onReceipt(Receipt(o.getString("messageId"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt")));"error"->onError(o.optString("error"));else->Unit}}.onFailure{onError("invalid_server_message")}};override fun onClosed(w:WebSocket,code:Int,reason:String)=onDisconnected();override fun onFailure(w:WebSocket,t:Throwable,response:Response?)=onDisconnected()})}
  private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"))
- private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"))
+ private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"),nullableJsonText(o,"attachmentId"))
 }
