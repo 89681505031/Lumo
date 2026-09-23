@@ -178,9 +178,20 @@ fun PushSettings(session: String, me: User) {
             }
         }
         result.onSuccess {
-            enabled = true
-            revokePending = false
-            notice = "Тестовые уведомления включены только для текущего аккаунта."
+            // Android Settings can change after the final background-thread
+            // check but before Compose receives this completion callback.
+            if (!PushOptState.permissionGranted(context)) {
+                PushOptState.disableLocally(context, me.id, session)
+                FirebaseMessaging.getInstance().isAutoInitEnabled = false
+                enabled = false
+                revokePending = true
+                notice = "Разрешение Android было отключено во время подключения. " +
+                    "Регистрация будет отозвана, повторное включение — только вручную."
+            } else {
+                enabled = true
+                revokePending = false
+                notice = "Тестовые уведомления включены только для текущего аккаунта."
+            }
             LumoPushSyncWorker.schedule(context)
         }.onFailure { error ->
             // Do not lose the server revoke even if navigation cancels Compose
