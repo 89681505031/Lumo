@@ -1,7 +1,7 @@
 import express from "express";
 import { WebSocketServer } from "ws";
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { dbHealth, hasDatabase, initDatabase } from "./db.js";
 import { postgresStore } from "./postgres-store.js";
 import { hashPassword, verifyPassword, validPassword } from "./password.js";
@@ -103,6 +103,32 @@ app.post("/api/logout", auth, async (req, res) => {
   } catch (error) {
     console.error("Logout failed", error);
     res.status(503).json({ error: "service_unavailable" });
+  }
+});
+
+// Token registration does not send notifications. Delivery is enabled only
+// after a configured Firebase integration and a user-granted OS permission.
+app.post("/api/devices/push",auth,requireDatabase,rateLimit({windowMs:60_000,max:30}),async(req,res)=>{
+  const token=req.body?.token;
+  if(req.body?.platform!=="android" || typeof token!=="string" || token.length<20 || token.length>4096 || /\s/.test(token))
+    return res.status(400).json({error:"invalid_push_token"});
+  const tokenHash=createHash("sha256").update(token).digest("hex");
+  try{
+    await postgresStore.registerPushDevice({
+      userId:req.user.id,sessionToken:req.sessionToken,tokenHash,token
+    });
+    return res.json({registered:true});
+  }catch(error){
+    // Never log the raw FCM token or SQL parameters.
+    console.error("Push device registration failed; database error code:",error?.code || "unknown");
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+app.delete("/api/devices/push",auth,requireDatabase,async(req,res)=>{
+  try{await postgresStore.removePushDevice(req.user.id,req.sessionToken);return res.status(204).end();}
+  catch(error){
+    console.error("Push device revocation failed; database error code:",error?.code || "unknown");
+    return res.status(503).json({error:"service_unavailable"});
   }
 });
 
