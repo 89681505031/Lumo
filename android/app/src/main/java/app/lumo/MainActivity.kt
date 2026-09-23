@@ -220,7 +220,7 @@ class LumoInstallReceiver:BroadcastReceiver(){
  }
 }
 
-@Composable fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
+fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  val merged=LinkedHashMap<String,Msg>()
  for(m in current+incoming){
   val old=merged[m.id]
@@ -233,7 +233,7 @@ class LumoInstallReceiver:BroadcastReceiver(){
  return merged.values.sortedBy{it.createdAt}
 }
 
-fun Chat(token:String,me:User,peer:User,back:()->Unit){
+@Composable fun Chat(token:String,me:User,peer:User,back:()->Unit){
  val context=LocalContext.current;val scope=rememberCoroutineScope();val queuePrefs=remember{context.getSharedPreferences("lumo_pending",Context.MODE_PRIVATE)};val queueKey="pending_"+me.id+"_"+peer.id
  val msgs=remember{mutableStateListOf<Msg>()};var input by remember{mutableStateOf("")};var ws by remember{mutableStateOf<WebSocket?>(null)};var socketGeneration by remember{mutableIntStateOf(0)};var connected by remember{mutableStateOf(false)};var socketError by remember{mutableStateOf("")};val pending=remember{mutableStateListOf<PendingMessage>().apply{val a=runCatching{JSONArray(queuePrefs.getString(queueKey,"[]"))}.getOrNull();if(a!=null)for(i in 0 until a.length()){val o=a.optJSONObject(i);if(o!=null){val id=o.optString("clientMessageId");val text=o.optString("text");if(id.isNotBlank()&&text.isNotBlank())add(PendingMessage(id,text))}else{val text=a.optString(i);if(text.isNotBlank())add(PendingMessage(java.util.UUID.randomUUID().toString(),text))}}}}
  fun savePending(){val a=JSONArray();pending.forEach{a.put(JSONObject().put("clientMessageId",it.clientMessageId).put("text",it.text))};queuePrefs.edit().putString(queueKey,a.toString()).apply()}
