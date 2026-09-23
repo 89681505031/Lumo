@@ -158,7 +158,9 @@ wss.on("connection", async (ws, req) => {
       ws.send(JSON.stringify({ type: "message", message }));
     } catch (error) { console.error("WebSocket message handling failed",error); if(ws.readyState===ws.OPEN) ws.send(JSON.stringify({ type: "error", error: error?.code==="CLIENT_MESSAGE_ID_CONFLICT" ? "client_message_id_conflict" : "service_unavailable" })); }
   });
-  ws.on("close", () => { if (sockets.get(userId) === ws) sockets.delete(userId); });
+  const clearSocket=()=>{if(sockets.get(userId)===ws)sockets.delete(userId);};
+  ws.on("close",clearSocket);
+  ws.on("error",error=>{console.error("WebSocket transport error",error);clearSocket();});
 });
 
 const port = Number(process.env.PORT || 3000);
