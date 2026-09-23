@@ -16,6 +16,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -240,12 +242,16 @@ class MainActivity:ComponentActivity(){
 @Composable fun Profile(token:String,me:User,profileChanged:(User)->Unit,darkMode:Boolean,onDarkModeChange:(Boolean)->Unit,logout:()->Unit){
  val context=LocalContext.current
  val scope=rememberCoroutineScope()
+ var blockedUsers by remember(token){mutableStateOf<List<User>>(emptyList())}
+ var blocksError by remember{mutableStateOf("")}
+ var unblockingId by remember{mutableStateOf("")}
+ LaunchedEffect(token){runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.blocks(token)}}.onSuccess{blockedUsers=it}.onFailure{blocksError="Не удалось загрузить список блокировок"}}
  var editing by remember{mutableStateOf(false)};var name by remember(me.displayName){mutableStateOf(me.displayName)};var saving by remember{mutableStateOf(false)};var profileError by remember{mutableStateOf("")}
  var loggingOut by remember{mutableStateOf(false)}
  var logoutError by remember{mutableStateOf("")}
  var update by remember{mutableStateOf<UpdateInfo?>(null)};var checking by remember{mutableStateOf(true)};var updateText by remember{mutableStateOf("Проверяем обновления…")};var progress by remember{mutableIntStateOf(-1)}
  LaunchedEffect(Unit){runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.latestRelease()}}.onSuccess{info->update=info.takeIf{it.versionCode>BuildConfig.VERSION_CODE};updateText=if(update!=null)"Доступна новая версия Lumo" else "Установлена последняя версия"}.onFailure{updateText="Не удалось проверить обновления"};checking=false}
- Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
+ Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
   Spacer(Modifier.height(24.dp));Box(Modifier.size(92.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(me.displayName.take(1).uppercase(),style=MaterialTheme.typography.displaySmall,fontWeight=FontWeight.Bold)}
   Spacer(Modifier.height(16.dp));Text(me.displayName,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text("@"+me.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
   Spacer(Modifier.height(20.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){
@@ -257,6 +263,22 @@ class MainActivity:ComponentActivity(){
    }else Button({editing=true},modifier=Modifier.fillMaxWidth()){Text("Редактировать профиль")}
   }}
   Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Row(Modifier.fillMaxWidth().padding(18.dp),verticalAlignment=Alignment.CenterVertically){Text("Тёмная тема",modifier=Modifier.weight(1f));Switch(checked=darkMode,onCheckedChange=onDarkModeChange)}}
+  Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){
+   Text("Заблокированные пользователи",fontWeight=FontWeight.SemiBold)
+   if(blocksError.isNotBlank())Text(blocksError,color=MaterialTheme.colorScheme.error)
+   if(blocksError.isBlank()&&blockedUsers.isEmpty())Text("Список пуст",style=MaterialTheme.typography.bodySmall)
+   blockedUsers.forEach{u->
+    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+     Text(u.displayName+" (@"+u.username+")",modifier=Modifier.weight(1f))
+     TextButton(onClick={unblockingId=u.id;scope.launch{
+      runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.setBlocked(token,u.id,false)}}
+       .onSuccess{blockedUsers=blockedUsers.filter{it.id!=u.id};blocksError=""}
+       .onFailure{blocksError="Не удалось снять блокировку"}
+      unblockingId=""
+     }},enabled=unblockingId.isEmpty()){Text("Снять блок")}
+    }
+   }
+  }}
   Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text("Обновление",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text(updateText);Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(checking)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp));if(progress>=0){Spacer(Modifier.height(12.dp));LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth());Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp))};update?.let{u->if(progress<0){Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl){p->scope.launch{progress=p;updateText=if(p<0)"Не удалось загрузить обновление" else if(p<100)"Загружаем обновление…" else "Устанавливаем обновление…"}}},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}}}}
   Spacer(Modifier.height(14.dp))
   OutlinedButton(onClick={
