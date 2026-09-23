@@ -132,17 +132,17 @@ class MainActivity:ComponentActivity(){
 
 @Composable fun Home(token:String,me:User,open:(User)->Unit,profileChanged:(User)->Unit,logout:()->Unit){
  var tab by remember{mutableIntStateOf(0)}
- Scaffold(
-  topBar={Surface(shadowElevation=2.dp){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(20.dp,14.dp),verticalAlignment=Alignment.CenterVertically){
+ Scaffold(containerColor=Color.Transparent,
+  topBar={Surface(color=Color.Transparent,shadowElevation=0.dp){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(20.dp,14.dp),verticalAlignment=Alignment.CenterVertically){
    Text("Lumo",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);Spacer(Modifier.weight(1f));Text(me.displayName,style=MaterialTheme.typography.labelLarge)
   }}},
-  bottomBar={NavigationBar{
+  bottomBar={NavigationBar(containerColor=Color(0xFF304360)){
    NavigationBarItem(selected=tab==0,onClick={tab=0},icon={Text("●")},label={Text("Чаты")})
    NavigationBarItem(selected=tab==1,onClick={tab=1},icon={Text("⌕")},label={Text("Люди")})
    NavigationBarItem(selected=tab==2,onClick={tab=2},icon={Text("☺")},label={Text("Профиль")})
   }}
  ){pad->
-  Box(Modifier.padding(pad).fillMaxSize()){
+  Box(Modifier.padding(pad).fillMaxSize().background(LumoGradient)){
    when(tab){
     0->Chats(token,{tab=1},open)
     1->People(token,open)
@@ -184,8 +184,8 @@ class MainActivity:ComponentActivity(){
    }
    LazyColumn(Modifier.fillMaxSize()){
    items(chats,key={it.peer.id}){chat->
-    Row(Modifier.fillMaxWidth().clickable{open(chat.peer)}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){
-     Box(Modifier.size(56.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(chat.peer.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleLarge)}
+    Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(20).clickable{open(chat.peer)}.padding(14.dp),verticalAlignment=Alignment.CenterVertically){
+     Box(Modifier.size(56.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(chat.peer.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleLarge)}
      Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(chat.peer.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium);Row(verticalAlignment=Alignment.CenterVertically){Text(chat.lastMessage,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f));if(chat.lastAt.isNotBlank()){Spacer(Modifier.width(8.dp));Text(formatMessageTime(chat.lastAt),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
     };HorizontalDivider()
    }
@@ -205,7 +205,7 @@ class MainActivity:ComponentActivity(){
   LazyColumn(Modifier.fillMaxSize()){
    items(users,key={it.id}){u->
     Row(Modifier.fillMaxWidth().clickable{open(u)}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){
-     Box(Modifier.size(52.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(u.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleLarge)}
+     Box(Modifier.size(52.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(u.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleLarge)}
      Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(u.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium);Text("@"+u.username,color=MaterialTheme.colorScheme.onSurfaceVariant)}
      Text("›",style=MaterialTheme.typography.headlineSmall)
     };HorizontalDivider()
