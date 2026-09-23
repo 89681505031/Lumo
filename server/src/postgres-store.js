@@ -118,6 +118,15 @@ export const postgresStore = {
     const r=await dbQuery("select * from messages where (sender_id=$1 and recipient_id=$2) or (sender_id=$2 and recipient_id=$1) order by created_at",[me,peer]);
     return r.rows.map(mapMessage);
   },
+  async searchMessages(me,peer,query) {
+    // strpos performs a literal substring match: user-supplied % and _ are
+    // search characters rather than SQL LIKE wildcards.
+    const r=await dbQuery(
+      "select * from messages where ((sender_id=$1 and recipient_id=$2) or (sender_id=$2 and recipient_id=$1)) and deleted_at is null and strpos(lower(text),lower($3))>0 order by created_at desc,id desc limit 50",
+      [me,peer,query]
+    );
+    return r.rows.map(mapMessage);
+  },
   async editMessage(me,id,text) {
     // Atomic owner check: neither the recipient nor an attacker can edit it.
     const r=await dbQuery(
