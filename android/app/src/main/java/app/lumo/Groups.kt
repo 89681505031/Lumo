@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -29,7 +30,8 @@ data class LumoGroup(
  val memberCount:Int,val lastMessage:String="",val lastAt:String=""
 )
 data class LumoGroupMember(val id:String,val username:String,val displayName:String,val role:String)
-data class LumoGroupMessage(val id:String,val from:String,val text:String,val createdAt:String)
+data class LumoGroupMessage(val id:String,val from:String,val text:String,val createdAt:String,val clientMessageId:String="")
+data class LumoGroupPending(val clientId:String,val text:String)
 data class LumoGroupDetail(val group:LumoGroup,val members:List<LumoGroupMember>)
 
 private fun optional(o:JSONObject,key:String)=if(o.isNull(key))"" else o.optString(key)
@@ -38,7 +40,7 @@ private fun group(o:JSONObject)=LumoGroup(
  o.getString("role"),o.optInt("memberCount",0),optional(o,"lastMessage"),optional(o,"lastAt")
 )
 private fun groupMessage(o:JSONObject)=LumoGroupMessage(
- o.getString("id"),o.getString("from"),o.getString("text"),o.getString("createdAt")
+ o.getString("id"),o.getString("from"),o.getString("text"),o.getString("createdAt"),optional(o,"clientMessageId")
 )
 private fun Api.groupCall(token:String,path:String,method:String="GET",body:JSONObject?=null):String{
  val req=Request.Builder().url(Api.HTTP+path).header("Authorization","Bearer "+token)
@@ -159,9 +161,27 @@ fun GroupsScreen(token:String,openGroup:(LumoGroup)->Unit){
 @Composable
 fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
  val scope=rememberCoroutineScope()
+ val context=LocalContext.current
+ val queuePrefs=remember{context.getSharedPreferences("lumo_group_pending",android.content.Context.MODE_PRIVATE)}
+ val queueKey="group_"+me.id+"_"+initial.id
+ var pending by remember(queueKey){mutableStateOf(
+  runCatching{
+   val raw=queuePrefs.getString(queueKey,null)?:return@runCatching null
+   val data=JSONObject(raw)
+   LumoGroupPending(data.getString("clientId"),data.getString("text"))
+  }.getOrNull()
+ )}
+ fun savePending(value:LumoGroupPending?){
+  pending=value
+  val edit=queuePrefs.edit()
+  if(value==null)edit.remove(queueKey)
+  else edit.putString(queueKey,JSONObject().put("clientId",value.clientId).put("text",value.text).toString())
+  edit.apply()
+ }
+
  var detail by remember(initial.id){mutableStateOf<LumoGroupDetail?>(null)}
  var history by remember(initial.id){mutableStateOf<List<LumoGroupMessage>>(emptyList())}
- var input by remember{mutableStateOf("")}
+ var input by remember(queueKey){mutableStateOf(pending?.text?:"")}
  var error by remember{mutableStateOf("")}
  var loading by remember{mutableStateOf(true)}
  var sending by remember{mutableStateOf(false)}
@@ -183,10 +203,39 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
    val response=runCatching{withContext(Dispatchers.IO){
     Api.groupDetail(token,initial.id) to Api.groupHistory(token,initial.id)
    }}
-   response.onSuccess{pair->detail=pair.first;history=pair.second;error="";loading=false}
+   response.onSuccess{pair->
+    detail=pair.first;history=pair.second;error="";loading=false
+    if(pair.second.any{it.from==me.id&&it.clientMessageId.isNotBlank()&&it.clientMessageId==pending?.clientId}){
+     savePending(null);input=""
+    }
+   }
     .onFailure{error="Нет связи с группой или вы больше не участник";loading=false}
    delay(5_000)
   }
+ }
+ // Same-instance group events arrive immediately; polling remains the durable
+ // fallback when devices connect through different Vercel function instances.
+ DisposableEffect(token,initial.id){
+  val socket=Api.httpClient.newWebSocket(
+   Request.Builder().url(Api.WS).header("Authorization","Bearer "+token).build(),
+   object:WebSocketListener(){
+    override fun onMessage(ws:WebSocket,text:String){
+     runCatching{
+      val event=JSONObject(text)
+      if(event.optString("type")!="group_message")return@runCatching
+      val data=event.getJSONObject("message")
+      if(data.optString("groupId")!=initial.id)return@runCatching
+      val msg=groupMessage(data)
+      scope.launch{
+       history=(history.filterNot{it.id==msg.id}+msg).sortedBy{it.createdAt}
+       if(msg.from==me.id&&msg.clientMessageId.isNotBlank()&&msg.clientMessageId==pending?.clientId){
+        savePending(null);input=""
+       }
+      }
+     }
+    }
+   })
+  onDispose{socket.close(1000,"Group closed")}
  }
  LaunchedEffect(inviteSearch,inviteDialog){
   if(inviteDialog&&inviteSearch.trim().length>=2){
@@ -324,21 +373,34 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     }
    }
    Surface(shadowElevation=3.dp){
+    if(pending!=null){
+     Row(Modifier.fillMaxWidth().padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically){
+      Text("Сообщение ожидает подтверждения",modifier=Modifier.weight(1f),
+       style=MaterialTheme.typography.bodySmall)
+      TextButton(onClick={savePending(null);input=""},enabled=!sending){Text("Не повторять")}
+     }
+    }
     Row(Modifier.fillMaxWidth().imePadding().padding(8.dp),verticalAlignment=Alignment.Bottom){
-     OutlinedTextField(input,{input=it.take(4000)},modifier=Modifier.weight(1f),
+     OutlinedTextField(input,{input=it.take(4000)},enabled=pending==null,modifier=Modifier.weight(1f),
       label={Text("Сообщение группе")},maxLines=4)
      Spacer(Modifier.width(8.dp))
      Button(onClick={
-      val text=input.trim()
+      val item=pending?:LumoGroupPending(java.util.UUID.randomUUID().toString(),input.trim())
+      savePending(item)
       sending=true
       scope.launch{
-       val clientId=java.util.UUID.randomUUID().toString()
-       runCatching{withContext(Dispatchers.IO){Api.groupSend(token,initial.id,text,clientId)}}
-        .onSuccess{m->input="";history=(history+listOf(m)).distinctBy{it.id}}
-        .onFailure{error="Не удалось отправить сообщение; повторите попытку"}
+       runCatching{withContext(Dispatchers.IO){Api.groupSend(token,initial.id,item.text,item.clientId)}}
+        .onSuccess{m->
+         if(pending?.clientId==item.clientId){savePending(null);input=""}
+         history=(history.filterNot{it.id==m.id}+m).sortedBy{it.createdAt}
+         error=""
+        }
+        .onFailure{error="Не удалось отправить сообщение; повторите с тем же идентификатором"}
        sending=false
       }
-     },enabled=!sending&&!loading&&input.trim().isNotEmpty()){Text("➤")}
+     },enabled=!sending&&!loading&&(pending!=null||input.trim().isNotEmpty())){
+      Text(if(pending==null)"➤" else "↻")
+     }
     }
    }
   }
