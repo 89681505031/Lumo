@@ -4,8 +4,15 @@ import { pool } from "./db.js";
 // No notification content or sender metadata is ever stored in the queue.
 export const genericPushMessage = token => ({
   token,
-  notification:{title:"Lumo",body:"Новое сообщение"},
-  android:{priority:"normal"}
+  // Data-only: Android dispatches through our consent-checking service in
+  // foreground AND background. An FCM notification payload would bypass our
+  // local opt-out while the app is in the background.
+  data:{kind:"lumo_message"},
+  android:{
+    priority:"normal",
+    ttl:10*60*1000,
+    collapseKey:"lumo_generic_message"
+  }
 });
 export const invalidPushTokenCode = code => [
   "messaging/registration-token-not-registered",
