@@ -99,16 +99,17 @@ export function callRouter(auth) {
       if (!recipient.rowCount) return {status:404,body:{error:"recipient_not_found"}};
       if (await blocked(c,req.user.id,to)) return {status:403,body:{error:"user_blocked"}};
       const limit = await c.query(
-        `select count(*)::int as attempts,
+        `select count(*) filter(where created_at>now()-interval '1 minute')::int as attempts,
            count(*) filter(where status in ('ringing','accepted') and expires_at>now())::int as active
-         from calls where caller_id=$1 and created_at>now()-interval '1 minute'`,
+         from calls where caller_id=$1 and
+           (created_at>now()-interval '1 minute' or
+            (status in ('ringing','accepted') and expires_at>now()))`,
         [req.user.id]
       );
       if (limit.rows[0].attempts >= 3 || limit.rows[0].active >= 1)
         return {status:429,body:{error:"call_rate_limited"}};
-      await c.query(
-        "delete from calls where created_at<now()-interval '24 hours' and expires_at<now()"
-      );
+      await c.query("delete from call_signals where created_at<now()-interval '1 hour'");
+      await c.query("delete from calls where created_at<now()-interval '24 hours' and expires_at<now()");
       const r = await c.query(
         `insert into calls(id,caller_id,callee_id,kind)
          values($1,$2,$3,$4) returning *`,
@@ -172,9 +173,21 @@ export function callRouter(auth) {
       );
       if (existing.rows[0]) {
         const x=existing.rows[0];
-        if (x.type !== type || JSON.stringify(x.payload)!==JSON.stringify(payload))
+        const matches = type === "ice"
+          ? x.payload.candidate === payload.candidate &&
+            (x.payload.sdpMid ?? null) === payload.sdpMid &&
+            (x.payload.sdpMLineIndex ?? null) === payload.sdpMLineIndex
+          : x.payload.sdp === payload.sdp;
+        if (x.type !== type || !matches)
           return {status:409,body:{error:"client_signal_id_conflict"}};
         return {status:200,body:{seq:x.seq}};
+      }
+      if (type === "offer" || type === "answer") {
+        const prev = await c.query(
+          "select 1 from call_signals where call_id=$1 and sender_id=$2 and type=$3 limit 1",
+          [call.id,req.user.id,type]
+        );
+        if (prev.rowCount) return {status:409,body:{error:"signal_already_submitted"}};
       }
       if (call.last_signal_seq >= 150) return {status:429,body:{error:"signal_limit"}};
       const seq = call.last_signal_seq + 1;
@@ -194,6 +207,8 @@ export function callRouter(auth) {
       return res.status(400).json({error:"invalid_signal_cursor"});
     const call = await participant(pool,req.params.id,req.user.id);
     if (!call) return res.status(404).json({error:"call_not_found"});
+    if (call.status !== "accepted" || call.timed_out)
+      return res.status(409).json({error:"call_inactive"});
     if (await blocked(pool,call.caller_id,call.callee_id))
       return res.status(403).json({error:"user_blocked"});
     const r = await pool.query(
