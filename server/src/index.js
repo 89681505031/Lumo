@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { dbHealth, hasDatabase, initDatabase } from "./db.js";
 import { postgresStore } from "./postgres-store.js";
 import { callRouter } from "./call-signaling.js";
+import { registerCallCleanup } from "./call-cleanup.js";
 import { hashPassword, verifyPassword, validPassword } from "./password.js";
 
 if (hasDatabase) { try { await initDatabase(); console.log("Lumo PostgreSQL schema ready"); } catch (error) { console.error("Lumo PostgreSQL initialization failed", error); } }
@@ -94,6 +95,7 @@ app.post("/api/login", requireDatabase, rateLimit({windowMs:15*60_000,max:10}), 
   }
 });
 
+registerCallCleanup(app);
 app.use("/api/calls", callRouter(auth));
 app.get("/api/me", auth, (req, res) => res.json(publicUser(req.user)));
 app.post("/api/logout", auth, async (req, res) => {
