@@ -10,6 +10,7 @@ Lumo is a modern messaging application.
 - Message history
 - Delivery/read status foundation
 - Android client foundation
+- Foreground chat-list refresh and HTTP fallback for realtime delays
 
 ## Repository structure
 - `server/` — backend API and WebSocket server
@@ -17,6 +18,8 @@ Lumo is a modern messaging application.
 
 ## Automated checks
 The server workflow runs syntax checks, smoke tests without a database, and integration tests against an ephemeral PostgreSQL service in GitHub Actions. The integration suite starts two independent server processes sharing the same database to verify cross-instance delivery, read receipts, and session revocation. The CI database is separate from production; successful CI does not configure Vercel's `DATABASE_URL`.
+
+The `Production Health` workflow checks the deployed `/live`, `/health`, and anonymous authentication boundaries every six hours. Manual checks also perform a WebSocket handshake using an intentionally invalid token; successful rejection confirms that upgrades and authorization are functional, **not** that two real users can exchange messages across instances. These tests never create production accounts or use database passwords.
 
 ## Run backend
 Requires Node.js 20+.
@@ -30,7 +33,7 @@ npm run dev
 Server defaults to http://localhost:3000.
 
 ## Account API
-Registration requires `POST /api/register` with `username`, `displayName`, and `password`. Passwords must be 10–128 characters (maximum 256 UTF-8 bytes); the database stores salted scrypt hashes, never plaintext passwords. Returning users can call `POST /api/login` with `username` and `password` to receive a fresh session token. Android offers both account creation and sign-in. Legacy accounts without a password hash cannot sign in with a password; an account-recovery or migration flow is still needed. Sessions expire 30 days after creation. Android signs out through `POST /api/logout`, which revokes the current session and disconnects its local WebSocket; if the server is unreachable, Android offers a clearly labelled device-only sign-out that cannot revoke the remote session. Other signed-in sessions remain valid unless independently revoked.
+Registration requires `POST /api/register` with `username`, `displayName`, and `password`. Passwords must be 10–128 characters (maximum 256 UTF-8 bytes); the database stores salted scrypt hashes, never plaintext passwords. Returning users can call `POST /api/login` with `username` and `password` to receive a fresh session token. Android offers both account creation and sign-in. Legacy accounts without a password hash cannot sign in with a password; an account-recovery or migration flow is still needed. Sessions expire 30 days after creation. Android signs out through `POST /api/logout`, which revokes the current session and disconnects its local WebSocket; if the server is unreachable, Android offers a clearly labelled device-only sign-out that cannot revoke the remote session. Other signed-in sessions remain valid unless independently revoked. Android cloud/device backup rules exclude local session preferences and unsent message queues.
 
 
 ## Deployment
