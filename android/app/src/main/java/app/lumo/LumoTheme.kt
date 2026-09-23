@@ -142,3 +142,23 @@ fun LumoBackdrop(modifier:Modifier=Modifier,content:@Composable BoxScope.() -> U
         content()
     }
 }
+
+/** Two related glass treatments distinguish incoming from outgoing messages. */
+fun Modifier.lumoBubble(outgoing:Boolean):Modifier {
+    val shape=RoundedCornerShape(21.dp)
+    val fill=if(outgoing) Brush.linearGradient(
+        listOf(Color(0xDC3156DE),Color(0xCB6647DB),Color(0xBDCA40B8))
+    ) else Brush.linearGradient(
+        listOf(Color(0xD02654AE),Color(0xCF1D3987),Color(0xB9394D9B))
+    )
+    return this.shadow(
+        5.dp,shape,ambientColor=if(outgoing) LumoPink else LumoCyan,
+        spotColor=if(outgoing) LumoPink else LumoCyan
+    ).background(fill,shape)
+        .border(
+            1.1.dp,
+            if(outgoing) Brush.linearGradient(listOf(LumoCyan,Color.White,LumoPink))
+            else Brush.linearGradient(listOf(Color(0xFF8CE6FF),Color(0xFF8496FF))),
+            shape
+        )
+}
