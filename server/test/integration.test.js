@@ -320,6 +320,49 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
       assert.equal(registration.rowCount,1,
         "Stale invalid-token callback must not delete the active registration");
 
+      // Same-session re-opt-in may create a fresh push_devices row carrying
+      // EXACTLY the same token. A late provider error for the previous row
+      // must not revoke that new registration (row-version fencing).
+      const replacedMessage=await request("/api/messages","POST",c.token,{
+        to:b.user.id,text:"Same token, new consent",clientMessageId:randomUUID()
+      });
+      assert.equal(replacedMessage.status,201);
+      let signalSendStarted;
+      const sendStarted=new Promise(resolve=>{signalSendStarted=resolve;});
+      let finishOldSend;
+      const lateProvider=new Promise(resolve=>{finishOldSend=resolve;});
+      const delayedInvalid=dispatchPushBatch({
+        db:pushPool,max:1,send:async()=>{
+          signalSendStarted();
+          await lateProvider;
+          throw Object.assign(new Error("Delayed invalid old registration"),{
+            code:"messaging/invalid-registration-token"
+          });
+        }
+      });
+      await sendStarted;
+      const originalVersion=await pushPool.query(
+        "select xmin::text as revision from push_devices where session_token=$1",
+        [b.token]
+      );
+      assert.equal((await request("/api/devices/push","DELETE",b.token)).status,204);
+      assert.equal((await request("/api/devices/push","POST",b.token,{
+        platform:"android",token:pushToken
+      })).status,200);
+      const replacementVersion=await pushPool.query(
+        "select xmin::text as revision from push_devices where session_token=$1",
+        [b.token]
+      );
+      assert.notEqual(replacementVersion.rows[0].revision,originalVersion.rows[0].revision);
+      finishOldSend();
+      await delayedInvalid;
+      const reOpted=await pushPool.query(
+        "select 1 from push_devices where session_token=$1 and fcm_token=$2",
+        [b.token,pushToken]
+      );
+      assert.equal(reOpted.rowCount,1,
+        "Late invalid-token result cannot undo a new opt-in on the same phone");
+
       // Four timed-out leases must not generate a fifth provider send or
       // remain pending indefinitely when a serverless worker crashes.
       const exhaustedMessage=await request("/api/messages","POST",c.token,{
