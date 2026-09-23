@@ -39,11 +39,81 @@ export const postgresStore = {
   },
   async searchUsers(me,q) {
     const term="%"+q+"%";
-    const r=await dbQuery("select * from users where id<>$1 and ($2='' or username ilike $3 or display_name ilike $3) order by display_name limit 50",[me,q,term]);
+    const r=await dbQuery(`select u.* from users u where u.id<>$1
+      and ($2='' or u.username ilike $3 or u.display_name ilike $3)
+      and not exists (
+        select 1 from user_blocks b where
+        (b.blocker_id=$1 and b.blocked_id=u.id) or
+        (b.blocker_id=u.id and b.blocked_id=$1)
+      ) order by u.display_name limit 50`,[me,q,term]);
     return r.rows.map(mapUser);
   },
   async userExists(id) { const r=await dbQuery("select 1 from users where id=$1",[id]); return r.rowCount>0; },
-  async conversations(me) { const r=await dbQuery(`select distinct on (x.peer_id) x.peer_id, u.username, u.display_name, x.text, x.created_at from (select case when m.sender_id=$1 then m.recipient_id else m.sender_id end peer_id,m.text,m.created_at from messages m where m.sender_id=$1 or m.recipient_id=$1) x join users u on u.id=x.peer_id order by x.peer_id,x.created_at desc`,[me]); return r.rows.map(x=>({peer:{id:x.peer_id,username:x.username,displayName:x.display_name},lastMessage:x.text,lastAt:x.created_at?.toISOString?.()||x.created_at})).sort((a,b)=>String(b.lastAt).localeCompare(String(a.lastAt))); },
+  async conversations(me) {
+    const r=await dbQuery(`
+      select latest.peer_id, u.username, u.display_name, latest.text, latest.created_at,
+        coalesce(unread.unread_count,0) as unread_count, coalesce(p.pinned,false) as pinned
+      from (
+        select distinct on (x.peer_id) x.peer_id, x.text, x.created_at
+        from (
+          select case when m.sender_id=$1 then m.recipient_id else m.sender_id end as peer_id,
+            m.text, m.created_at
+          from messages m where m.sender_id=$1 or m.recipient_id=$1
+        ) x
+        order by x.peer_id, x.created_at desc
+      ) latest
+      join users u on u.id=latest.peer_id
+      left join (
+        select sender_id as peer_id, count(*)::integer as unread_count
+        from messages where recipient_id=$1 and read_at is null
+        group by sender_id
+      ) unread on unread.peer_id=latest.peer_id
+      left join conversation_prefs p on p.owner_id=$1 and p.peer_id=latest.peer_id
+      order by coalesce(p.pinned,false) desc, latest.created_at desc, latest.peer_id
+    `,[me]);
+    return r.rows.map(x=>({
+      peer:{id:x.peer_id,username:x.username,displayName:x.display_name},
+      lastMessage:x.text,
+      lastAt:x.created_at?.toISOString?.()||x.created_at,
+      unreadCount:x.unread_count,
+      pinned:x.pinned
+    }));
+  },
+  async setPinned(me,peer,pinned) {
+    const conversation=await dbQuery(
+      "select 1 from messages where (sender_id=$1 and recipient_id=$2) or (sender_id=$2 and recipient_id=$1) limit 1",
+      [me,peer]
+    );
+    if(conversation.rowCount===0)return false;
+    if(pinned)await dbQuery(
+      "insert into conversation_prefs(owner_id,peer_id,pinned) values($1,$2,true) on conflict(owner_id,peer_id) do update set pinned=true",
+      [me,peer]
+    );
+    else await dbQuery("delete from conversation_prefs where owner_id=$1 and peer_id=$2",[me,peer]);
+    return true;
+  },
+  async blockedBetween(a,b) {
+    const r=await dbQuery(
+      "select 1 from user_blocks where (blocker_id=$1 and blocked_id=$2) or (blocker_id=$2 and blocked_id=$1) limit 1",
+      [a,b]
+    );
+    return r.rowCount>0;
+  },
+  async listBlocks(me) {
+    const r=await dbQuery(
+      "select u.* from user_blocks b join users u on u.id=b.blocked_id where b.blocker_id=$1 order by b.created_at desc",
+      [me]
+    );
+    return r.rows.map(mapUser);
+  },
+  async blockUser(me,peer) {
+    if(!await this.userExists(peer))return false;
+    await dbQuery("insert into user_blocks(blocker_id,blocked_id) values($1,$2) on conflict do nothing",[me,peer]);
+    return true;
+  },
+  async unblockUser(me,peer) {
+    await dbQuery("delete from user_blocks where blocker_id=$1 and blocked_id=$2",[me,peer]);
+  },
   async messages(me,peer) {
     const r=await dbQuery("select * from messages where (sender_id=$1 and recipient_id=$2) or (sender_id=$2 and recipient_id=$1) order by created_at",[me,peer]);
     return r.rows.map(mapMessage);
