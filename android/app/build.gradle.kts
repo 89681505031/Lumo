@@ -30,4 +30,6 @@ dependencies {
  implementation("androidx.compose.material3:material3")
  implementation("androidx.compose.ui:ui")
  implementation("com.squareup.okhttp3:okhttp:4.12.0")
+ // Draft-only WebRTC audio prototype, not available in the published Lumo app.
+ implementation("io.github.webrtc-sdk:android:150.7871.01")
 }

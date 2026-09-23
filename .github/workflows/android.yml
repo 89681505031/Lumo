@@ -33,6 +33,18 @@ jobs:
         env:
           LUMO_VERSION_CODE: ${{ github.run_number }}
         run: gradle assembleDebug
+      - name: Verify release manifest does not request staging microphone permissions
+        run: |
+          gradle processReleaseMainManifest
+          manifest="$(find app/build/intermediates -name AndroidManifest.xml -path '*/release/*' -print -quit)"
+          if [ -z "$manifest" ] || [ ! -f "$manifest" ]; then
+            echo "Could not locate merged release manifest"
+            exit 1
+          fi
+          if grep -Eq 'android.permission.(RECORD_AUDIO|MODIFY_AUDIO_SETTINGS)' "$manifest"; then
+            echo "A staging-only microphone permission leaked into the release variant"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: lumo-debug-apk

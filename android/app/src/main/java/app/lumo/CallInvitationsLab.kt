@@ -37,8 +37,8 @@ private fun callState(call: LumoCall): String = when (call.status) {
 }
 
 /**
- * A visible lab in debug builds only. No microphone/camera permission is
- * requested; the UI cannot claim that a voice/video connection exists.
+ * Debug-only lab: microphone requested only after an accepted AUDIO call and
+ * both participants opt in. Video and background calling remain unavailable.
  */
 @Composable
 fun CallInvitationsLab(token: String, me: User) {
@@ -50,6 +50,7 @@ fun CallInvitationsLab(token: String, me: User) {
     var errorText by remember(token) { mutableStateOf("") }
     var refresh by remember(token) { mutableIntStateOf(0) }
     var refreshPeople by remember(token) { mutableIntStateOf(0) }
+    var activeAudioId by remember(token) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(token, refresh) {
         while (true) {
@@ -104,8 +105,9 @@ fun CallInvitationsLab(token: String, me: User) {
             Column(Modifier.fillMaxWidth().padding(14.dp)) {
                 Text("Лаборатория звонков", fontWeight = FontWeight.Bold)
                 Text(
-                    "Только проверка приглашений. Звук, видео, микрофон, камера и " +
-                        "фоновые уведомления пока не работают.",
+                    "Тестовая передача аудио доступна только после принятия вызова, отдельного " +
+                        "согласия обоих участников и настройки приватного TURN. " +
+                        "Видеопередачи и фоновых звонков пока нет.",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
@@ -194,6 +196,19 @@ fun CallInvitationsLab(token: String, me: User) {
                                             enabled = busy == null
                                         ) { Text("Завершить") }
                                     }
+                                }
+                                if (call.kind == "audio" && call.status == "accepted") {
+                                    AudioPrototypeControls(
+                                        token = token, me = me, call = call,
+                                        activeAudioId = activeAudioId,
+                                        onStart = { id -> activeAudioId = id },
+                                        onStop = { id -> if (activeAudioId == id) activeAudioId = null }
+                                    )
+                                } else if (call.kind == "video" && call.status == "accepted") {
+                                    Text(
+                                        "Видеосоединение пока не реализовано.",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
                                 }
                             }
                         }

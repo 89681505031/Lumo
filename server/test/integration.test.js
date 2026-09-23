@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHmac } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import WebSocket from "ws";
@@ -19,7 +19,7 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
   await new Promise(resolve=>listener.close(resolve));
   const child=spawn(process.execPath,["src/index.js"],{
     cwd:process.cwd(),
-    env:{...process.env,PORT:String(port),DATABASE_URL:databaseUrl,DATABASE_SSL:"false",LUMO_CALL_SIGNALING_ENABLED:"true"},
+    env:{...process.env,PORT:String(port),DATABASE_URL:databaseUrl,DATABASE_SSL:"false",LUMO_CALL_SIGNALING_ENABLED:"true",LUMO_TURN_URLS:"turn:127.0.0.1:3478?transport=udp",LUMO_TURN_SECRET:"ci-only-test-turn-secret-longer-than-32-chars"},
     stdio:"ignore"
   });
   let socket;
@@ -43,7 +43,7 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     await new Promise(resolve=>listener2.close(resolve));
     replica=spawn(process.execPath,["src/index.js"],{
       cwd:process.cwd(),
-      env:{...process.env,PORT:String(otherPort),DATABASE_URL:databaseUrl,DATABASE_SSL:"false",LUMO_CALL_SIGNALING_ENABLED:"true"},
+      env:{...process.env,PORT:String(otherPort),DATABASE_URL:databaseUrl,DATABASE_SSL:"false",LUMO_CALL_SIGNALING_ENABLED:"true",LUMO_TURN_URLS:"turn:127.0.0.1:3478?transport=udp",LUMO_TURN_SECRET:"ci-only-test-turn-secret-longer-than-32-chars"},
       stdio:"ignore"
     });
     const otherBase=`http://127.0.0.1:${otherPort}`;
@@ -100,11 +100,28 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     const incoming=await request("/api/calls","GET",b.token,null,otherBase);
     assert.equal(incoming.status,200);
     assert.equal(incoming.json.find(x=>x.id===callId).status,"ringing");
+    const prematureIce=await request("/api/calls/"+callId+"/ice-config","GET",a.token);
+    assert.equal(prematureIce.status,409,"No ICE configuration before acceptance");
+    const outsiderIce=await request("/api/calls/"+callId+"/ice-config","GET",c.token,null,otherBase);
+    assert.equal(outsiderIce.status,404,"Outsiders must not fetch TURN credentials");
     const cannotSelfAccept=await request("/api/calls/"+callId+"/respond","POST",a.token,{action:"accept"});
     assert.equal(cannotSelfAccept.status,403);
     const callAccepted=await request("/api/calls/"+callId+"/respond","POST",b.token,{action:"accept"},otherBase);
     assert.equal(callAccepted.status,200);
     assert.equal(callAccepted.json.status,"accepted");
+    const aliceIce=await request("/api/calls/"+callId+"/ice-config","GET",a.token,null,otherBase);
+    assert.equal(aliceIce.status,200);
+    assert.deepEqual(aliceIce.json.iceServers[0].urls,["turn:127.0.0.1:3478?transport=udp"]);
+    assert.ok(aliceIce.json.iceServers[0].username.endsWith(":"+a.user.id+":"+callId));
+    assert.equal(aliceIce.json.iceServers[0].credential,
+      createHmac("sha1","ci-only-test-turn-secret-longer-than-32-chars")
+        .update(aliceIce.json.iceServers[0].username).digest("base64"));
+    assert.equal(aliceIce.json.iceServers[0].credential.length>20,true);
+    assert.equal(aliceIce.json.iceServers[0].username.includes("ci-only-test-turn"),false);
+    const bobIce=await request("/api/calls/"+callId+"/ice-config","GET",b.token);
+    assert.equal(bobIce.status,200);
+    assert.notEqual(aliceIce.json.iceServers[0].username,bobIce.json.iceServers[0].username);
+
     const offer={clientSignalId:randomUUID(),type:"offer",payload:{sdp:"v=0\\r\\n"}};
     const wrongRole=await request("/api/calls/"+callId+"/signals","POST",b.token,offer,otherBase);
     assert.equal(wrongRole.status,403);
@@ -134,6 +151,9 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(aliceSignals.json.signals[0].seq,2);
     const ended=await request("/api/calls/"+callId+"/respond","POST",a.token,{action:"end"});
     assert.equal(ended.status,200);
+    const endedIce=await request("/api/calls/"+callId+"/ice-config","GET",b.token);
+    assert.equal(endedIce.status,409);
+
     const endSeen=await request("/api/calls","GET",b.token,null,otherBase);
     assert.equal(endSeen.json.find(x=>x.id===callId).status,"ended");
     const lateSignal=await request("/api/calls/"+callId+"/signals","POST",a.token,{

@@ -1,5 +1,5 @@
 import express from "express";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHmac } from "node:crypto";
 import { pool } from "./db.js";
 
 // Signaling only: no media transport, TURN, push wakeup, or production call UI.
@@ -147,6 +147,33 @@ export function callRouter(auth) {
       return {status:200,body:publicCall(r.rows[0])};
     });
     send(res,result);
+  }));
+
+  // Coturn REST credentials are derived per accepted call, never committed to the
+  // Android app. The developer must supply a private production TURN service.
+  router.get("/:id/ice-config", guard(async (req,res) => {
+    if (!uuid.test(req.params.id))
+      return res.status(400).json({error:"invalid_call_id"});
+    const call = await participant(pool,req.params.id,req.user.id);
+    if (!call) return res.status(404).json({error:"call_not_found"});
+    if (call.status !== "accepted" || call.timed_out)
+      return res.status(409).json({error:"call_inactive"});
+    if (await blocked(pool,call.caller_id,call.callee_id))
+      return res.status(403).json({error:"user_blocked"});
+    const secret = process.env.LUMO_TURN_SECRET || "";
+    const raw = process.env.LUMO_TURN_URLS || "";
+    const urls = raw.split(",").map(v=>v.trim()).filter(Boolean);
+    // Fail closed: never hand out unusable or arbitrary ICE URLs.
+    if (secret.length < 32 || urls.length < 1 || urls.length > 3 ||
+        urls.some(v=>!/^turns?:[a-zA-Z0-9.-]+(?::[0-9]{1,5})?(?:[?]transport=(?:udp|tcp))?$/.test(v)))
+      return res.status(503).json({error:"turn_unavailable"});
+    // 35-minute upper bound covers an accepted 30-minute lab call.
+    const remaining = Math.max(1,Math.ceil((new Date(call.expires_at).getTime()-Date.now())/1000));
+    const expiry = Math.floor(Date.now()/1000)+Math.min(remaining+30,35*60);
+    const username = expiry+":"+req.user.id+":"+call.id;
+    const credential = createHmac("sha1",secret).update(username).digest("base64");
+    res.set("Cache-Control","private, no-store");
+    res.json({ iceServers:[{urls,username,credential}], expiresAt:new Date(expiry*1000).toISOString() });
   }));
 
   // Stable per-call sequence number: row lock commits each signal before a later
