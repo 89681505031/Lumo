@@ -128,7 +128,8 @@ function sendTo(userId, payload) {
 
 wss.on("connection", async (ws, req) => {
   const url = new URL(req.url, "http://localhost");
-  const token = url.searchParams.get("token");
+  const authorization = req.headers.authorization || "";
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : url.searchParams.get("token");
   let userId;
   try {
     const dbUser = hasDatabase ? await postgresStore.userBySession(token) : null;
