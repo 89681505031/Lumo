@@ -16,7 +16,7 @@ Lumo is a modern messaging application.
 - `android/` — Android client
 
 ## Automated checks
-The server workflow runs syntax checks, smoke tests without a database, and integration tests against an ephemeral PostgreSQL service in GitHub Actions. The CI database is separate from production; successful CI does not configure Vercel's `DATABASE_URL`.
+The server workflow runs syntax checks, smoke tests without a database, and integration tests against an ephemeral PostgreSQL service in GitHub Actions. The integration suite starts two independent server processes sharing the same database to verify cross-instance delivery, read receipts, and session revocation. The CI database is separate from production; successful CI does not configure Vercel's `DATABASE_URL`.
 
 ## Run backend
 Requires Node.js 20+.
@@ -42,6 +42,6 @@ To finish the Vercel database setup:
 3. Redeploy the production deployment so the new environment variable is loaded. The server attempts to create its tables and indexes on startup.
 4. Check `/live` for process liveness (HTTP 200) and `/health` for database readiness (HTTP 200 with `database.ok: true`). If `/health` returns 503, inspect Vercel runtime logs without posting credentials.
 
-**Realtime note:** Vercel WebSockets are available in beta with Fluid Compute, but each connection is pinned to a single function instance. Lumo's in-memory socket registry cannot immediately forward events to another instance. While a chat is open, Android therefore reconciles message history and receipts every five seconds through PostgreSQL-backed HTTP, and sends queued messages over HTTP if WebSocket is disconnected. This fallback is not background push; production-grade cross-instance realtime messaging still requires shared pub/sub (for example, Redis) and deployment testing. See https://vercel.com/docs/functions/websockets.
+**Realtime note:** Vercel WebSockets are available in beta with Fluid Compute, but each connection is pinned to a single function instance. Lumo's in-memory socket registry cannot immediately forward events to another instance. While a chat is open, Android therefore reconciles message history and receipts every five seconds through PostgreSQL-backed HTTP, and retries any message without server acknowledgement over idempotent HTTP even if WebSocket still appears connected. The conversation shows outgoing messages while their acknowledgement is pending. This fallback is not background push; production-grade cross-instance realtime messaging still requires shared pub/sub (for example, Redis) and deployment testing. See https://vercel.com/docs/functions/websockets.
 
 > Password login is an MVP foundation, not a completed security audit. Password reset/recovery, distributed login abuse protection, session lifecycle management, end-to-end encryption and deployment-scale realtime tests are still required before public launch. Do not use this build for sensitive private conversations.
