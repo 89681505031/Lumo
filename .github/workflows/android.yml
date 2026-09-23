@@ -47,6 +47,11 @@ jobs:
             echo "Experimental FCM service/permission leaked into production"
             exit 1
           fi
+          if gradle :app:dependencies --configuration releaseRuntimeClasspath |
+             grep -Eq '(com.google.firebase:firebase-messaging|androidx.work:work-runtime)'; then
+            echo "Experimental Firebase/WorkManager runtime leaked into release"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: lumo-debug-apk

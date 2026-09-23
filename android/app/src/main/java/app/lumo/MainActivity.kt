@@ -50,7 +50,7 @@ private fun nullableJsonText(o:JSONObject,key:String):String=if(o.isNull(key))""
 class SessionExpiredException:Exception("Сессия недействительна")
 
 class MainActivity:ComponentActivity(){
- override fun onCreate(b:Bundle?){super.onCreate(b);setContent{App()}}
+ override fun onCreate(b:Bundle?){super.onCreate(b);PushLifecycle.onAppStart(this);setContent{App()}}
 }
 
 @Composable fun App(){

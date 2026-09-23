@@ -9,6 +9,8 @@ import androidx.compose.runtime.Composable
 fun PushSettings(session: String, me: User) = Unit
 
 internal object PushLifecycle {
+    fun onAppStart(context: Context) = Unit
+
     fun forgetOnLogout(context: Context) {
         PushOptState.clear(context)
     }
