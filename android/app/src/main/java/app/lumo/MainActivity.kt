@@ -96,9 +96,9 @@ class MainActivity:ComponentActivity(){
  LumoBackdrop(Modifier.fillMaxSize()){Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center){
   Box(Modifier.fillMaxWidth().height(108.dp),contentAlignment=Alignment.Center){Box(Modifier.size(88.dp).clip(RoundedCornerShape(30.dp)).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text("✦",style=MaterialTheme.typography.displayLarge,color=Color.White)}}
   Spacer(Modifier.height(18.dp))
-  Text("Lumo",style=MaterialTheme.typography.displayLarge,fontWeight=FontWeight.Bold)
+  Text("Lumo",style=MaterialTheme.typography.displayLarge,fontWeight=FontWeight.Bold,color=Color.White)
   Spacer(Modifier.height(8.dp))
-  Text(if(loginMode)"С возвращением" else "Ближе к важным людям",style=MaterialTheme.typography.titleMedium)
+  Text(if(loginMode)"С возвращением" else "Ближе к важным людям",style=MaterialTheme.typography.titleMedium,color=Color.White.copy(alpha=.92f))
   Spacer(Modifier.height(28.dp))
   Column(Modifier.fillMaxWidth().lumoGlass(30).padding(20.dp)){
   if(!loginMode){
@@ -136,7 +136,7 @@ class MainActivity:ComponentActivity(){
  var tab by remember{mutableIntStateOf(0)}
  LumoBackdrop(Modifier.fillMaxSize()){Scaffold(containerColor=Color.Transparent,
   topBar={Surface(color=Color.Transparent,shadowElevation=0.dp){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(20.dp,14.dp),verticalAlignment=Alignment.CenterVertically){
-   Text("Lumo",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);Spacer(Modifier.weight(1f));Box(Modifier.lumoGlass(18).padding(horizontal=12.dp,vertical=8.dp)){Text(me.displayName,style=MaterialTheme.typography.labelLarge)}
+   Text("Lumo",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White);Spacer(Modifier.weight(1f));Box(Modifier.lumoGlass(18).padding(horizontal=12.dp,vertical=8.dp)){Text(me.displayName,style=MaterialTheme.typography.labelLarge,color=Color.White)}
   }}},
   bottomBar={Box(Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=8.dp).lumoGlass(30)){NavigationBar(containerColor=Color.Transparent){
    NavigationBarItem(selected=tab==0,onClick={tab=0},icon={Text("◉")},label={Text("Чаты")})
@@ -191,7 +191,7 @@ class MainActivity:ComponentActivity(){
    items(chats.filter{it.peer.displayName.contains(chatQuery,true)||it.peer.username.contains(chatQuery,true)},key={it.peer.id}){chat->
     Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(20).clickable{open(chat.peer)}.padding(14.dp),verticalAlignment=Alignment.CenterVertically){
      Box(Modifier.size(56.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(chat.peer.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleLarge)}
-     Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(chat.peer.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium);Row(verticalAlignment=Alignment.CenterVertically){Text(chat.lastMessage,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f));if(chat.lastAt.isNotBlank()){Spacer(Modifier.width(8.dp));Text(formatMessageTime(chat.lastAt),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
+     Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(chat.peer.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium,color=Color.White);Row(verticalAlignment=Alignment.CenterVertically){Text(chat.lastMessage,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f));if(chat.lastAt.isNotBlank()){Spacer(Modifier.width(8.dp));Text(formatMessageTime(chat.lastAt),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
     }
    }
    }
@@ -211,7 +211,7 @@ class MainActivity:ComponentActivity(){
    items(users,key={it.id}){u->
     Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(20).clickable{open(u)}.padding(14.dp),verticalAlignment=Alignment.CenterVertically){
      Box(Modifier.size(52.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(u.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleLarge)}
-     Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(u.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium);Text("@"+u.username,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+     Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(u.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium,color=Color.White);Text("@"+u.username,color=MaterialTheme.colorScheme.onSurfaceVariant)}
      Text("›",style=MaterialTheme.typography.headlineSmall)
     }
    }
@@ -229,16 +229,16 @@ class MainActivity:ComponentActivity(){
  LaunchedEffect(Unit){runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.latestRelease()}}.onSuccess{info->update=info.takeIf{it.versionCode>BuildConfig.VERSION_CODE};updateText=if(update!=null)"Доступна новая версия Lumo" else "Установлена последняя версия"}.onFailure{updateText="Не удалось проверить обновления"};checking=false}
  Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
   Spacer(Modifier.height(24.dp));Box(Modifier.size(92.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(me.displayName.take(1).uppercase(),style=MaterialTheme.typography.displaySmall,fontWeight=FontWeight.Bold)}
-  Spacer(Modifier.height(16.dp));Text(me.displayName,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text("@"+me.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
+  Spacer(Modifier.height(16.dp));Text(me.displayName,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,color=Color.White);Text("@"+me.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
   Spacer(Modifier.height(20.dp));Card(Modifier.fillMaxWidth().lumoGlass(),colors=CardDefaults.cardColors(containerColor=Color(0x337F96CC),contentColor=Color.White)){Column(Modifier.padding(18.dp)){
-   Text("Профиль",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(8.dp))
+   Text("Профиль",fontWeight=FontWeight.SemiBold,color=Color.White);Spacer(Modifier.height(8.dp))
    if(editing){
     OutlinedTextField(name,{name=it;profileError=""},label={Text("Имя")},singleLine=true,modifier=Modifier.fillMaxWidth())
     if(profileError.isNotEmpty())Text(profileError,color=MaterialTheme.colorScheme.error)
     Spacer(Modifier.height(10.dp));Row{Button({saving=true;scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.updateMe(token,name)}}.onSuccess{profileChanged(it);editing=false}.onFailure{profileError="Не удалось сохранить"};saving=false}},enabled=!saving&&name.isNotBlank()){Text(if(saving)"Сохраняем…" else "Сохранить")};Spacer(Modifier.width(8.dp));TextButton({name=me.displayName;editing=false}){Text("Отмена")}}
    }else Button({editing=true},modifier=Modifier.fillMaxWidth()){Text("Редактировать профиль")}
   }}
-  Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth().lumoGlass(),colors=CardDefaults.cardColors(containerColor=Color(0x447F96CC))){Column(Modifier.padding(18.dp)){Text("Обновление",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text(updateText);Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(checking)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp));if(progress>=0){Spacer(Modifier.height(12.dp));LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth());Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp))};update?.let{u->if(progress<0){Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl){p->scope.launch{progress=p;updateText=if(p<0)"Не удалось загрузить обновление" else if(p<100)"Загружаем обновление…" else "Устанавливаем обновление…"}}},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}}}}
+  Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth().lumoGlass(),colors=CardDefaults.cardColors(containerColor=Color(0x447F96CC))){Column(Modifier.padding(18.dp)){Text("Обновление",fontWeight=FontWeight.SemiBold,color=Color.White);Spacer(Modifier.height(6.dp));Text(updateText);Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(checking)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp));if(progress>=0){Spacer(Modifier.height(12.dp));LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth());Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp))};update?.let{u->if(progress<0){Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl){p->scope.launch{progress=p;updateText=if(p<0)"Не удалось загрузить обновление" else if(p<100)"Загружаем обновление…" else "Устанавливаем обновление…"}}},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}}}}
   Spacer(Modifier.height(14.dp))
   OutlinedButton(onClick={
    loggingOut=true;logoutError=""
