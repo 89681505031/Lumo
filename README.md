@@ -36,12 +36,14 @@ Registration requires `POST /api/register` with `username`, `displayName`, and `
 ## Deployment
 The current backend deployment target is Vercel. Keep Vercel as the application hosting platform unless the project owner explicitly changes this decision. PostgreSQL is required for persistent users, sessions, and messages. The production registration endpoint intentionally returns HTTP 503 until the database is configured.
 
-To finish the Vercel database setup:
-1. Provision a PostgreSQL database using a provider of your choice. Do not commit its connection string or passwords to GitHub.
-2. In the Vercel project **lumo**, add `DATABASE_URL` to the **Production** environment variables using the provider's connection string. Configure TLS according to the provider's requirements; `server/src/db.js` currently enables TLS by default, and `DATABASE_SSL=false` disables it for local development only.
-3. Redeploy the production deployment so the new environment variable is loaded. The server attempts to create its tables and indexes on startup.
-4. Check `/live` for process liveness (HTTP 200) and `/health` for database readiness (HTTP 200 with `database.ok: true`). If `/health` returns 503, inspect Vercel runtime logs without posting credentials.
+To finish the Vercel database setup with the existing Neon project:
+1. Open the Neon project, select its intended production branch, and choose **Connect**. Copy a **pooled PostgreSQL connection string**, suitable for serverless functions. Never put this URL, its password, or database credentials in GitHub commits or chat.
+2. In the Neon **SQL Editor** on that same branch and database, execute [`server/db/schema.sql`](server/db/schema.sql) once. The CI integration suite reruns this script twice against PostgreSQL to check that repeat execution is safe.
+3. In the Vercel project **lumo**, add **`DATABASE_URL`** as a sensitive **Production** environment variable, using the pooled connection string. Leave TLS enabled and certificate verification on; `DATABASE_SSL=false` is only for local development. Verify the database role has permission to create the tables and indexes.
+4. Redeploy **lumo** in Vercel, so the function starts with the new environment variable. The backend also attempts to initialize its schema on startup.
+5. Check `/live` (HTTP 200 means the process responds) and `/health` (HTTP 200 with `database.ok: true` means the database and schema are ready). If `/health` remains HTTP 503, check environment variable scope, branch/database selection, role privileges, TLS settings and Vercel runtime logs without sharing credentials.
 
+Do not proceed to a public launch until live message delivery and authentication have been tested on the production deployment.
 **Realtime note:** Vercel WebSockets are available in beta with Fluid Compute, but each connection is pinned to a single function instance. Lumo's in-memory socket registry cannot immediately forward events to another instance. While a chat is open, Android therefore reconciles message history and receipts every five seconds through PostgreSQL-backed HTTP, and retries any message without server acknowledgement over idempotent HTTP even if WebSocket still appears connected. The conversation shows outgoing messages while their acknowledgement is pending. This fallback is not background push; production-grade cross-instance realtime messaging still requires shared pub/sub (for example, Redis) and deployment testing. See https://vercel.com/docs/functions/websockets.
 
 > Password login is an MVP foundation, not a completed security audit. Password reset/recovery, distributed login abuse protection, session lifecycle management, end-to-end encryption and deployment-scale realtime tests are still required before public launch. Do not use this build for sensitive private conversations.
