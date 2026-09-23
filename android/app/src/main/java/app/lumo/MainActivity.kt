@@ -159,6 +159,8 @@ class MainActivity:ComponentActivity(){
  var loadError by remember{mutableStateOf(false)}
  var refreshError by remember{mutableStateOf(false)}
  var retry by remember{mutableIntStateOf(0)}
+ var actionError by remember{mutableStateOf("")}
+ val scope=rememberCoroutineScope()
  LaunchedEffect(token,retry){
   loading=true;loadError=false;refreshError=false;chats=emptyList()
   while(true){
@@ -179,15 +181,35 @@ class MainActivity:ComponentActivity(){
   }
  } else {
   Column(Modifier.fillMaxSize()){
+    if(actionError.isNotEmpty())Text(actionError,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(8.dp))
    if(refreshError){
     Text("Нет связи. Показываем последнюю загруженную историю чатов.",
      color=MaterialTheme.colorScheme.error,modifier=Modifier.fillMaxWidth().padding(12.dp))
    }
    LazyColumn(Modifier.fillMaxSize()){
    items(chats,key={it.peer.id}){chat->
-    Row(Modifier.fillMaxWidth().clickable{open(chat.peer)}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){
+    Row(Modifier.fillMaxWidth().clickable{open(chat.peer)}.padding(12.dp),verticalAlignment=Alignment.CenterVertically){
      Box(Modifier.size(56.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(chat.peer.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleLarge)}
-     Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(chat.peer.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium);Row(verticalAlignment=Alignment.CenterVertically){Text(chat.lastMessage,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f));if(chat.lastAt.isNotBlank()){Spacer(Modifier.width(8.dp));Text(formatMessageTime(chat.lastAt),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
+     Spacer(Modifier.width(12.dp))
+     Column(Modifier.weight(1f)){
+      Row(verticalAlignment=Alignment.CenterVertically){
+       Text(chat.peer.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium,modifier=Modifier.weight(1f))
+       if(chat.unreadCount>0)Badge{Text(chat.unreadCount.coerceAtMost(99).toString())}
+      }
+      Row(verticalAlignment=Alignment.CenterVertically){
+       Text(chat.lastMessage,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f))
+       if(chat.lastAt.isNotBlank())Text(formatMessageTime(chat.lastAt),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+     }
+     TextButton(onClick={
+      actionError=""
+      scope.launch{
+       runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.pin(token,chat.peer.id,!chat.pinned)}}
+        .onSuccess{newValue->chats=chats.map{if(it.peer.id==chat.peer.id)it.copy(pinned=newValue)else it}
+         .sortedWith(compareByDescending<Conversation>{it.pinned}.thenByDescending{it.lastAt})}
+        .onFailure{actionError="Не удалось изменить закрепление"}
+      }
+     }){Text(if(chat.pinned)"📌" else "☆")}
     };HorizontalDivider()
    }
    }
