@@ -3,7 +3,7 @@
 Lumo is a modern messaging application.
 
 ## MVP
-- Basic user registration (secure login is not implemented yet)
+- Account registration and username/password login (scrypt password hashes)
 - User profiles
 - One-to-one conversations
 - Real-time messaging over WebSocket
@@ -29,6 +29,10 @@ npm run dev
 
 Server defaults to http://localhost:3000.
 
+## Account API
+Registration requires `POST /api/register` with `username`, `displayName`, and `password`. Passwords must be 10–128 characters (maximum 256 UTF-8 bytes); the database stores salted scrypt hashes, never plaintext passwords. Returning users can call `POST /api/login` with `username` and `password` to receive a fresh session token. Android offers both account creation and sign-in. Legacy accounts without a password hash cannot sign in with a password; an account-recovery or migration flow is still needed.
+
+
 ## Deployment
 The current backend deployment target is Vercel. Keep Vercel as the application hosting platform unless the project owner explicitly changes this decision. PostgreSQL is required for persistent users, sessions, and messages. The production registration endpoint intentionally returns HTTP 503 until the database is configured.
 
@@ -40,4 +44,4 @@ To finish the Vercel database setup:
 
 **Realtime note:** Vercel WebSockets are available in beta with Fluid Compute, but each connection is pinned to a single function instance. Lumo's in-memory socket registry cannot immediately forward events to another instance. While a chat is open, Android therefore reconciles message history and receipts every five seconds through PostgreSQL-backed HTTP, and sends queued messages over HTTP if WebSocket is disconnected. This fallback is not background push; production-grade cross-instance realtime messaging still requires shared pub/sub (for example, Redis) and deployment testing. See https://vercel.com/docs/functions/websockets.
 
-> The current registration returns a session token but has no secure login or account recovery. Do not use this build for real private conversations or public launch until authentication, realtime hosting compatibility, and security have been validated.
+> Password login is an MVP foundation, not a completed security audit. Password reset/recovery, distributed login abuse protection, session lifecycle management, end-to-end encryption and deployment-scale realtime tests are still required before public launch. Do not use this build for sensitive private conversations.
