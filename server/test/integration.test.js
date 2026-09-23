@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import WebSocket from "ws";
+import pg from "pg";
 
 const databaseUrl=process.env.LUMO_TEST_DATABASE_URL;
 
@@ -105,6 +106,30 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     const otherSession=await request("/api/me","GET",relogin.json.token);
     assert.equal(otherSession.status,200);
     assert.equal(otherSession.json.id,a.user.id);
+    const expiringWs=new WebSocket(`ws://127.0.0.1:${port}/ws`,{
+      headers:{Authorization:"Bearer "+relogin.json.token}
+    });
+    const accepted=await new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>reject(new Error("Valid login WebSocket not accepted")),3000);
+      expiringWs.once("message",data=>{clearTimeout(timer);resolve(JSON.parse(data.toString()));});
+      expiringWs.once("error",error=>{clearTimeout(timer);reject(error);});
+    });
+    assert.equal(accepted.type,"ready");
+    const pool=new pg.Pool({connectionString:databaseUrl,ssl:false});
+    try {
+      await pool.query("update sessions set expires_at=now()-interval '1 second' where token=$1",[relogin.json.token]);
+    } finally {
+      await pool.end();
+    }
+    const expired=await request("/api/me","GET",relogin.json.token);
+    assert.equal(expired.status,401);
+    const expiredSocketClose=new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{expiringWs.terminate();reject(new Error("Expired WebSocket stayed active"));},3000);
+      expiringWs.once("close",code=>{clearTimeout(timer);resolve(code);});
+      expiringWs.once("error",error=>{clearTimeout(timer);reject(error);});
+    });
+    expiringWs.send(JSON.stringify({type:"read",ids:[]}));
+    assert.equal(await expiredSocketClose,1008);
   }finally{
     socket?.terminate();
     child.kill();
