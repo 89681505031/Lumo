@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import WebSocket from "ws";
 import pg from "pg";
+import { readFile } from "node:fs/promises";
 
 const databaseUrl=process.env.LUMO_TEST_DATABASE_URL;
 
@@ -56,6 +57,15 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
       await new Promise(resolve=>setTimeout(resolve,100));
     }
     assert.ok(replicaHealthy,"Second server did not share the ready database");
+    // The SQL Editor deployment path must also be safe against an existing schema.
+    const schema=await readFile(new URL("../db/schema.sql",import.meta.url),"utf8");
+    const schemaPool=new pg.Pool({connectionString:databaseUrl,ssl:false});
+    try{
+      await schemaPool.query(schema);
+      await schemaPool.query(schema);
+    }finally{
+      await schemaPool.end();
+    }
     async function request(path,method="GET",token=null,body=null,origin=base){
       const r=await fetch(origin+path,{
         method,
