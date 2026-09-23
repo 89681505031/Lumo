@@ -49,3 +49,21 @@ create table if not exists user_blocks (
   constraint no_self_block check (blocker_id<>blocked_id)
 );
 create index if not exists user_blocks_blocked_idx on user_blocks(blocked_id,blocker_id);
+
+-- Upload metadata never stores media bytes. Private S3 objects remain inaccessible
+-- except through short-lived signed upload/download URLs.
+create table if not exists media_assets (
+  id uuid primary key,
+  owner_id uuid not null references users(id) on delete cascade,
+  recipient_id uuid not null references users(id) on delete cascade,
+  object_key text not null unique,
+  mime varchar(80) not null,
+  file_name varchar(80) not null,
+  byte_length integer not null check(byte_length>0 and byte_length<=26214400),
+  expires_at timestamptz not null default (now() + interval '1 day'),
+  created_at timestamptz not null default now(),
+  uploaded_at timestamptz,
+  claimed_message_id uuid unique
+);
+create index if not exists media_assets_owner_idx on media_assets(owner_id,created_at desc);
+alter table messages add column if not exists media_id uuid references media_assets(id);
