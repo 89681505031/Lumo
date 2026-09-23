@@ -15,6 +15,8 @@ import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -314,44 +316,169 @@ class MainActivity:ComponentActivity(){
 @Composable fun Profile(token:String,me:User,profileChanged:(User)->Unit,logout:()->Unit){
  val context=LocalContext.current
  val scope=rememberCoroutineScope()
- var editing by remember{mutableStateOf(false)};var name by remember(me.displayName){mutableStateOf(me.displayName)};var saving by remember{mutableStateOf(false)};var profileError by remember{mutableStateOf("")}
+ val profilePrefs=remember{context.getSharedPreferences("lumo_local_profile",Context.MODE_PRIVATE)}
+ var editing by remember{mutableStateOf(false)}
+ var name by remember(me.displayName){mutableStateOf(me.displayName)}
+ var bio by remember(me.id){mutableStateOf(profilePrefs.getString("bio_"+me.id,"")?:"")}
+ var saving by remember{mutableStateOf(false)}
+ var profileError by remember{mutableStateOf("")}
  var loggingOut by remember{mutableStateOf(false)}
  var logoutError by remember{mutableStateOf("")}
- var update by remember{mutableStateOf<UpdateInfo?>(null)};var checking by remember{mutableStateOf(true)};var updateText by remember{mutableStateOf("Проверяем обновления…")};var progress by remember{mutableIntStateOf(-1)}
- LaunchedEffect(Unit){runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.latestRelease()}}.onSuccess{info->update=info.takeIf{it.versionCode>BuildConfig.VERSION_CODE};updateText=if(update!=null)"Доступна новая версия Lumo" else "Установлена последняя версия"}.onFailure{updateText="Не удалось проверить обновления"};checking=false}
- Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
-  Spacer(Modifier.height(24.dp));Box(Modifier.size(92.dp).clip(CircleShape).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text(me.displayName.take(1).uppercase(),style=MaterialTheme.typography.displaySmall,fontWeight=FontWeight.Bold)}
-  Spacer(Modifier.height(16.dp));Text(me.displayName,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,color=Color.White);Text("@"+me.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
-  Spacer(Modifier.height(20.dp));Card(Modifier.fillMaxWidth().lumoGlass(),colors=CardDefaults.cardColors(containerColor=Color(0x337F96CC),contentColor=Color.White)){Column(Modifier.padding(18.dp)){
-   Text("Профиль",fontWeight=FontWeight.SemiBold,color=Color.White);Spacer(Modifier.height(8.dp))
-   if(editing){
-    OutlinedTextField(name,{name=it;profileError=""},label={Text("Имя")},singleLine=true,modifier=Modifier.fillMaxWidth())
-    if(profileError.isNotEmpty())Text(profileError,color=MaterialTheme.colorScheme.error)
-    Spacer(Modifier.height(10.dp));Row{Button({saving=true;scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.updateMe(token,name)}}.onSuccess{profileChanged(it);editing=false}.onFailure{profileError="Не удалось сохранить"};saving=false}},enabled=!saving&&name.isNotBlank()){Text(if(saving)"Сохраняем…" else "Сохранить")};Spacer(Modifier.width(8.dp));TextButton({name=me.displayName;editing=false}){Text("Отмена")}}
-   }else Button({editing=true},modifier=Modifier.fillMaxWidth()){Text("Редактировать профиль")}
-  }}
-  Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth().lumoGlass(),colors=CardDefaults.cardColors(containerColor=Color(0x447F96CC))){Column(Modifier.padding(18.dp)){Text("Обновление",fontWeight=FontWeight.SemiBold,color=Color.White);Spacer(Modifier.height(6.dp));Text(updateText);Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(checking)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp));if(progress>=0){Spacer(Modifier.height(12.dp));LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth());Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp))};update?.let{u->if(progress<0){Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl){p->scope.launch{progress=p;updateText=if(p<0)"Не удалось загрузить обновление" else if(p<100)"Загружаем обновление…" else "Устанавливаем обновление…"}}},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}}}}
+ var update by remember{mutableStateOf<UpdateInfo?>(null)}
+ var checking by remember{mutableStateOf(true)}
+ var updateText by remember{mutableStateOf("Проверяем обновления…")}
+ var progress by remember{mutableIntStateOf(-1)}
+ LaunchedEffect(Unit){
+  runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.latestRelease()}}
+   .onSuccess{info->
+    update=info.takeIf{it.versionCode>BuildConfig.VERSION_CODE}
+    updateText=if(update!=null)"Доступна новая версия Lumo" else "Установлена последняя версия"
+   }.onFailure{updateText="Не удалось проверить обновления"}
+  checking=false
+ }
+ Column(
+  Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+   .padding(horizontal=18.dp,vertical=12.dp),
+  horizontalAlignment=Alignment.CenterHorizontally
+ ){
+  Spacer(Modifier.height(6.dp))
+  LumoNeonAvatar(me.displayName,size=122.dp)
   Spacer(Modifier.height(14.dp))
-  OutlinedButton(onClick={
-   loggingOut=true;logoutError=""
-   scope.launch{
-    runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.logout(token)}}
-     .onSuccess{logout()}
-     .onFailure{error->
-      if(error is SessionExpiredException)logout()
-      else logoutError="Не удалось завершить сессию на сервере. Попробуйте ещё раз."
+  Text(me.displayName,style=MaterialTheme.typography.headlineMedium,
+   fontWeight=FontWeight.Bold,color=Color.White)
+  Text("@"+me.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
+  Spacer(Modifier.height(24.dp))
+
+  Column(Modifier.fillMaxWidth().lumoGlass(26).padding(17.dp)){
+   Text(
+    if(editing)"Редактирование профиля" else "Профиль",
+    style=MaterialTheme.typography.titleLarge,
+    fontWeight=FontWeight.Bold,color=Color.White
+   )
+   Spacer(Modifier.height(13.dp))
+   if(editing){
+    OutlinedTextField(
+     name,{name=it;profileError=""},label={Text("Имя")},
+     shape=RoundedCornerShape(20.dp),singleLine=true,modifier=Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(10.dp))
+    OutlinedTextField(
+     "@"+me.username,{},label={Text("Логин")},readOnly=true,
+     shape=RoundedCornerShape(20.dp),singleLine=true,modifier=Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(10.dp))
+    OutlinedTextField(
+     bio,{bio=it.take(160)},label={Text("О себе")},
+     shape=RoundedCornerShape(20.dp),maxLines=3,modifier=Modifier.fillMaxWidth()
+    )
+    Text("Описание пока хранится только на этом устройстве.",
+     color=MaterialTheme.colorScheme.onSurfaceVariant,
+     style=MaterialTheme.typography.bodySmall,modifier=Modifier.padding(top=6.dp))
+    if(profileError.isNotBlank())Text(profileError,color=MaterialTheme.colorScheme.error,
+     modifier=Modifier.padding(top=6.dp))
+    Spacer(Modifier.height(16.dp))
+    LumoNeonButton(
+     text=if(saving)"Сохраняем…" else "Сохранить",
+     enabled=!saving&&name.isNotBlank(),modifier=Modifier.fillMaxWidth(),
+     onClick={
+      saving=true
+      scope.launch{
+       runCatching{
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.updateMe(token,name)}
+       }.onSuccess{
+        profilePrefs.edit().putString("bio_"+me.id,bio).apply()
+        profileChanged(it);editing=false;profileError=""
+       }.onFailure{profileError="Не удалось сохранить имя"}
+       saving=false
+      }
      }
-    loggingOut=false
+    )
+    TextButton(
+     onClick={
+      name=me.displayName
+      bio=profilePrefs.getString("bio_"+me.id,"")?:""
+      editing=false;profileError=""
+     },modifier=Modifier.align(Alignment.CenterHorizontally)
+    ){Text("Отмена",color=Color.White)}
+   }else{
+    Text(
+     if(bio.isBlank())"Управление данными" else bio,
+     style=MaterialTheme.typography.bodyMedium,
+     color=MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(Modifier.height(14.dp))
+    LumoNeonButton(
+     "✎   Редактировать профиль",onClick={editing=true},
+     modifier=Modifier.fillMaxWidth()
+    )
    }
-  },enabled=!loggingOut,modifier=Modifier.fillMaxWidth()){
+  }
+  Spacer(Modifier.height(16.dp))
+  Column(Modifier.fillMaxWidth().lumoGlass(25).padding(18.dp)){
+   Text("⚙   Обновление",style=MaterialTheme.typography.titleMedium,
+    fontWeight=FontWeight.Bold,color=Color.White)
+   Spacer(Modifier.height(8.dp))
+   Text(updateText,color=Color.White)
+   Spacer(Modifier.height(3.dp))
+   Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,
+    color=MaterialTheme.colorScheme.onSurfaceVariant)
+   if(checking)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp),color=LumoCyan)
+   if(progress>=0){
+    Spacer(Modifier.height(12.dp))
+    LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth(),color=LumoCyan)
+    Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp),color=Color.White)
+   }
+   update?.let{u->
+    if(progress<0){
+     Spacer(Modifier.height(14.dp))
+     LumoNeonButton(
+      "Обновить Lumo",
+      onClick={
+       startUpdate(context,u.downloadUrl){p->
+        scope.launch{
+         progress=p
+         updateText=when{
+          p<0->"Не удалось загрузить обновление"
+          p<100->"Загружаем обновление…"
+          else->"Устанавливаем обновление…"
+         }
+        }
+       }
+      },modifier=Modifier.fillMaxWidth()
+     )
+    }
+   }
+  }
+  Spacer(Modifier.height(18.dp))
+  OutlinedButton(
+   onClick={
+    loggingOut=true;logoutError=""
+    scope.launch{
+     runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.logout(token)}}
+      .onSuccess{logout()}
+      .onFailure{error->
+       if(error is SessionExpiredException)logout()
+       else logoutError="Не удалось завершить сессию на сервере. Попробуйте ещё раз."
+      }
+     loggingOut=false
+    }
+   },
+   enabled=!loggingOut,
+   modifier=Modifier.fillMaxWidth().heightIn(min=52.dp),
+   shape=RoundedCornerShape(26.dp),
+   border=androidx.compose.foundation.BorderStroke(1.5.dp,LumoPink),
+   colors=ButtonDefaults.outlinedButtonColors(contentColor=Color.White)
+  ){
    Text(if(loggingOut)"Завершаем сессию…" else "Выйти из аккаунта")
   }
   if(logoutError.isNotEmpty()){
    Text(logoutError,color=MaterialTheme.colorScheme.error)
-   TextButton(onClick=logout){Text("Выйти только с устройства")}
+   TextButton(onClick=logout){Text("Выйти только с устройства",color=Color.White)}
    Text("При локальном выходе серверная сессия остаётся активной до истечения срока.",
-    style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+    color=MaterialTheme.colorScheme.onSurfaceVariant,
+    style=MaterialTheme.typography.bodySmall)
   }
+  Spacer(Modifier.height(18.dp))
  }
 }
 
