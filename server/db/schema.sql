@@ -10,8 +10,14 @@ alter table users add column if not exists password_hash text;
 create table if not exists sessions (
   token uuid primary key,
   user_id uuid not null references users(id) on delete cascade,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '30 days')
 );
+alter table sessions add column if not exists expires_at timestamptz;
+update sessions set expires_at=created_at + interval '30 days' where expires_at is null;
+alter table sessions alter column expires_at set default (now() + interval '30 days');
+alter table sessions alter column expires_at set not null;
+create index if not exists sessions_expiry_idx on sessions(expires_at);
 create table if not exists messages (
   id uuid primary key,
   sender_id uuid not null references users(id) on delete cascade,
