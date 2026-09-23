@@ -93,6 +93,5 @@ begin
   return new;
 end;
 $$ language plpgsql;
-drop trigger if exists lumo_message_push_outbox on messages;
-create trigger lumo_message_push_outbox after insert on messages
+create or replace trigger lumo_message_push_outbox after insert on messages
   for each row execute function lumo_enqueue_private_push();
