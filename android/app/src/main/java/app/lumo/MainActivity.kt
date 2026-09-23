@@ -15,6 +15,7 @@ import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -92,10 +93,12 @@ class MainActivity:ComponentActivity(){
  var password by remember{mutableStateOf("")}
  var err by remember{mutableStateOf("")}
  var busy by remember{mutableStateOf(false)}
- Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center){
+ Column(Modifier.fillMaxSize().background(LumoGradient).padding(24.dp),verticalArrangement=Arrangement.Center){
+  Box(Modifier.fillMaxWidth().height(108.dp),contentAlignment=Alignment.Center){Box(Modifier.size(88.dp).clip(RoundedCornerShape(30.dp)).background(LumoAvatarGradient),contentAlignment=Alignment.Center){Text("✦",style=MaterialTheme.typography.displayLarge,color=Color.White)}}
+  Spacer(Modifier.height(18.dp))
   Text("Lumo",style=MaterialTheme.typography.displayLarge,fontWeight=FontWeight.Bold)
   Spacer(Modifier.height(8.dp))
-  Text(if(loginMode)"С возвращением" else "Общайся просто",style=MaterialTheme.typography.titleMedium)
+  Text(if(loginMode)"С возвращением" else "Ближе к важным людям",style=MaterialTheme.typography.titleMedium)
   Spacer(Modifier.height(28.dp))
   if(!loginMode){
    OutlinedTextField(name,{name=it},label={Text("Имя")},singleLine=true,modifier=Modifier.fillMaxWidth())
