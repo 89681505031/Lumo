@@ -225,8 +225,8 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  for(m in current+incoming){
   val old=merged[m.id]
   merged[m.id]=if(old==null)m else m.copy(
-   deliveredAt=if(m.deliveredAt.isNotBlank())m.deliveredAt else old.deliveredAt,
-   readAt=if(m.readAt.isNotBlank())m.readAt else old.readAt,
+   deliveredAt=old.deliveredAt.ifBlank{m.deliveredAt},
+   readAt=old.readAt.ifBlank{m.readAt},
    clientMessageId=m.clientMessageId.ifBlank{old.clientMessageId}
   )
  }
@@ -253,7 +253,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
     Surface(color=MaterialTheme.colorScheme.errorContainer,modifier=Modifier.fillMaxWidth()){
      Text("Нет соединения. Переподключаемся…",modifier=Modifier.padding(10.dp),color=MaterialTheme.colorScheme.onErrorContainer)
     }
-   }}
+   }
    if(historyError){Surface(color=MaterialTheme.colorScheme.errorContainer,modifier=Modifier.fillMaxWidth()){Text("Не удалось загрузить историю. Повторим после подключения.",modifier=Modifier.padding(10.dp),color=MaterialTheme.colorScheme.onErrorContainer)}}
    LazyColumn(Modifier.weight(1f).fillMaxWidth(),contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
     items(msgs,key={it.id}){m->
