@@ -153,8 +153,18 @@ class MainActivity:ComponentActivity(){
  var chats by remember{mutableStateOf<List<Conversation>>(emptyList())}
  var loading by remember{mutableStateOf(true)}
  var loadError by remember{mutableStateOf(false)}
+ var refreshError by remember{mutableStateOf(false)}
  var retry by remember{mutableIntStateOf(0)}
- LaunchedEffect(token,retry){loading=true;loadError=false;runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.conversations(token)}}.onSuccess{chats=it}.onFailure{loadError=true};loading=false}
+ LaunchedEffect(token,retry){
+  loading=true;loadError=false;refreshError=false;chats=emptyList()
+  while(true){
+   val result=runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.conversations(token)}}
+   result.onSuccess{chats=it;loadError=false;refreshError=false}
+    .onFailure{if(chats.isEmpty())loadError=true else refreshError=true}
+   loading=false
+   kotlinx.coroutines.delay(12_000)
+  }
+ }
  if(loadError){Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){Text("Не удалось загрузить чаты");Spacer(Modifier.height(12.dp));Button({retry++}){Text("Повторить")}};return}
  if(loading){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()};return}
  if(chats.isEmpty()){
@@ -164,12 +174,18 @@ class MainActivity:ComponentActivity(){
    Spacer(Modifier.height(20.dp));Button(find){Text("Найти людей")}
   }
  } else {
-  LazyColumn(Modifier.fillMaxSize()){
+  Column(Modifier.fillMaxSize()){
+   if(refreshError){
+    Text("Нет связи. Показываем последнюю загруженную историю чатов.",
+     color=MaterialTheme.colorScheme.error,modifier=Modifier.fillMaxWidth().padding(12.dp))
+   }
+   LazyColumn(Modifier.fillMaxSize()){
    items(chats,key={it.peer.id}){chat->
     Row(Modifier.fillMaxWidth().clickable{open(chat.peer)}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){
      Box(Modifier.size(56.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(chat.peer.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleLarge)}
      Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(chat.peer.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium);Row(verticalAlignment=Alignment.CenterVertically){Text(chat.lastMessage,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f));if(chat.lastAt.isNotBlank()){Spacer(Modifier.width(8.dp));Text(formatMessageTime(chat.lastAt),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
     };HorizontalDivider()
+   }
    }
   }
  }
