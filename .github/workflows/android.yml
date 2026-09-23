@@ -11,8 +11,12 @@ on:
       - ".github/workflows/android.yml"
   workflow_dispatch:
 
+concurrency:
+  group: android-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-debug:
