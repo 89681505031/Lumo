@@ -3,8 +3,10 @@ create table if not exists users (
   id uuid primary key,
   username varchar(24) unique not null,
   display_name varchar(50) not null,
+  password_hash text, -- nullable for legacy accounts; new registrations require a hash
   created_at timestamptz not null default now()
 );
+alter table users add column if not exists password_hash text;
 create table if not exists sessions (
   token uuid primary key,
   user_id uuid not null references users(id) on delete cascade,
