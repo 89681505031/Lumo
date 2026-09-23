@@ -475,6 +475,8 @@ class MainActivity:ComponentActivity(){
    }
   }
   Spacer(Modifier.height(16.dp))
+  LumoAppearanceControls()
+  Spacer(Modifier.height(16.dp))
   Column(Modifier.fillMaxWidth().lumoGlass(25).padding(18.dp)){
    Text("⚙   Обновление",style=MaterialTheme.typography.titleMedium,
     fontWeight=FontWeight.Bold,color=Color.White)

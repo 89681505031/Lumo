@@ -1,14 +1,22 @@
 name: Android
 on:
   push:
-    branches: [main, design/luma-glass-ui]
+    branches: [main, design/luma-glass-ui, feature/lumo-cosmic-personalization]
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+  pull_request:
     paths:
       - "android/**"
       - ".github/workflows/android.yml"
   workflow_dispatch:
 
+concurrency:
+  group: android-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-debug:
