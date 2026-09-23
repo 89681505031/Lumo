@@ -152,9 +152,49 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(pinnedChats.json[0].pinned,true);
     const otherUserView=await request("/api/conversations","GET",a.token);
     assert.equal(otherUserView.json[0].pinned,false,"Pins belong only to the user");
+
+    // Edits are visible from another function instance and only the sender
+    // can modify their original message.
+    const unauthorizedEdit=await request("/api/message/"+sent.json.id,"PATCH",null,{text:"not allowed"});
+    assert.equal(unauthorizedEdit.status,401);
+    const otherUserEdit=await request("/api/message/"+sent.json.id,"PATCH",b.token,{text:"not allowed"});
+    assert.equal(otherUserEdit.status,404);
+    const malformedEdit=await request("/api/message/not-a-uuid","PATCH",a.token,{text:"x"});
+    assert.equal(malformedEdit.status,400);
+    const emptyEdit=await request("/api/message/"+sent.json.id,"PATCH",a.token,{text:"   "});
+    assert.equal(emptyEdit.status,400);
+    const oversizedEdit=await request("/api/message/"+sent.json.id,"PATCH",a.token,{text:"x".repeat(4001)});
+    assert.equal(oversizedEdit.status,400);
+    const edited=await request("/api/message/"+sent.json.id,"PATCH",a.token,{text:"corrected text"},otherBase);
+    assert.equal(edited.status,200);
+    assert.equal(edited.json.text,"corrected text");
+    assert.ok(edited.json.editedAt);
+    assert.equal(edited.json.deletedAt,null);
+    const editedPreview=await request("/api/conversations","GET",b.token);
+    assert.equal(editedPreview.json.find(chat=>chat.peer.id===a.user.id).lastMessage,"corrected text");
+    const editedReplay=await request("/api/messages","POST",a.token,payload);
+    assert.equal(editedReplay.status,200,"Original retry remains idempotent after an edit");
+    assert.equal(editedReplay.json.id,sent.json.id);
+    assert.equal(editedReplay.json.text,"corrected text");
+    // Live same-instance edits reuse the existing message envelope for old clients.
+    const liveEdited=new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{socket.off("message",listener);reject(new Error("Live edit was not delivered"));},3000);
+      function listener(raw){
+        const packet=JSON.parse(raw.toString());
+        if(packet.type==="message" && packet.message?.id===sent.json.id){
+          clearTimeout(timer);socket.off("message",listener);resolve(packet.message);
+        }
+      }
+      socket.on("message",listener);
+    });
+    const secondEdit=await request("/api/message/"+sent.json.id,"PATCH",a.token,{text:"live corrected"});
+    assert.equal(secondEdit.status,200);
+    assert.equal((await liveEdited).text,"live corrected");
     const received=await request("/api/messages/"+a.user.id,"GET",b.token,null,otherBase);
     assert.equal(received.status,200);
     assert.equal(received.json.length,1);
+    assert.equal(received.json[0].text,"live corrected","Cross-instance history returns latest edited text");
+    assert.ok(received.json[0].editedAt);
     assert.ok(received.json[0].deliveredAt,"Fetching history records delivery");
     const unopened=await request("/api/messages/"+b.user.id,"GET",c.token);
     assert.equal(unopened.status,200);
@@ -180,6 +220,35 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(updatedChats.status,200);
     assert.equal(updatedChats.json.length,1);
     assert.equal(updatedChats.json[0].lastMessage,"most recent message");
+
+    const unauthorizedDelete=await request("/api/message/"+followUp.json.id,"DELETE",null);
+    assert.equal(unauthorizedDelete.status,401);
+    const notAuthor=await request("/api/message/"+followUp.json.id,"DELETE",a.token);
+    assert.equal(notAuthor.status,404);
+    const invalidDelete=await request("/api/message/bad-id","DELETE",b.token);
+    assert.equal(invalidDelete.status,400);
+    const deleted=await request("/api/message/"+followUp.json.id,"DELETE",b.token,null,otherBase);
+    assert.equal(deleted.status,200);
+    assert.equal(deleted.json.id,followUp.json.id);
+    assert.equal(deleted.json.text,"Сообщение удалено");
+    assert.ok(deleted.json.deletedAt);
+    const deletedAgain=await request("/api/message/"+followUp.json.id,"DELETE",b.token);
+    assert.equal(deletedAgain.status,200,"Repeated deletion is idempotent");
+    assert.equal(deletedAgain.json.deletedAt,deleted.json.deletedAt);
+    const editDeleted=await request("/api/message/"+followUp.json.id,"PATCH",b.token,{text:"cannot restore"});
+    assert.equal(editDeleted.status,404);
+    const replayDeleted=await request("/api/messages","POST",b.token,{
+      to:a.user.id,text:"most recent message",clientMessageId:followUp.json.clientMessageId
+    });
+    assert.equal(replayDeleted.status,200,"Original retry cannot restore deleted text");
+    assert.equal(replayDeleted.json.deletedAt,deleted.json.deletedAt);
+    const tombstone=await request("/api/messages/"+b.user.id,"GET",a.token);
+    assert.equal(tombstone.status,200);
+    assert.equal(tombstone.json.at(-1).text,"Сообщение удалено");
+    assert.equal(tombstone.json.at(-1).id,followUp.json.id);
+    const deletedPreview=await request("/api/conversations","GET",a.token);
+    assert.equal(deletedPreview.json[0].lastMessage,"Сообщение удалено");
+    assert.equal(deletedPreview.json[0].unreadCount,0,"Deleted content does not stay unread");
     const invalidSelfBlock=await request("/api/blocks/"+b.user.id,"PUT",b.token);
     assert.equal(invalidSelfBlock.status,400);
     const block=await request("/api/blocks/"+c.user.id,"PUT",b.token);
