@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import okhttp3.*
@@ -83,19 +84,44 @@ class MainActivity:ComponentActivity(){
 }
 
 @Composable fun Register(done:(String,User)->Unit){
- var name by remember{mutableStateOf("")};var login by remember{mutableStateOf("")};var err by remember{mutableStateOf("")};var busy by remember{mutableStateOf(false)}
+ val scope=rememberCoroutineScope()
+ var loginMode by remember{mutableStateOf(false)}
+ var name by remember{mutableStateOf("")}
+ var login by remember{mutableStateOf("")}
+ var password by remember{mutableStateOf("")}
+ var err by remember{mutableStateOf("")}
+ var busy by remember{mutableStateOf(false)}
  Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center){
   Text("Lumo",style=MaterialTheme.typography.displayLarge,fontWeight=FontWeight.Bold)
-  Spacer(Modifier.height(8.dp));Text("Общайся просто",style=MaterialTheme.typography.titleMedium)
+  Spacer(Modifier.height(8.dp))
+  Text(if(loginMode)"С возвращением" else "Общайся просто",style=MaterialTheme.typography.titleMedium)
   Spacer(Modifier.height(28.dp))
-  OutlinedTextField(name,{name=it},label={Text("Имя")},singleLine=true,modifier=Modifier.fillMaxWidth())
-  Spacer(Modifier.height(10.dp))
+  if(!loginMode){
+   OutlinedTextField(name,{name=it},label={Text("Имя")},singleLine=true,modifier=Modifier.fillMaxWidth())
+   Spacer(Modifier.height(10.dp))
+  }
   OutlinedTextField(login,{login=it},label={Text("Логин")},singleLine=true,modifier=Modifier.fillMaxWidth())
-  if(err.isNotEmpty()) Text(err,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(top=8.dp))
+  Spacer(Modifier.height(10.dp))
+  OutlinedTextField(password,{password=it},label={Text("Пароль")},singleLine=true,visualTransformation=PasswordVisualTransformation(),modifier=Modifier.fillMaxWidth())
+  if(!loginMode)Text("Пароль: минимум 10 символов",style=MaterialTheme.typography.bodySmall,modifier=Modifier.padding(top=6.dp))
+  if(err.isNotEmpty())Text(err,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(top=8.dp))
   Spacer(Modifier.height(16.dp))
-  val scope=rememberCoroutineScope()
-  Button({busy=true;err="";scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.register(login,name)}}.onSuccess{done(it.first,it.second)}.onFailure{err=it.message?:"Ошибка";busy=false}}},enabled=!busy&&name.isNotBlank()&&login.isNotBlank(),modifier=Modifier.fillMaxWidth().height(52.dp)){
-   Text(if(busy)"Подключаем..." else "Создать аккаунт")
+  Button({
+   busy=true;err=""
+   scope.launch{
+    runCatching{
+     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+      if(loginMode)Api.login(login,password) else Api.register(login,name,password)
+     }
+    }.onSuccess{password="";done(it.first,it.second)}
+     .onFailure{err=it.message?:"Ошибка подключения"}
+    busy=false
+   }
+  },enabled=!busy&&login.isNotBlank()&&password.isNotBlank()&&(loginMode||(name.isNotBlank()&&password.length>=10)),modifier=Modifier.fillMaxWidth().height(52.dp)){
+   Text(if(busy)"Подключаем..." else if(loginMode)"Войти" else "Создать аккаунт")
+  }
+  TextButton(onClick={loginMode=!loginMode;password="";err=""},enabled=!busy,modifier=Modifier.fillMaxWidth()){
+   Text(if(loginMode)"Нет аккаунта? Зарегистрироваться" else "Уже есть аккаунт? Войти")
   }
  }
 }
