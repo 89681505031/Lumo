@@ -4,10 +4,13 @@ import { genericPushMessage, invalidPushTokenCode, retrySeconds } from "../src/p
 
 test("push payload contains only generic text, never message content or identity",()=>{
   const payload=genericPushMessage("temporary-test-token");
-  assert.equal(payload.notification.title,"Lumo");
-  assert.equal(payload.notification.body,"Новое сообщение");
   assert.equal(payload.token,"temporary-test-token");
-  assert.deepEqual(Object.keys(payload).sort(),["android","notification","token"]);
+  assert.deepEqual(payload.data,{kind:"lumo_message"});
+  assert.equal(payload.notification,undefined,
+    "An FCM notification payload would bypass the app's background consent gate");
+  assert.equal(payload.android.ttl,600000);
+  assert.equal(payload.android.collapseKey,"lumo_generic_message");
+  assert.deepEqual(Object.keys(payload).sort(),["android","data","token"]);
   assert.equal(JSON.stringify(payload).includes("messageId"),false);
   assert.equal(JSON.stringify(payload).includes("sender"),false);
 });
