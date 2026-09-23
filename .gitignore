@@ -6,3 +6,7 @@ node_modules/
 local.properties
 build/
 **/build/
+
+# Firebase staging app config is provided locally or by protected CI inputs.
+android/app/google-services.json
+android/app/src/**/google-services.json
