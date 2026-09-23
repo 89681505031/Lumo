@@ -33,6 +33,18 @@ jobs:
         env:
           LUMO_VERSION_CODE: ${{ github.run_number }}
         run: gradle assembleDebug
+      - name: Compile production variant and enforce notification privacy
+        run: |
+          gradle :app:compileReleaseKotlin :app:processReleaseMainManifest
+          manifest="$(find app/build/intermediates -name AndroidManifest.xml -path '*/release/*' -print -quit)"
+          if [ -z "$manifest" ] || [ ! -f "$manifest" ]; then
+            echo "Missing merged production manifest"
+            exit 1
+          fi
+          if grep -Eq 'android.permission.POST_NOTIFICATIONS|LumoDebugFirebaseService' "$manifest"; then
+            echo "Experimental FCM service/permission leaked into production"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: lumo-debug-apk
