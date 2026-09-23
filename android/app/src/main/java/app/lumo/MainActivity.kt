@@ -15,6 +15,9 @@ import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -48,7 +51,7 @@ private fun nullableJsonText(o:JSONObject,key:String):String=if(o.isNull(key))""
 class SessionExpiredException:Exception("Сессия недействительна")
 
 class MainActivity:ComponentActivity(){
- override fun onCreate(b:Bundle?){super.onCreate(b);setContent{MaterialTheme{App()}}}
+ override fun onCreate(b:Bundle?){super.onCreate(b);setContent{LumoTheme{App()}}}
 }
 
 @Composable fun App(){
@@ -90,60 +93,133 @@ class MainActivity:ComponentActivity(){
  var name by remember{mutableStateOf("")}
  var login by remember{mutableStateOf("")}
  var password by remember{mutableStateOf("")}
+ var passwordVisible by remember{mutableStateOf(false)}
  var err by remember{mutableStateOf("")}
  var busy by remember{mutableStateOf(false)}
- Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center){
-  Text("Lumo",style=MaterialTheme.typography.displayLarge,fontWeight=FontWeight.Bold)
-  Spacer(Modifier.height(8.dp))
-  Text(if(loginMode)"С возвращением" else "Общайся просто",style=MaterialTheme.typography.titleMedium)
-  Spacer(Modifier.height(28.dp))
-  if(!loginMode){
-   OutlinedTextField(name,{name=it},label={Text("Имя")},singleLine=true,modifier=Modifier.fillMaxWidth())
-   Spacer(Modifier.height(10.dp))
-  }
-  OutlinedTextField(login,{login=it},label={Text("Логин")},singleLine=true,modifier=Modifier.fillMaxWidth())
-  Spacer(Modifier.height(10.dp))
-  OutlinedTextField(password,{password=it},label={Text("Пароль")},singleLine=true,visualTransformation=PasswordVisualTransformation(),modifier=Modifier.fillMaxWidth())
-  if(!loginMode)Text("Пароль: минимум 10 символов",style=MaterialTheme.typography.bodySmall,modifier=Modifier.padding(top=6.dp))
-  if(err.isNotEmpty())Text(err,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(top=8.dp))
-  Spacer(Modifier.height(16.dp))
-  Button({
-   busy=true;err=""
-   scope.launch{
-    runCatching{
-     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
-      if(loginMode)Api.login(login,password) else Api.register(login,name,password)
+ val fieldColors=OutlinedTextFieldDefaults.colors(
+  focusedTextColor=Color.White,unfocusedTextColor=Color.White,
+  focusedBorderColor=LumoCyan,unfocusedBorderColor=Color(0xFFACCFFF),
+  focusedLabelColor=Color.White,unfocusedLabelColor=Color(0xFFE0EAFF),
+  focusedContainerColor=Color(0x862C4AAB),
+  unfocusedContainerColor=Color(0x70233D91),
+  cursorColor=LumoCyan
+ )
+ LumoBackdrop(Modifier.fillMaxSize()){
+  Column(
+   Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+    .padding(horizontal=24.dp,vertical=30.dp),
+   verticalArrangement=Arrangement.Center,
+   horizontalAlignment=Alignment.CenterHorizontally
+  ){
+   LumoPlanetIcon(140.dp)
+   Spacer(Modifier.height(15.dp))
+   Text("Lumo",style=MaterialTheme.typography.displayLarge,
+    fontWeight=FontWeight.ExtraBold,color=Color.White)
+   Text(if(loginMode)"С возвращением" else "Ближе к важным людям",
+    style=MaterialTheme.typography.titleMedium,color=Color.White)
+   Spacer(Modifier.height(24.dp))
+   Column(Modifier.fillMaxWidth().lumoGlass(28).padding(18.dp)){
+    if(!loginMode){
+     OutlinedTextField(
+      name,{name=it},label={Text("Имя")},singleLine=true,
+      shape=RoundedCornerShape(20.dp),colors=fieldColors,
+      modifier=Modifier.fillMaxWidth()
+     )
+     Spacer(Modifier.height(10.dp))
+    }
+    OutlinedTextField(
+     login,{login=it},label={Text("Логин")},singleLine=true,
+     shape=RoundedCornerShape(20.dp),colors=fieldColors,
+     modifier=Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(10.dp))
+    OutlinedTextField(
+     password,{password=it},label={Text("Пароль")},singleLine=true,
+     visualTransformation=if(passwordVisible)
+      androidx.compose.ui.text.input.VisualTransformation.None
+      else PasswordVisualTransformation(),
+     trailingIcon={
+      TextButton({passwordVisible=!passwordVisible}){
+       Text(if(passwordVisible)"Скрыть" else "◉",color=Color.White)
+      }
+     },
+     shape=RoundedCornerShape(20.dp),colors=fieldColors,
+     modifier=Modifier.fillMaxWidth()
+    )
+    if(!loginMode)Text("Пароль: минимум 10 символов",
+     style=MaterialTheme.typography.bodySmall,
+     color=MaterialTheme.colorScheme.onSurfaceVariant,
+     modifier=Modifier.padding(top=6.dp))
+    if(err.isNotEmpty())Text(err,color=MaterialTheme.colorScheme.error,
+     modifier=Modifier.padding(top=8.dp))
+    Spacer(Modifier.height(16.dp))
+    LumoNeonButton(
+     text=if(busy)"Подключаем…" else if(loginMode)"Войти" else "Создать аккаунт",
+     enabled=!busy&&login.isNotBlank()&&password.isNotBlank()
+      &&(loginMode||(name.isNotBlank()&&password.length>=10)),
+     modifier=Modifier.fillMaxWidth(),
+     onClick={
+      busy=true;err=""
+      scope.launch{
+       runCatching{
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+         if(loginMode)Api.login(login,password) else Api.register(login,name,password)
+        }
+       }.onSuccess{password="";done(it.first,it.second)}
+        .onFailure{err=it.message?:"Ошибка подключения"}
+       busy=false
+      }
      }
-    }.onSuccess{password="";done(it.first,it.second)}
-     .onFailure{err=it.message?:"Ошибка подключения"}
-    busy=false
+    )
+    Spacer(Modifier.height(12.dp))
+    Text(
+     if(loginMode)"Ещё нет аккаунта?" else "Уже есть аккаунт?",
+     color=MaterialTheme.colorScheme.onSurfaceVariant,
+     style=MaterialTheme.typography.bodySmall,
+     modifier=Modifier.align(Alignment.CenterHorizontally)
+    )
+    Spacer(Modifier.height(8.dp))
+    OutlinedButton(
+     onClick={loginMode=!loginMode;password="";err="";passwordVisible=false},
+     enabled=!busy,
+     modifier=Modifier.fillMaxWidth().height(48.dp),
+     shape=RoundedCornerShape(24.dp),
+     border=androidx.compose.foundation.BorderStroke(1.4.dp,LumoPink),
+     colors=ButtonDefaults.outlinedButtonColors(contentColor=Color.White)
+    ){
+     Text(if(loginMode)"Создать аккаунт" else "Войти",
+      style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+    }
    }
-  },enabled=!busy&&login.isNotBlank()&&password.isNotBlank()&&(loginMode||(name.isNotBlank()&&password.length>=10)),modifier=Modifier.fillMaxWidth().height(52.dp)){
-   Text(if(busy)"Подключаем..." else if(loginMode)"Войти" else "Создать аккаунт")
-  }
-  TextButton(onClick={loginMode=!loginMode;password="";err=""},enabled=!busy,modifier=Modifier.fillMaxWidth()){
-   Text(if(loginMode)"Нет аккаунта? Зарегистрироваться" else "Уже есть аккаунт? Войти")
   }
  }
 }
 
 @Composable fun Home(token:String,me:User,open:(User)->Unit,profileChanged:(User)->Unit,logout:()->Unit){
  var tab by remember{mutableIntStateOf(0)}
- Scaffold(
-  topBar={Surface(shadowElevation=2.dp){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(20.dp,14.dp),verticalAlignment=Alignment.CenterVertically){
-   Text("Lumo",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);Spacer(Modifier.weight(1f));Text(me.displayName,style=MaterialTheme.typography.labelLarge)
-  }}},
-  bottomBar={NavigationBar{
-   NavigationBarItem(selected=tab==0,onClick={tab=0},icon={Text("●")},label={Text("Чаты")})
-   NavigationBarItem(selected=tab==1,onClick={tab=1},icon={Text("⌕")},label={Text("Люди")})
-   NavigationBarItem(selected=tab==2,onClick={tab=2},icon={Text("☺")},label={Text("Профиль")})
-  }}
- ){pad->
-  Box(Modifier.padding(pad).fillMaxSize()){
-   when(tab){
-    0->Chats(token,{tab=1},open)
-    1->People(token,open)
-    else->Profile(token,me,profileChanged,logout)
+ LumoBackdrop(Modifier.fillMaxSize()){
+  Scaffold(
+   containerColor=Color.Transparent,
+   topBar={
+    Row(
+     Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=18.dp,vertical=12.dp),
+     verticalAlignment=Alignment.CenterVertically
+    ){
+     Text("Lumo",style=MaterialTheme.typography.headlineLarge,fontWeight=FontWeight.ExtraBold,color=Color.White)
+     Spacer(Modifier.weight(1f))
+     Box(Modifier.lumoGlass(22).clickable{tab=2}.padding(horizontal=15.dp,vertical=8.dp)){
+      Text(me.displayName,style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold,color=Color.White,maxLines=1)
+     }
+    }
+   },
+   bottomBar={LumoBottomNavigation(selected=tab,onSelect={tab=it})}
+  ){pad->
+   Box(Modifier.fillMaxSize().padding(pad)){
+    when(tab){
+     0->Chats(token,{tab=1},open)
+     1->People(token,open)
+     else->Profile(token,me,profileChanged,logout)
+    }
    }
   }
  }
@@ -151,8 +227,10 @@ class MainActivity:ComponentActivity(){
 
 @Composable fun Chats(token:String,find:()->Unit,open:(User)->Unit){
  var chats by remember{mutableStateOf<List<Conversation>>(emptyList())}
+ var chatQuery by remember{mutableStateOf("")}
  var loading by remember{mutableStateOf(true)}
  var loadError by remember{mutableStateOf(false)}
+ var loadErrorDetail by remember{mutableStateOf("")}
  var refreshError by remember{mutableStateOf(false)}
  var retry by remember{mutableIntStateOf(0)}
  LaunchedEffect(token,retry){
@@ -160,52 +238,137 @@ class MainActivity:ComponentActivity(){
   while(true){
    val result=runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.conversations(token)}}
    result.onSuccess{chats=it;loadError=false;refreshError=false}
-    .onFailure{if(chats.isEmpty())loadError=true else refreshError=true}
+    .onFailure{loadErrorDetail=it.message?:"Ошибка соединения";if(chats.isEmpty())loadError=true else refreshError=true}
    loading=false
    kotlinx.coroutines.delay(12_000)
   }
  }
- if(loadError){Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){Text("Не удалось загрузить чаты");Spacer(Modifier.height(12.dp));Button({retry++}){Text("Повторить")}};return}
- if(loading){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()};return}
- if(chats.isEmpty()){
-  Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
-   Text("Сообщений пока нет",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.SemiBold)
-   Spacer(Modifier.height(8.dp));Text("Найди человека и начни первый диалог",style=MaterialTheme.typography.bodyLarge)
-   Spacer(Modifier.height(20.dp));Button(find){Text("Найти людей")}
+ if(loadError&&chats.isEmpty()){
+  Box(Modifier.fillMaxSize().padding(20.dp),contentAlignment=Alignment.Center){
+   Column(Modifier.fillMaxWidth().lumoGlass(28).padding(22.dp),horizontalAlignment=Alignment.CenterHorizontally){
+    Text("Чаты пока недоступны",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White)
+    Spacer(Modifier.height(12.dp))
+    Text(loadErrorDetail,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
+    Spacer(Modifier.height(18.dp))
+    LumoNeonButton("Повторить",onClick={retry++},modifier=Modifier.fillMaxWidth())
+    TextButton(find){Text("Найти людей",color=Color.White)}
+   }
   }
- } else {
-  Column(Modifier.fillMaxSize()){
-   if(refreshError){
-    Text("Нет связи. Показываем последнюю загруженную историю чатов.",
-     color=MaterialTheme.colorScheme.error,modifier=Modifier.fillMaxWidth().padding(12.dp))
+  return
+ }
+ if(loading){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator(color=LumoCyan)};return}
+ Column(Modifier.fillMaxSize()){
+  LumoSearchField(
+   chatQuery,{chatQuery=it},"Поиск по чатам",
+   modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp)
+  )
+  if(refreshError)Text(
+   "Нет связи. Показываем последнюю загруженную историю.",
+   color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(horizontal=18.dp,vertical=6.dp)
+  )
+  if(chats.isEmpty()){
+   Box(Modifier.fillMaxSize().padding(20.dp),contentAlignment=Alignment.Center){
+    Column(Modifier.fillMaxWidth().lumoGlass(28).padding(22.dp),horizontalAlignment=Alignment.CenterHorizontally){
+     Text("Сообщений пока нет",style=MaterialTheme.typography.titleLarge,color=Color.White,fontWeight=FontWeight.Bold)
+     Spacer(Modifier.height(8.dp))
+     Text("Найди человека и начни первый диалог",color=MaterialTheme.colorScheme.onSurfaceVariant)
+     Spacer(Modifier.height(16.dp))
+     LumoNeonButton("Найти людей",find,Modifier.fillMaxWidth())
+    }
    }
-   LazyColumn(Modifier.fillMaxSize()){
-   items(chats,key={it.peer.id}){chat->
-    Row(Modifier.fillMaxWidth().clickable{open(chat.peer)}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){
-     Box(Modifier.size(56.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(chat.peer.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleLarge)}
-     Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(chat.peer.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium);Row(verticalAlignment=Alignment.CenterVertically){Text(chat.lastMessage,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f));if(chat.lastAt.isNotBlank()){Spacer(Modifier.width(8.dp));Text(formatMessageTime(chat.lastAt),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
-    };HorizontalDivider()
+  }else{
+   val filtered=chats.filter{
+    it.peer.displayName.contains(chatQuery,true)||it.peer.username.contains(chatQuery,true)
    }
+   if(filtered.isEmpty()) Text(
+    "Совпадений не найдено",color=Color.White,modifier=Modifier.padding(22.dp)
+   )
+   LazyColumn(
+    modifier=Modifier.fillMaxSize(),
+    contentPadding=PaddingValues(horizontal=12.dp,vertical=8.dp),
+    verticalArrangement=Arrangement.spacedBy(10.dp)
+   ){
+    items(filtered,key={it.peer.id}){chat->
+     Row(
+      Modifier.fillMaxWidth().lumoGlass(22).clickable{open(chat.peer)}.padding(12.dp),
+      verticalAlignment=Alignment.CenterVertically
+     ){
+      LumoNeonAvatar(chat.peer.displayName,size=54.dp)
+      Spacer(Modifier.width(12.dp))
+      Column(Modifier.weight(1f)){
+       Text(chat.peer.displayName,style=MaterialTheme.typography.titleMedium,
+        fontWeight=FontWeight.Bold,color=Color.White,maxLines=1)
+       Spacer(Modifier.height(3.dp))
+       Text(chat.lastMessage,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+      if(chat.lastAt.isNotBlank()){
+       Spacer(Modifier.width(8.dp))
+       Text(formatMessageTime(chat.lastAt),style=MaterialTheme.typography.labelSmall,
+        color=MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+     }
+    }
    }
   }
  }
 }
 
 @Composable fun People(token:String,open:(User)->Unit){
- var users by remember{mutableStateOf<List<User>>(emptyList())};var q by remember{mutableStateOf("")};var loading by remember{mutableStateOf(false)};var loadError by remember{mutableStateOf(false)};var retry by remember{mutableIntStateOf(0)}
- LaunchedEffect(token,q,retry){loading=true;loadError=false;users=emptyList();kotlinx.coroutines.delay(300);runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.users(token,q)}}.onSuccess{users=it}.onFailure{loadError=true};loading=false}
+ var users by remember{mutableStateOf<List<User>>(emptyList())}
+ var q by remember{mutableStateOf("")}
+ var loading by remember{mutableStateOf(false)}
+ var loadError by remember{mutableStateOf(false)}
+ var retry by remember{mutableIntStateOf(0)}
+ LaunchedEffect(token,q,retry){
+  loading=true;loadError=false;users=emptyList()
+  kotlinx.coroutines.delay(300)
+  runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.users(token,q)}}
+   .onSuccess{users=it}.onFailure{loadError=true}
+  loading=false
+ }
  Column(Modifier.fillMaxSize()){
-  OutlinedTextField(q,{q=it},label={Text("Поиск по имени или логину")},singleLine=true,modifier=Modifier.fillMaxWidth().padding(16.dp))
-  if(loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-  if(loadError){Column(Modifier.fillMaxWidth().padding(16.dp),horizontalAlignment=Alignment.CenterHorizontally){Text("Не удалось загрузить пользователей");Spacer(Modifier.height(8.dp));Button({retry++}){Text("Повторить")}}}
-  if(!loading&&!loadError&&users.isEmpty()){Box(Modifier.fillMaxWidth().padding(24.dp),contentAlignment=Alignment.Center){Text(if(q.isBlank())"Пользователей пока нет" else "Ничего не найдено",color=MaterialTheme.colorScheme.onSurfaceVariant)}}
-  LazyColumn(Modifier.fillMaxSize()){
+  LumoSearchField(
+   value=q,onValueChange={q=it},placeholder="Поиск по имени или логину",
+   modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp)
+  )
+  if(loading)LinearProgressIndicator(Modifier.fillMaxWidth(),color=LumoCyan)
+  if(loadError){
+   Column(
+    Modifier.fillMaxWidth().padding(16.dp).lumoGlass(24).padding(20.dp),
+    horizontalAlignment=Alignment.CenterHorizontally
+   ){
+    Text("Не удалось загрузить пользователей",color=Color.White)
+    Spacer(Modifier.height(10.dp))
+    LumoNeonButton("Повторить",onClick={retry++},modifier=Modifier.fillMaxWidth())
+   }
+  }
+  if(!loading&&!loadError&&users.isEmpty()){
+   Box(Modifier.fillMaxWidth().padding(24.dp),contentAlignment=Alignment.Center){
+    Text(if(q.isBlank())"Пользователей пока нет" else "Ничего не найдено",
+     color=MaterialTheme.colorScheme.onSurfaceVariant)
+   }
+  }
+  LazyColumn(
+   Modifier.fillMaxSize(),
+   contentPadding=PaddingValues(horizontal=12.dp,vertical=8.dp),
+   verticalArrangement=Arrangement.spacedBy(9.dp)
+  ){
    items(users,key={it.id}){u->
-    Row(Modifier.fillMaxWidth().clickable{open(u)}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){
-     Box(Modifier.size(52.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(u.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleLarge)}
-     Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(u.displayName,fontWeight=FontWeight.SemiBold,style=MaterialTheme.typography.titleMedium);Text("@"+u.username,color=MaterialTheme.colorScheme.onSurfaceVariant)}
-     Text("›",style=MaterialTheme.typography.headlineSmall)
-    };HorizontalDivider()
+    Row(
+     Modifier.fillMaxWidth().lumoGlass(22).clickable{open(u)}.padding(12.dp),
+     verticalAlignment=Alignment.CenterVertically
+    ){
+     LumoNeonAvatar(u.displayName,size=52.dp)
+     Spacer(Modifier.width(14.dp))
+     Column(Modifier.weight(1f)){
+      Text(u.displayName,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleMedium,
+       color=Color.White,maxLines=1)
+      Spacer(Modifier.height(3.dp))
+      Text("@"+u.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
+     }
+     Text("›",style=MaterialTheme.typography.headlineSmall,color=Color.White,
+      modifier=Modifier.padding(end=4.dp))
+    }
    }
   }
  }
@@ -214,44 +377,169 @@ class MainActivity:ComponentActivity(){
 @Composable fun Profile(token:String,me:User,profileChanged:(User)->Unit,logout:()->Unit){
  val context=LocalContext.current
  val scope=rememberCoroutineScope()
- var editing by remember{mutableStateOf(false)};var name by remember(me.displayName){mutableStateOf(me.displayName)};var saving by remember{mutableStateOf(false)};var profileError by remember{mutableStateOf("")}
+ val profilePrefs=remember{context.getSharedPreferences("lumo_local_profile",Context.MODE_PRIVATE)}
+ var editing by remember{mutableStateOf(false)}
+ var name by remember(me.displayName){mutableStateOf(me.displayName)}
+ var bio by remember(me.id){mutableStateOf(profilePrefs.getString("bio_"+me.id,"")?:"")}
+ var saving by remember{mutableStateOf(false)}
+ var profileError by remember{mutableStateOf("")}
  var loggingOut by remember{mutableStateOf(false)}
  var logoutError by remember{mutableStateOf("")}
- var update by remember{mutableStateOf<UpdateInfo?>(null)};var checking by remember{mutableStateOf(true)};var updateText by remember{mutableStateOf("Проверяем обновления…")};var progress by remember{mutableIntStateOf(-1)}
- LaunchedEffect(Unit){runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.latestRelease()}}.onSuccess{info->update=info.takeIf{it.versionCode>BuildConfig.VERSION_CODE};updateText=if(update!=null)"Доступна новая версия Lumo" else "Установлена последняя версия"}.onFailure{updateText="Не удалось проверить обновления"};checking=false}
- Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
-  Spacer(Modifier.height(24.dp));Box(Modifier.size(92.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(me.displayName.take(1).uppercase(),style=MaterialTheme.typography.displaySmall,fontWeight=FontWeight.Bold)}
-  Spacer(Modifier.height(16.dp));Text(me.displayName,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text("@"+me.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
-  Spacer(Modifier.height(20.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){
-   Text("Профиль",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(8.dp))
-   if(editing){
-    OutlinedTextField(name,{name=it;profileError=""},label={Text("Имя")},singleLine=true,modifier=Modifier.fillMaxWidth())
-    if(profileError.isNotEmpty())Text(profileError,color=MaterialTheme.colorScheme.error)
-    Spacer(Modifier.height(10.dp));Row{Button({saving=true;scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.updateMe(token,name)}}.onSuccess{profileChanged(it);editing=false}.onFailure{profileError="Не удалось сохранить"};saving=false}},enabled=!saving&&name.isNotBlank()){Text(if(saving)"Сохраняем…" else "Сохранить")};Spacer(Modifier.width(8.dp));TextButton({name=me.displayName;editing=false}){Text("Отмена")}}
-   }else Button({editing=true},modifier=Modifier.fillMaxWidth()){Text("Редактировать профиль")}
-  }}
-  Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text("Обновление",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text(updateText);Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(checking)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp));if(progress>=0){Spacer(Modifier.height(12.dp));LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth());Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp))};update?.let{u->if(progress<0){Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl){p->scope.launch{progress=p;updateText=if(p<0)"Не удалось загрузить обновление" else if(p<100)"Загружаем обновление…" else "Устанавливаем обновление…"}}},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}}}}
+ var update by remember{mutableStateOf<UpdateInfo?>(null)}
+ var checking by remember{mutableStateOf(true)}
+ var updateText by remember{mutableStateOf("Проверяем обновления…")}
+ var progress by remember{mutableIntStateOf(-1)}
+ LaunchedEffect(Unit){
+  runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.latestRelease()}}
+   .onSuccess{info->
+    update=info.takeIf{it.versionCode>BuildConfig.VERSION_CODE}
+    updateText=if(update!=null)"Доступна новая версия Lumo" else "Установлена последняя версия"
+   }.onFailure{updateText="Не удалось проверить обновления"}
+  checking=false
+ }
+ Column(
+  Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+   .padding(horizontal=18.dp,vertical=12.dp),
+  horizontalAlignment=Alignment.CenterHorizontally
+ ){
+  Spacer(Modifier.height(6.dp))
+  LumoNeonAvatar(me.displayName,size=122.dp)
   Spacer(Modifier.height(14.dp))
-  OutlinedButton(onClick={
-   loggingOut=true;logoutError=""
-   scope.launch{
-    runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.logout(token)}}
-     .onSuccess{logout()}
-     .onFailure{error->
-      if(error is SessionExpiredException)logout()
-      else logoutError="Не удалось завершить сессию на сервере. Попробуйте ещё раз."
+  Text(me.displayName,style=MaterialTheme.typography.headlineMedium,
+   fontWeight=FontWeight.Bold,color=Color.White)
+  Text("@"+me.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
+  Spacer(Modifier.height(24.dp))
+
+  Column(Modifier.fillMaxWidth().lumoGlass(26).padding(17.dp)){
+   Text(
+    if(editing)"Редактирование профиля" else "Профиль",
+    style=MaterialTheme.typography.titleLarge,
+    fontWeight=FontWeight.Bold,color=Color.White
+   )
+   Spacer(Modifier.height(13.dp))
+   if(editing){
+    OutlinedTextField(
+     name,{name=it;profileError=""},label={Text("Имя")},
+     shape=RoundedCornerShape(20.dp),singleLine=true,modifier=Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(10.dp))
+    OutlinedTextField(
+     "@"+me.username,{},label={Text("Логин")},readOnly=true,
+     shape=RoundedCornerShape(20.dp),singleLine=true,modifier=Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(10.dp))
+    OutlinedTextField(
+     bio,{bio=it.take(160)},label={Text("О себе")},
+     shape=RoundedCornerShape(20.dp),maxLines=3,modifier=Modifier.fillMaxWidth()
+    )
+    Text("Описание пока хранится только на этом устройстве.",
+     color=MaterialTheme.colorScheme.onSurfaceVariant,
+     style=MaterialTheme.typography.bodySmall,modifier=Modifier.padding(top=6.dp))
+    if(profileError.isNotBlank())Text(profileError,color=MaterialTheme.colorScheme.error,
+     modifier=Modifier.padding(top=6.dp))
+    Spacer(Modifier.height(16.dp))
+    LumoNeonButton(
+     text=if(saving)"Сохраняем…" else "Сохранить",
+     enabled=!saving&&name.isNotBlank(),modifier=Modifier.fillMaxWidth(),
+     onClick={
+      saving=true
+      scope.launch{
+       runCatching{
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.updateMe(token,name)}
+       }.onSuccess{
+        profilePrefs.edit().putString("bio_"+me.id,bio).apply()
+        profileChanged(it);editing=false;profileError=""
+       }.onFailure{profileError="Не удалось сохранить имя"}
+       saving=false
+      }
      }
-    loggingOut=false
+    )
+    TextButton(
+     onClick={
+      name=me.displayName
+      bio=profilePrefs.getString("bio_"+me.id,"")?:""
+      editing=false;profileError=""
+     },modifier=Modifier.align(Alignment.CenterHorizontally)
+    ){Text("Отмена",color=Color.White)}
+   }else{
+    Text(
+     if(bio.isBlank())"Управление данными" else bio,
+     style=MaterialTheme.typography.bodyMedium,
+     color=MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(Modifier.height(14.dp))
+    LumoNeonButton(
+     "✎   Редактировать профиль",onClick={editing=true},
+     modifier=Modifier.fillMaxWidth()
+    )
    }
-  },enabled=!loggingOut,modifier=Modifier.fillMaxWidth()){
+  }
+  Spacer(Modifier.height(16.dp))
+  Column(Modifier.fillMaxWidth().lumoGlass(25).padding(18.dp)){
+   Text("⚙   Обновление",style=MaterialTheme.typography.titleMedium,
+    fontWeight=FontWeight.Bold,color=Color.White)
+   Spacer(Modifier.height(8.dp))
+   Text(updateText,color=Color.White)
+   Spacer(Modifier.height(3.dp))
+   Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,
+    color=MaterialTheme.colorScheme.onSurfaceVariant)
+   if(checking)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp),color=LumoCyan)
+   if(progress>=0){
+    Spacer(Modifier.height(12.dp))
+    LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth(),color=LumoCyan)
+    Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp),color=Color.White)
+   }
+   update?.let{u->
+    if(progress<0){
+     Spacer(Modifier.height(14.dp))
+     LumoNeonButton(
+      "Обновить Lumo",
+      onClick={
+       startUpdate(context,u.downloadUrl){p->
+        scope.launch{
+         progress=p
+         updateText=when{
+          p<0->"Не удалось загрузить обновление"
+          p<100->"Загружаем обновление…"
+          else->"Устанавливаем обновление…"
+         }
+        }
+       }
+      },modifier=Modifier.fillMaxWidth()
+     )
+    }
+   }
+  }
+  Spacer(Modifier.height(18.dp))
+  OutlinedButton(
+   onClick={
+    loggingOut=true;logoutError=""
+    scope.launch{
+     runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.logout(token)}}
+      .onSuccess{logout()}
+      .onFailure{error->
+       if(error is SessionExpiredException)logout()
+       else logoutError="Не удалось завершить сессию на сервере. Попробуйте ещё раз."
+      }
+     loggingOut=false
+    }
+   },
+   enabled=!loggingOut,
+   modifier=Modifier.fillMaxWidth().heightIn(min=52.dp),
+   shape=RoundedCornerShape(26.dp),
+   border=androidx.compose.foundation.BorderStroke(1.5.dp,LumoPink),
+   colors=ButtonDefaults.outlinedButtonColors(contentColor=Color.White)
+  ){
    Text(if(loggingOut)"Завершаем сессию…" else "Выйти из аккаунта")
   }
   if(logoutError.isNotEmpty()){
    Text(logoutError,color=MaterialTheme.colorScheme.error)
-   TextButton(onClick=logout){Text("Выйти только с устройства")}
+   TextButton(onClick=logout){Text("Выйти только с устройства",color=Color.White)}
    Text("При локальном выходе серверная сессия остаётся активной до истечения срока.",
-    style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+    color=MaterialTheme.colorScheme.onSurfaceVariant,
+    style=MaterialTheme.typography.bodySmall)
   }
+  Spacer(Modifier.height(18.dp))
  }
 }
 
@@ -342,45 +630,136 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    }.onFailure{historyError=true}
   }
  }
- Scaffold(
-  topBar={Surface(shadowElevation=2.dp){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp),verticalAlignment=Alignment.CenterVertically){
-   TextButton(back){Text("‹ Назад")};Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center){Text(peer.displayName.take(1).uppercase())};Spacer(Modifier.width(10.dp));Column{Text(peer.displayName,fontWeight=FontWeight.Bold);Text("@"+peer.username,style=MaterialTheme.typography.bodySmall)}
-  }}}
- ){pad->
-  Column(Modifier.padding(pad).fillMaxSize()){
-   if(socketError.isNotEmpty()){Surface(color=MaterialTheme.colorScheme.errorContainer,modifier=Modifier.fillMaxWidth()){Text(socketError,modifier=Modifier.padding(10.dp),color=MaterialTheme.colorScheme.onErrorContainer)}}
-   if(!connected){
-    Surface(color=MaterialTheme.colorScheme.errorContainer,modifier=Modifier.fillMaxWidth()){
-     Text("Нет прямого соединения. Сообщения синхронизируются через сервер…",modifier=Modifier.padding(10.dp),color=MaterialTheme.colorScheme.onErrorContainer)
-    }
-   }
-   if(historyError){Surface(color=MaterialTheme.colorScheme.errorContainer,modifier=Modifier.fillMaxWidth()){Text("Не удалось загрузить историю. Повторим после подключения.",modifier=Modifier.padding(10.dp),color=MaterialTheme.colorScheme.onErrorContainer)}}
-   LazyColumn(Modifier.weight(1f).fillMaxWidth(),contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-    items(msgs,key={it.id}){m->
-     Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.from==me.id)Arrangement.End else Arrangement.Start){
-      Surface(shape=RoundedCornerShape(18.dp),color=if(m.from==me.id)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,modifier=Modifier.widthIn(max=300.dp)){
-       Column(Modifier.padding(14.dp,8.dp)){Text(m.text);Row(Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically){if(m.createdAt.isNotBlank())Text(formatMessageTime(m.createdAt),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(m.from==me.id){Spacer(Modifier.width(5.dp));Text(if(m.readAt.isNotBlank())"✓✓" else if(m.deliveredAt.isNotBlank())"✓✓" else "✓",style=MaterialTheme.typography.labelSmall,color=if(m.readAt.isNotBlank())MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)}}}
-      }
+ LumoBackdrop(Modifier.fillMaxSize()){
+  Scaffold(
+   containerColor=Color.Transparent,
+   topBar={
+    Row(
+     Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=9.dp,vertical=8.dp)
+      .lumoGlass(22).padding(horizontal=5.dp,vertical=4.dp),
+     verticalAlignment=Alignment.CenterVertically
+    ){
+     TextButton(back){Text("‹",style=MaterialTheme.typography.headlineMedium,color=Color.White)}
+     LumoNeonAvatar(peer.displayName,size=43.dp)
+     Spacer(Modifier.width(10.dp))
+     Column(Modifier.weight(1f)){
+      Text(peer.displayName,fontWeight=FontWeight.Bold,color=Color.White,
+       style=MaterialTheme.typography.titleMedium,maxLines=1)
+      Text("@"+peer.username,style=MaterialTheme.typography.labelMedium,
+       color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
      }
     }
-    items(pending.filter{p->msgs.none{it.from==me.id&&it.clientMessageId==p.clientMessageId}},key={"pending-"+it.clientMessageId}){p->
-     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
-      Surface(shape=RoundedCornerShape(18.dp),color=MaterialTheme.colorScheme.primaryContainer,modifier=Modifier.widthIn(max=300.dp)){
-       Column(Modifier.padding(14.dp,8.dp)){
-        Text(p.text)
-        Text("Отправляется…",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   }
+  ){pad->
+   Column(Modifier.fillMaxSize().padding(pad)){
+    if(socketError.isNotEmpty()){
+     Box(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(16).padding(10.dp)){
+      Text(socketError,color=Color(0xFFFFD5E4),style=MaterialTheme.typography.bodySmall)
+     }
+    }
+    if(!connected){
+     Box(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(16).padding(10.dp)){
+      Text("Нет прямого соединения. Сообщения синхронизируются через сервер…",
+       color=MaterialTheme.colorScheme.onSurfaceVariant,style=MaterialTheme.typography.bodySmall)
+     }
+    }
+    if(historyError){
+     Box(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(16).padding(10.dp)){
+      Text("История пока недоступна. Повторим загрузку после подключения.",
+       color=Color(0xFFFFD5E4),style=MaterialTheme.typography.bodySmall)
+     }
+    }
+    LazyColumn(
+     Modifier.weight(1f).fillMaxWidth(),
+     contentPadding=PaddingValues(horizontal=13.dp,vertical=14.dp),
+     verticalArrangement=Arrangement.spacedBy(11.dp)
+    ){
+     items(msgs,key={it.id}){m->
+      val own=m.from==me.id
+      Row(
+       Modifier.fillMaxWidth(),
+       horizontalArrangement=if(own)Arrangement.End else Arrangement.Start,
+       verticalAlignment=Alignment.Bottom
+      ){
+       if(!own){
+        LumoNeonAvatar(peer.displayName,size=30.dp)
+        Spacer(Modifier.width(7.dp))
+       }
+       Box(Modifier.widthIn(max=290.dp).lumoBubble(own).padding(horizontal=14.dp,vertical=10.dp)){
+        Column {
+         Text(m.text,color=Color.White)
+         Spacer(Modifier.height(5.dp))
+         Row(
+          Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically
+         ){
+          if(m.createdAt.isNotBlank())Text(
+           formatMessageTime(m.createdAt),
+           color=Color.White.copy(alpha=.73f),
+           style=MaterialTheme.typography.labelSmall
+          )
+          if(own){
+           Spacer(Modifier.width(5.dp))
+           Text(
+            if(m.readAt.isNotBlank())"✓✓" else if(m.deliveredAt.isNotBlank())"✓✓" else "✓",
+            color=if(m.readAt.isNotBlank())LumoCyan else Color.White.copy(alpha=.75f),
+            style=MaterialTheme.typography.labelSmall
+           )
+          }
+         }
+        }
+       }
+      }
+     }
+     items(
+      pending.filter{p->msgs.none{it.from==me.id&&it.clientMessageId==p.clientMessageId}},
+      key={"pending-"+it.clientMessageId}
+     ){p->
+      Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
+       Box(Modifier.widthIn(max=290.dp).lumoBubble(true).padding(horizontal=14.dp,vertical=10.dp)){
+        Column{
+         Text(p.text,color=Color.White)
+         Text("Отправляется…",color=Color.White.copy(alpha=.7f),
+          style=MaterialTheme.typography.labelSmall)
+        }
        }
       }
      }
     }
+    Row(
+     Modifier.fillMaxWidth().imePadding().padding(horizontal=11.dp,vertical=8.dp)
+      .lumoGlass(30).padding(7.dp),
+     verticalAlignment=Alignment.Bottom
+    ){
+     OutlinedTextField(
+      value=input,onValueChange={input=it},placeholder={Text("Сообщение")},
+      modifier=Modifier.weight(1f),maxLines=4,
+      shape=RoundedCornerShape(22.dp)
+     )
+     Spacer(Modifier.width(7.dp))
+     LumoNeonButton(
+      text="➤",enabled=input.isNotBlank(),modifier=Modifier.width(56.dp),
+      onClick={
+       val text=input.trim()
+       if(text.isNotEmpty()){
+        val p=PendingMessage(java.util.UUID.randomUUID().toString(),text)
+        pending.add(p);savePending()
+        if(connected){
+         val sent=ws?.send(
+          JSONObject().put("type","message").put("to",peer.id)
+           .put("text",p.text).put("clientMessageId",p.clientMessageId).toString()
+         )==true
+         if(!sent){connected=false;ws?.close(1012,"retry")}
+        }
+        input=""
+       }
+      }
+     )
+    }
    }
-   Surface(shadowElevation=4.dp){Row(Modifier.fillMaxWidth().imePadding().padding(10.dp),verticalAlignment=Alignment.Bottom){
-    OutlinedTextField(input,{input=it},placeholder={Text("Сообщение")},modifier=Modifier.weight(1f),maxLines=4,shape=RoundedCornerShape(24.dp))
-    Spacer(Modifier.width(8.dp));Button({val text=input.trim();if(text.isNotEmpty()){val p=PendingMessage(java.util.UUID.randomUUID().toString(),text);pending.add(p);savePending();if(connected){val sent=ws?.send(JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId).toString())==true;if(!sent){connected=false;ws?.close(1012,"retry")}};input=""}},enabled=input.isNotBlank(),contentPadding=PaddingValues(horizontal=18.dp,vertical=16.dp)){Text("➤")}
-   }}
   }
  }
 }
+
 
 fun formatMessageTime(iso:String):String=runCatching{java.time.format.DateTimeFormatter.ofPattern("HH:mm").withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.parse(iso))}.getOrDefault("")
 
@@ -411,7 +790,7 @@ object Api{
  fun updateMe(t:String,name:String):User{val j=JSONObject().put("displayName",name);val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).patch(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Профиль: "+x.code);return user(JSONObject(x.body!!.string()))}}
  fun me(t:String):User{val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful)error("Сессия: "+x.code);return user(JSONObject(x.body!!.string()))}}
  fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
- fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Чаты: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"),o.optString("lastAt"))}}}
+ fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful){val reason=when(x.code){401->"Сессия истекла. Выйди из аккаунта и войди снова.";429->"Слишком много запросов. Подожди немного.";503->"Сервер или база данных временно недоступны.";else->"Ошибка сервера HTTP "+x.code};error(reason)};val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"),o.optString("lastAt"))}}}
  fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/messages/"+p).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("История: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{msg(a.getJSONObject(it))}}}
  fun sendMessage(t:String,to:String,p:PendingMessage):Msg{
   val body=JSONObject().put("to",to).put("text",p.text).put("clientMessageId",p.clientMessageId)
