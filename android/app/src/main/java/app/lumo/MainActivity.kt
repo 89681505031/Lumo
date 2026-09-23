@@ -62,6 +62,7 @@ class MainActivity:ComponentActivity(){
  var peer by remember{mutableStateOf<User?>(null)}
  var activeGroup by remember{mutableStateOf<LumoGroup?>(null)}
  var viewingGroups by remember{mutableStateOf(false)}
+ var viewingCalls by remember{mutableStateOf(false)}
  var logoutNonce by remember{mutableIntStateOf(0)}
  var restoring by remember{mutableStateOf(token!=null)}
  var restoreError by remember{mutableStateOf(false)}
@@ -86,7 +87,7 @@ class MainActivity:ComponentActivity(){
    Spacer(Modifier.height(16.dp));Button({restoreRetry++}){Text("Повторить")}
   }
   token==null || me==null -> Register{t,u->prefs.edit().putString("token",t).apply();token=t;me=u}
-  peer==null&&activeGroup==null&&!viewingGroups -> Home(token!!,me!!,{peer=it},{viewingGroups=true},{me=it},privacy){prefs.edit().clear().apply();token=null;me=null;peer=null;activeGroup=null;viewingGroups=false;logoutNonce++}
+  peer==null&&activeGroup==null&&!viewingGroups&&!viewingCalls -> Home(token!!,me!!,{peer=it},{viewingGroups=true},{viewingCalls=true},{me=it},privacy){prefs.edit().clear().apply();token=null;me=null;peer=null;activeGroup=null;viewingGroups=false;viewingCalls=false;logoutNonce++}
   activeGroup!=null -> GroupRoom(token!!,me!!,activeGroup!!){activeGroup=null}
   viewingGroups -> LumoBackdrop(Modifier.fillMaxSize()){
    Column(Modifier.fillMaxSize().statusBarsPadding()){
@@ -94,6 +95,7 @@ class MainActivity:ComponentActivity(){
     GroupsScreen(token!!){activeGroup=it}
    }
   }
+  viewingCalls -> LumoCallsLab(token!!,me!!){viewingCalls=false}
   else -> Chat(token!!,me!!,peer!!){peer=null}
  }
 }
@@ -206,7 +208,7 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Home(token:String,me:User,open:(User)->Unit,openGroups:()->Unit,profileChanged:(User)->Unit,privacy:LumoPrivacy,logout:()->Unit){
+@Composable fun Home(token:String,me:User,open:(User)->Unit,openGroups:()->Unit,openCalls:()->Unit,profileChanged:(User)->Unit,privacy:LumoPrivacy,logout:()->Unit){
  var tab by remember{mutableIntStateOf(0)}
  LumoBackdrop(Modifier.fillMaxSize()){
   Scaffold(
@@ -229,7 +231,7 @@ class MainActivity:ComponentActivity(){
     when(tab){
      0->Chats(token,{tab=1},open,openGroups,privacy)
      1->People(token,open)
-     else->Profile(token,me,profileChanged,privacy,logout)
+     else->Profile(token,me,profileChanged,privacy,openCalls,logout)
     }
    }
   }
@@ -403,7 +405,7 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Profile(token:String,me:User,profileChanged:(User)->Unit,privacy:LumoPrivacy,logout:()->Unit){
+@Composable fun Profile(token:String,me:User,profileChanged:(User)->Unit,privacy:LumoPrivacy,openCalls:()->Unit,logout:()->Unit){
  val context=LocalContext.current
  val scope=rememberCoroutineScope()
  val profilePrefs=remember{context.getSharedPreferences("lumo_local_profile",Context.MODE_PRIVATE)}
@@ -509,6 +511,15 @@ class MainActivity:ComponentActivity(){
   LumoAppearanceControls()
   Spacer(Modifier.height(16.dp))
   LumoPrivacyControls(privacy)
+  Spacer(Modifier.height(16.dp))
+  Column(Modifier.fillMaxWidth().lumoGlass(25).padding(17.dp)){
+   Text("Звонки",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=Color.White)
+   Spacer(Modifier.height(6.dp))
+   Text("Тестовая сигнализация вызовов. Микрофон и камера в этой сборке не включаются автоматически.",
+    style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+   Spacer(Modifier.height(12.dp))
+   LumoNeonButton("Открыть лабораторию звонков",openCalls,Modifier.fillMaxWidth())
+  }
   Spacer(Modifier.height(16.dp))
   Column(Modifier.fillMaxWidth().lumoGlass(25).padding(18.dp)){
    Text("⚙   Обновление",style=MaterialTheme.typography.titleMedium,
