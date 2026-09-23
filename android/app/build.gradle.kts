@@ -32,4 +32,5 @@ dependencies {
  implementation("com.squareup.okhttp3:okhttp:4.12.0")
  // Draft-only WebRTC audio prototype, not available in the published Lumo app.
  implementation("io.github.webrtc-sdk:android:150.7871.01")
+ testImplementation("junit:junit:4.13.2")
 }
