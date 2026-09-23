@@ -24,6 +24,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -256,6 +259,17 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
   checking=true
   available=runCatching{withContext(Dispatchers.IO){MediaApi.enabled()}}.getOrDefault(false)
   checking=false
+ }
+ val lifecycleHost=context as? LifecycleOwner
+ DisposableEffect(lifecycleHost,peer.id){
+  val observer=LifecycleEventObserver{_,event->
+   if(event==Lifecycle.Event.ON_STOP && recorder!=null){
+    stopRecording(true)
+    status="Запись остановлена при сворачивании приложения"
+   }
+  }
+  lifecycleHost?.lifecycle?.addObserver(observer)
+  onDispose{lifecycleHost?.lifecycle?.removeObserver(observer)}
  }
  DisposableEffect(peer.id){
   onDispose{
