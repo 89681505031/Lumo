@@ -134,24 +134,32 @@ class MainActivity:ComponentActivity(){
 
 @Composable fun Home(token:String,me:User,open:(User)->Unit,profileChanged:(User)->Unit,logout:()->Unit){
  var tab by remember{mutableIntStateOf(0)}
- LumoBackdrop(Modifier.fillMaxSize()){Scaffold(containerColor=Color.Transparent,
-  topBar={Surface(color=Color.Transparent,shadowElevation=0.dp){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(20.dp,14.dp),verticalAlignment=Alignment.CenterVertically){
-   Text("Lumo",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White);Spacer(Modifier.weight(1f));Box(Modifier.lumoGlass(18).padding(horizontal=12.dp,vertical=8.dp)){Text(me.displayName,style=MaterialTheme.typography.labelLarge,color=Color.White)}
-  }}},
-  bottomBar={Box(Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=8.dp).lumoGlass(30)){NavigationBar(containerColor=Color.Transparent){
-   NavigationBarItem(selected=tab==0,onClick={tab=0},icon={Text("◉")},label={Text("Чаты")})
-   NavigationBarItem(selected=tab==1,onClick={tab=1},icon={Text("⌕")},label={Text("Люди")})
-   NavigationBarItem(selected=tab==2,onClick={tab=2},icon={Text("◌")},label={Text("Профиль")})
-  }}}
- ){pad->
-  Box(Modifier.padding(pad).fillMaxSize()){
-   when(tab){
-    0->Chats(token,{tab=1},open)
-    1->People(token,open)
-    else->Profile(token,me,profileChanged,logout)
+ LumoBackdrop(Modifier.fillMaxSize()){
+  Scaffold(
+   containerColor=Color.Transparent,
+   topBar={
+    Row(
+     Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=18.dp,vertical=12.dp),
+     verticalAlignment=Alignment.CenterVertically
+    ){
+     Text("Lumo",style=MaterialTheme.typography.headlineLarge,fontWeight=FontWeight.ExtraBold,color=Color.White)
+     Spacer(Modifier.weight(1f))
+     Box(Modifier.lumoGlass(22).clickable{tab=2}.padding(horizontal=15.dp,vertical=8.dp)){
+      Text(me.displayName,style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold,color=Color.White,maxLines=1)
+     }
+    }
+   },
+   bottomBar={LumoBottomNavigation(selected=tab,onSelect={tab=it})}
+  ){pad->
+   Box(Modifier.fillMaxSize().padding(pad)){
+    when(tab){
+     0->Chats(token,{tab=1},open)
+     1->People(token,open)
+     else->Profile(token,me,profileChanged,logout)
+    }
    }
   }
- }}
+ }
 }
 
 @Composable fun Chats(token:String,find:()->Unit,open:(User)->Unit){
