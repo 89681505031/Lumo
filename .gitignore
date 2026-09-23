@@ -6,3 +6,8 @@ node_modules/
 local.properties
 build/
 **/build/
+
+# Never commit signing private keys.
+*.jks
+*.keystore
+*.p12

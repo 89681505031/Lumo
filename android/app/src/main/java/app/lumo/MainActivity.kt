@@ -43,7 +43,7 @@ import kotlinx.coroutines.launch
 data class User(val id:String,val username:String,val displayName:String)
 data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="")
 data class Conversation(val peer:User,val lastMessage:String,val lastAt:String="",val unreadCount:Int=0,val pinned:Boolean=false)
-data class UpdateInfo(val versionCode:Int,val downloadUrl:String)
+data class UpdateInfo(val versionCode:Int,val downloadUrl:String,val sha256:String)
 data class Receipt(val messageId:String,val deliveredAt:String,val readAt:String)
 data class PendingMessage(val clientMessageId:String,val text:String)
 private fun nullableJsonText(o:JSONObject,key:String):String=if(o.isNull(key))"" else o.optString(key)
@@ -279,7 +279,7 @@ class MainActivity:ComponentActivity(){
     }
    }
   }}
-  Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text("Обновление",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text(updateText);Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(checking)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp));if(progress>=0){Spacer(Modifier.height(12.dp));LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth());Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp))};update?.let{u->if(progress<0){Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl){p->scope.launch{progress=p;updateText=if(p<0)"Не удалось загрузить обновление" else if(p<100)"Загружаем обновление…" else "Устанавливаем обновление…"}}},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}}}}
+  Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text("Обновление",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text(updateText);Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(checking)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp));if(progress>=0){Spacer(Modifier.height(12.dp));LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth());Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp))};update?.let{u->if(progress<0){Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl,u.sha256){p->scope.launch{progress=p;updateText=if(p<0)"Не удалось загрузить обновление" else if(p<100)"Загружаем обновление…" else "Устанавливаем обновление…"}}},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}}}}
   Spacer(Modifier.height(14.dp))
   OutlinedButton(onClick={
    loggingOut=true;logoutError=""
@@ -304,7 +304,7 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-fun startUpdate(context:Context,url:String,onProgress:(Int)->Unit){
+fun startUpdate(context:Context,url:String,expectedSha256:String,onProgress:(Int)->Unit){
  if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()){
   context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+context.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));return
  }
@@ -313,11 +313,28 @@ fun startUpdate(context:Context,url:String,onProgress:(Int)->Unit){
    val request=Request.Builder().url(url).build()
    Api.httpClient.newCall(request).execute().use{response->
     if(!response.isSuccessful)error("HTTP "+response.code)
-    val body=response.body?:error("Пустой APK");val total=body.contentLength();val file=File(context.cacheDir,"Lumo-update.apk")
-    body.byteStream().use{input->file.outputStream().use{out->val buf=ByteArray(64*1024);var read:Int;var done=0L;var last=-1;while(input.read(buf).also{read=it}>0){out.write(buf,0,read);done+=read;if(total>0){val p=((done*100)/total).toInt().coerceIn(0,100);if(p!=last){last=p;onProgress(p)}}}}}
+    val body=response.body?:error("Пустой APK")
+    val total=body.contentLength()
+    val maxApkBytes=150L*1024*1024
+    require(total<=maxApkBytes){"APK слишком большой"}
+    val file=File(context.cacheDir,"Lumo-update.apk")
+    val digest=java.security.MessageDigest.getInstance("SHA-256")
+    body.byteStream().use{input->
+     file.outputStream().use{out->
+      val buf=ByteArray(64*1024);var read:Int;var done=0L;var last=-1
+      while(input.read(buf).also{read=it}>0){
+       done+=read
+       require(done<=maxApkBytes){"APK слишком большой"}
+       digest.update(buf,0,read);out.write(buf,0,read)
+       if(total>0){val p=((done*100)/total).toInt().coerceIn(0,100);if(p!=last){last=p;onProgress(p)}}
+      }
+     }
+    }
+    val actual=digest.digest().joinToString(""){ "%02x".format(it.toInt() and 0xff) }
+    if(!actual.equals(expectedSha256,ignoreCase=true)){file.delete();error("Контрольная сумма APK не совпадает")}
     onProgress(100);installUpdate(context,file)
    }
-  }.onFailure{onProgress(-1)}
+  }.onFailure{File(context.cacheDir,"Lumo-update.apk").delete();onProgress(-1)}
  }
 }
 
@@ -492,8 +509,31 @@ fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/
   val request=Request.Builder().url(HTTP+"/api/messages/read").header("Authorization","Bearer "+t).post(body.toString().toRequestBody("application/json".toMediaType())).build()
   c.newCall(request).execute().use{response->if(!response.isSuccessful)error("Прочтение: "+response.code)}
  }
- fun latestRelease():UpdateInfo{val r=Request.Builder().url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest").header("Accept","application/vnd.github+json").build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Обновление: "+x.code);val o=JSONObject(x.body!!.string());val code=Regex("versionCode=(\\d+)").find(o.optString("body"))?.groupValues?.get(1)?.toIntOrNull()?:0;val a=o.getJSONArray("assets");for(i in 0 until a.length()){val asset=a.getJSONObject(i);if(asset.optString("name")=="app-debug.apk" || asset.optString("name")=="app-release.apk" || asset.optString("label")=="Lumo.apk")return UpdateInfo(code,asset.getString("browser_download_url"))};error("APK не найден")}}
- fun socket(t:String,onMessage:(Msg)->Unit,onReceipt:(Receipt)->Unit,onError:(String)->Unit,onReady:()->Unit,onDisconnected:()->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS).header("Authorization","Bearer "+t).build(),object:WebSocketListener(){override fun onOpen(w:WebSocket,response:Response){};override fun onMessage(w:WebSocket,s:String){runCatching{val o=JSONObject(s);when(o.optString("type")){"ready"->onReady();"message"->onMessage(msg(o.getJSONObject("message")));"receipt"->onReceipt(Receipt(o.getString("messageId"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt")));"error"->onError(o.optString("error"));else->Unit}}.onFailure{onError("invalid_server_message")}};override fun onClosed(w:WebSocket,code:Int,reason:String)=onDisconnected();override fun onFailure(w:WebSocket,t:Throwable,response:Response?)=onDisconnected()})}
+ fun latestRelease():UpdateInfo{
+   val request=Request.Builder().url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest")
+    .header("Accept","application/vnd.github+json").build()
+   c.newCall(request).execute().use{response->
+    if(!response.isSuccessful)error("Обновление: "+response.code)
+    val release=JSONObject(response.body!!.string())
+    val body=release.optString("body")
+    val code=Regex("""versionCode=(\d+)""").find(body)?.groupValues?.get(1)?.toIntOrNull()
+     ?:error("В релизе отсутствует versionCode")
+    val expected=Regex("""(?i)sha256=([0-9a-f]{64})""").find(body)?.groupValues?.get(1)?.lowercase()
+     ?:error("В релизе отсутствует SHA-256")
+    val assets=release.getJSONArray("assets")
+    for(i in 0 until assets.length()){
+     val asset=assets.getJSONObject(i)
+     if(asset.optString("name")=="app-release.apk"){
+      val url=asset.getString("browser_download_url")
+      if(!url.startsWith("https://github.com/89681505031/Lumo/releases/download/"))
+       error("Непроверенный источник APK")
+      return UpdateInfo(code,url,expected)
+     }
+    }
+    error("Подписанный APK не найден")
+   }
+  }
+  fun socket(t:String,onMessage:(Msg)->Unit,onReceipt:(Receipt)->Unit,onError:(String)->Unit,onReady:()->Unit,onDisconnected:()->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS).header("Authorization","Bearer "+t).build(),object:WebSocketListener(){override fun onOpen(w:WebSocket,response:Response){};override fun onMessage(w:WebSocket,s:String){runCatching{val o=JSONObject(s);when(o.optString("type")){"ready"->onReady();"message"->onMessage(msg(o.getJSONObject("message")));"receipt"->onReceipt(Receipt(o.getString("messageId"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt")));"error"->onError(o.optString("error"));else->Unit}}.onFailure{onError("invalid_server_message")}};override fun onClosed(w:WebSocket,code:Int,reason:String)=onDisconnected();override fun onFailure(w:WebSocket,t:Throwable,response:Response?)=onDisconnected()})}
  private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"))
  private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"))
 }
