@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "check": "node --check server.js && node --check src/index.js && node --check src/db.js && node --check src/call-signaling.js && node --check src/postgres-store.js && node --check src/password.js"
+    "check": "node --check server.js && node --check src/index.js && node --check src/db.js && node --check src/call-signaling.js && node --check src/call-cleanup.js && node --check src/postgres-store.js && node --check src/password.js"
   },
   "dependencies": {
     "express": "^5.1.0",
