@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import WebSocket from "ws";
 import pg from "pg";
+import { dispatchPushBatch } from "../src/push-outbox.js";
 import { readFile } from "node:fs/promises";
 
 const databaseUrl=process.env.LUMO_TEST_DATABASE_URL;
@@ -243,7 +244,65 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
       assert.equal(rows.rowCount,1,"At most one session owns one FCM token");
       assert.equal(rows.rows[0].user_id,b.user.id);
       assert.equal(rows.rows[0].session_token,b.token);
+
+      // A message insert and its per-session job commit atomically, for HTTP and WS alike.
+      const notificationText="A private message that must never leave this database";
+      const pushId=randomUUID();
+      const newMessage=await request("/api/messages","POST",c.token,{
+        to:b.user.id,text:notificationText,clientMessageId:pushId
+      },otherBase);
+      assert.equal(newMessage.status,201);
+      const retriedMessage=await request("/api/messages","POST",c.token,{
+        to:b.user.id,text:notificationText,clientMessageId:pushId
+      });
+      assert.equal(retriedMessage.status,200);
+      const queued=await pushPool.query("select session_token,status from push_outbox where message_id=$1",[newMessage.json.id]);
+      assert.equal(queued.rowCount,1,"Idempotent retried message creates one notification job");
+      assert.equal(queued.rows[0].session_token,b.token);
+      const notificationRequests=[];
+      const sender=async p=>{notificationRequests.push(p);};
+      const parallel=await Promise.all([
+        dispatchPushBatch({db:pushPool,send:sender,max:2}),
+        dispatchPushBatch({db:pushPool,send:sender,max:2})
+      ]);
+      assert.equal(parallel.reduce((sum,r)=>sum+r.sent,0),1,
+        "Cross-instance workers may claim a notification only once");
+      assert.equal(notificationRequests.length,1);
+      assert.equal(notificationRequests[0].token,pushToken);
+      assert.ok(!JSON.stringify(notificationRequests[0]).includes(notificationText),
+        "Do not send message contents or author names to FCM");
+      const afterDelivery=await pushPool.query("select status from push_outbox where message_id=$1",[newMessage.json.id]);
+      assert.equal(afterDelivery.rows[0].status,"sent");
+
+      // Messages already read by the recipient should never generate late alerts.
+      const readMessage=await request("/api/messages","POST",c.token,{
+        to:b.user.id,text:"Read before worker",clientMessageId:randomUUID()
+      });
+      assert.equal(readMessage.status,201);
+      assert.equal((await request("/api/messages/read","POST",b.token,{ids:[readMessage.json.id]})).status,200);
+      const beforeSkipped=notificationRequests.length;
+      await dispatchPushBatch({db:pushPool,send:sender});
+      assert.equal(notificationRequests.length,beforeSkipped,"Skip already-read notifications");
+
+      // Blocking after insertion but before dispatch must suppress queued alerts.
+      const blockedMessage=await request("/api/messages","POST",c.token,{
+        to:b.user.id,text:"Blocked before worker",clientMessageId:randomUUID()
+      });
+      assert.equal(blockedMessage.status,201);
+      assert.equal((await request("/api/blocks/"+c.user.id,"PUT",b.token)).status,200);
+      await dispatchPushBatch({db:pushPool,send:sender});
+      assert.equal(notificationRequests.length,beforeSkipped,"Blocked sender must not generate push");
+      assert.equal((await request("/api/blocks/"+c.user.id,"DELETE",b.token)).status,204);
+
+      // Opting out between message insertion and dispatch is respected.
+      const revokeMessage=await request("/api/messages","POST",c.token,{
+        to:b.user.id,text:"Revoked before worker",clientMessageId:randomUUID()
+      });
+      assert.equal(revokeMessage.status,201);
       const revoked=await request("/api/devices/push","DELETE",b.token,null,otherBase);
+      assert.equal(revoked.status,204);
+      await dispatchPushBatch({db:pushPool,send:sender});
+      assert.equal(notificationRequests.length,beforeSkipped,"Revoked device must not receive pending alerts");
       assert.equal(revoked.status,204);
       const gone=await pushPool.query("select 1 from push_devices where fcm_token=$1",[pushToken]);
       assert.equal(gone.rowCount,0,"Revoking push registration removes the token");
