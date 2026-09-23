@@ -274,6 +274,52 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
       const afterDelivery=await pushPool.query("select status from push_outbox where message_id=$1",[newMessage.json.id]);
       assert.equal(afterDelivery.rows[0].status,"sent");
 
+      // Reproduce a stalled provider response after the worker's lease expires.
+      // A second cron instance can reclaim the job. When the first finally
+      // reports an INVALID token, it MUST NOT delete the second worker's active
+      // registration or overwrite the second worker's successful result.
+      const leaseMessage=await request("/api/messages","POST",c.token,{
+        to:b.user.id,text:"Race test: stale worker",clientMessageId:randomUUID()
+      });
+      assert.equal(leaseMessage.status,201);
+      let onProviderStarted;
+      const providerStarted=new Promise(resolve=>{onProviderStarted=resolve;});
+      let releaseStalledSender;
+      const stalled=new Promise(resolve=>{releaseStalledSender=resolve;});
+      const oldWorker=dispatchPushBatch({
+        db:pushPool,max:1,
+        send:async()=>{
+          onProviderStarted();
+          await stalled;
+          throw Object.assign(new Error("Invalid token from delayed provider"),{
+            code:"messaging/invalid-registration-token"
+          });
+        }
+      });
+      await providerStarted;
+      const artificialExpiry=await pushPool.query(`update push_outbox
+        set lease_until=now()-interval '1 second'
+        where message_id=$1 and status='pending'
+        returning attempts`,[leaseMessage.json.id]);
+      assert.equal(artificialExpiry.rows[0].attempts,1);
+      const recovered=await dispatchPushBatch({
+        db:pushPool,max:1,send:async p=>{notificationRequests.push(p);}
+      });
+      assert.equal(recovered.sent,1,"Another worker can recover an expired lease");
+      releaseStalledSender();
+      const staleResult=await oldWorker;
+      assert.equal(staleResult.dropped,0,"A superseded worker must not drop another worker's job");
+      const recoveredRow=await pushPool.query(`select status,attempts
+        from push_outbox where message_id=$1`,[leaseMessage.json.id]);
+      assert.equal(recoveredRow.rows[0].status,"sent");
+      assert.equal(recoveredRow.rows[0].attempts,2);
+      const registration=await pushPool.query(
+        "select 1 from push_devices where fcm_token=$1 and session_token=$2",
+        [pushToken,b.token]
+      );
+      assert.equal(registration.rowCount,1,
+        "Stale invalid-token callback must not delete the active registration");
+
       // Messages already read by the recipient should never generate late alerts.
       const readMessage=await request("/api/messages","POST",c.token,{
         to:b.user.id,text:"Read before worker",clientMessageId:randomUUID()
