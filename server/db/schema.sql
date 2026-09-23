@@ -28,10 +28,13 @@ create table if not exists messages (
   read_at timestamptz,
   client_message_id uuid,
   edited_at timestamptz,
-  deleted_at timestamptz
+  deleted_at timestamptz,
+  original_text varchar(4000)
 );
 alter table messages add column if not exists edited_at timestamptz;
 alter table messages add column if not exists deleted_at timestamptz;
+alter table messages add column if not exists original_text varchar(4000);
+update messages set original_text=text where original_text is null;
 create unique index if not exists messages_sender_client_id_uidx on messages(sender_id, client_message_id) where client_message_id is not null;
 create index if not exists messages_sender_idx on messages(sender_id, created_at desc);
 create index if not exists messages_recipient_idx on messages(recipient_id, created_at desc);
