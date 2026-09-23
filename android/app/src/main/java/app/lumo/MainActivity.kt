@@ -40,7 +40,7 @@ import kotlinx.coroutines.launch
 
 data class User(val id:String,val username:String,val displayName:String)
 data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="")
-data class Conversation(val peer:User,val lastMessage:String,val lastAt:String="")
+data class Conversation(val peer:User,val lastMessage:String,val lastAt:String="",val unreadCount:Int=0,val pinned:Boolean=false)
 data class UpdateInfo(val versionCode:Int,val downloadUrl:String)
 data class Receipt(val messageId:String,val deliveredAt:String,val readAt:String)
 data class PendingMessage(val clientMessageId:String,val text:String)
@@ -48,12 +48,14 @@ private fun nullableJsonText(o:JSONObject,key:String):String=if(o.isNull(key))""
 class SessionExpiredException:Exception("Сессия недействительна")
 
 class MainActivity:ComponentActivity(){
- override fun onCreate(b:Bundle?){super.onCreate(b);setContent{MaterialTheme{App()}}}
+ override fun onCreate(b:Bundle?){super.onCreate(b);setContent{App()}}
 }
 
 @Composable fun App(){
  val context=LocalContext.current
  val prefs=remember{context.getSharedPreferences("lumo_session",Context.MODE_PRIVATE)}
+ val uiPrefs=remember{context.getSharedPreferences("lumo_ui",Context.MODE_PRIVATE)}
+ var darkMode by remember{mutableStateOf(uiPrefs.getBoolean("dark_mode",false))}
  var token by remember{mutableStateOf(prefs.getString("token",null))}
  var me by remember{mutableStateOf<User?>(null)}
  var peer by remember{mutableStateOf<User?>(null)}
@@ -72,6 +74,7 @@ class MainActivity:ComponentActivity(){
    restoring=false
   }
  }
+ MaterialTheme(colorScheme=if(darkMode)darkColorScheme() else lightColorScheme()){
  when {
   restoring -> Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()}
   restoreError -> Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
@@ -79,8 +82,9 @@ class MainActivity:ComponentActivity(){
    Spacer(Modifier.height(16.dp));Button({restoreRetry++}){Text("Повторить")}
   }
   token==null || me==null -> Register{t,u->prefs.edit().putString("token",t).apply();token=t;me=u}
-  peer==null -> Home(token!!,me!!,{peer=it},{me=it}){prefs.edit().clear().apply();token=null;me=null;peer=null;logoutNonce++}
+  peer==null -> Home(token!!,me!!,{peer=it},{me=it},darkMode,{value->darkMode=value;uiPrefs.edit().putBoolean("dark_mode",value).apply()}){prefs.edit().clear().apply();token=null;me=null;peer=null;logoutNonce++}
   else -> Chat(token!!,me!!,peer!!){peer=null}
+ }
  }
 }
 
@@ -127,7 +131,7 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Home(token:String,me:User,open:(User)->Unit,profileChanged:(User)->Unit,logout:()->Unit){
+@Composable fun Home(token:String,me:User,open:(User)->Unit,profileChanged:(User)->Unit,darkMode:Boolean,onDarkModeChange:(Boolean)->Unit,logout:()->Unit){
  var tab by remember{mutableIntStateOf(0)}
  Scaffold(
   topBar={Surface(shadowElevation=2.dp){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(20.dp,14.dp),verticalAlignment=Alignment.CenterVertically){
@@ -143,7 +147,7 @@ class MainActivity:ComponentActivity(){
    when(tab){
     0->Chats(token,{tab=1},open)
     1->People(token,open)
-    else->Profile(token,me,profileChanged,logout)
+    else->Profile(token,me,profileChanged,darkMode,onDarkModeChange,logout)
    }
   }
  }
@@ -211,7 +215,7 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Profile(token:String,me:User,profileChanged:(User)->Unit,logout:()->Unit){
+@Composable fun Profile(token:String,me:User,profileChanged:(User)->Unit,darkMode:Boolean,onDarkModeChange:(Boolean)->Unit,logout:()->Unit){
  val context=LocalContext.current
  val scope=rememberCoroutineScope()
  var editing by remember{mutableStateOf(false)};var name by remember(me.displayName){mutableStateOf(me.displayName)};var saving by remember{mutableStateOf(false)};var profileError by remember{mutableStateOf("")}
@@ -230,6 +234,7 @@ class MainActivity:ComponentActivity(){
     Spacer(Modifier.height(10.dp));Row{Button({saving=true;scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.updateMe(token,name)}}.onSuccess{profileChanged(it);editing=false}.onFailure{profileError="Не удалось сохранить"};saving=false}},enabled=!saving&&name.isNotBlank()){Text(if(saving)"Сохраняем…" else "Сохранить")};Spacer(Modifier.width(8.dp));TextButton({name=me.displayName;editing=false}){Text("Отмена")}}
    }else Button({editing=true},modifier=Modifier.fillMaxWidth()){Text("Редактировать профиль")}
   }}
+  Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Row(Modifier.fillMaxWidth().padding(18.dp),verticalAlignment=Alignment.CenterVertically){Text("Тёмная тема",modifier=Modifier.weight(1f));Switch(checked=darkMode,onCheckedChange=onDarkModeChange)}}
   Spacer(Modifier.height(14.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text("Обновление",fontWeight=FontWeight.SemiBold);Spacer(Modifier.height(6.dp));Text(updateText);Text("Версия "+BuildConfig.VERSION_NAME,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant);if(checking)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=12.dp));if(progress>=0){Spacer(Modifier.height(12.dp));LinearProgressIndicator(progress={progress/100f},modifier=Modifier.fillMaxWidth());Text("Загрузка: $progress%",modifier=Modifier.padding(top=6.dp))};update?.let{u->if(progress<0){Spacer(Modifier.height(12.dp));Button({startUpdate(context,u.downloadUrl){p->scope.launch{progress=p;updateText=if(p<0)"Не удалось загрузить обновление" else if(p<100)"Загружаем обновление…" else "Устанавливаем обновление…"}}},modifier=Modifier.fillMaxWidth()){Text("Обновить Lumo")}}}}}
   Spacer(Modifier.height(14.dp))
   OutlinedButton(onClick={
@@ -411,8 +416,19 @@ object Api{
  fun updateMe(t:String,name:String):User{val j=JSONObject().put("displayName",name);val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).patch(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Профиль: "+x.code);return user(JSONObject(x.body!!.string()))}}
  fun me(t:String):User{val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful)error("Сессия: "+x.code);return user(JSONObject(x.body!!.string()))}}
  fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
- fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Чаты: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"),o.optString("lastAt"))}}}
- fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/messages/"+p).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("История: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{msg(a.getJSONObject(it))}}}
+ fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Чаты: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"),o.optString("lastAt"),o.optInt("unreadCount",0),o.optBoolean("pinned",false))}}}
+ fun pin(t:String,peerId:String,enabled:Boolean):Boolean{
+ val builder=Request.Builder().url(HTTP+"/api/conversations/"+peerId+"/pin").header("Authorization","Bearer "+t)
+ val request=if(enabled)builder.put("".toRequestBody(null)).build() else builder.delete().build()
+ c.newCall(request).execute().use{response->if(!response.isSuccessful)error("Закрепление: "+response.code);return JSONObject(response.body!!.string()).getBoolean("pinned")}
+}
+fun blocks(t:String):List<User>{val request=Request.Builder().url(HTTP+"/api/blocks").header("Authorization","Bearer "+t).build();c.newCall(request).execute().use{response->if(!response.isSuccessful)error("Блокировки: "+response.code);val a=JSONArray(response.body!!.string());return (0 until a.length()).map{user(a.getJSONObject(it))}}}
+fun setBlocked(t:String,peerId:String,blocked:Boolean){
+ val builder=Request.Builder().url(HTTP+"/api/blocks/"+peerId).header("Authorization","Bearer "+t)
+ val request=if(blocked)builder.put("".toRequestBody(null)).build() else builder.delete().build()
+ c.newCall(request).execute().use{response->if(!response.isSuccessful)error("Блокировка: "+response.code)}
+}
+fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/messages/"+p).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("История: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{msg(a.getJSONObject(it))}}}
  fun sendMessage(t:String,to:String,p:PendingMessage):Msg{
   val body=JSONObject().put("to",to).put("text",p.text).put("clientMessageId",p.clientMessageId)
   val request=Request.Builder().url(HTTP+"/api/messages").header("Authorization","Bearer "+t).post(body.toString().toRequestBody("application/json".toMediaType())).build()
