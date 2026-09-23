@@ -9,7 +9,7 @@ This branch is a **server-side integration layer** for private direct-message me
 - `MEDIA_ACCESS_KEY_ID`, `MEDIA_SECRET_ACCESS_KEY`: narrowly scoped server-only credentials for this bucket's private prefix. Set as Vercel/hosting environment secrets, never commit them or send them through chat.
 - Optional `MEDIA_ENDPOINT`: HTTPS S3-compatible endpoint. Default uses the AWS region endpoint. `MEDIA_TEST_ALLOW_HTTP_LOCAL` is honored **only** with `NODE_ENV=test` and localhost endpoints.
 
-If any required setting is absent, `GET /api/capabilities` reports `{"mediaReady":false}` and the upload API returns a clear 503. The normal text chat remains usable.
+New uploads require **both** the storage settings above and explicit `MEDIA_ENABLE_UPLOADS=true` after bucket permissions, quarantine scanning and production security checks are complete. Otherwise `GET /api/capabilities` reports `{"mediaReady":false}` and the upload API returns 503. The normal text chat remains usable.
 
 ## Server flow
 
