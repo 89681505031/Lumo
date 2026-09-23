@@ -1,0 +1,27 @@
+name: Production Health
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/production-health.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "11 */6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify Lumo production HTTP and database health
+        env:
+          LUMO_PRODUCTION_URL: https://lumo-gamma-seven.vercel.app
+        run: node --test server/test/production-smoke.test.js
