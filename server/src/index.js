@@ -18,6 +18,7 @@ app.use((error, _req, res, next) => {
   next(error);
 });
 
+const sessionTokenPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const users = new Map();
 const sessions = new Map();
 const messages = [];
@@ -34,12 +35,12 @@ async function auth(req, res, next) {
   try {
     const header = req.headers.authorization || "";
     const token = header.startsWith("Bearer ") ? header.slice(7) : "";
-    if (!token) return res.status(401).json({ error: "unauthorized" });
+    if (!sessionTokenPattern.test(token)) return res.status(401).json({ error: "unauthorized" });
     if (!hasDatabase) return res.status(503).json({ error: "database_unavailable" });
-    const userId = sessions.get(token);
-    const user = hasDatabase ? await postgresStore.userBySession(token) : users.get(userId);
+    const user = await postgresStore.userBySession(token);
     if (!user) return res.status(401).json({ error: "unauthorized" });
     req.user = user;
+    req.sessionToken = token;
     next();
   } catch (error) {
     console.error("Authentication database error", error);
@@ -93,6 +94,17 @@ app.post("/api/login", requireDatabase, rateLimit({windowMs:15*60_000,max:10}), 
 });
 
 app.get("/api/me", auth, (req, res) => res.json(publicUser(req.user)));
+app.post("/api/logout", auth, async (req, res) => {
+  try {
+    await postgresStore.revokeSession(req.user.id, req.sessionToken);
+    const active = sockets.get(req.user.id);
+    if (active?.sessionToken === req.sessionToken) active.close(1008, "Signed out");
+    res.status(204).end();
+  } catch (error) {
+    console.error("Logout failed", error);
+    res.status(503).json({ error: "service_unavailable" });
+  }
+});
 
 app.patch("/api/me", auth, async (req, res) => {
   try {
@@ -215,7 +227,18 @@ wss.on("connection", async (ws, req) => {
   if (!userId) return ws.close(1008, "Unauthorized");
   const previousSocket=sockets.get(userId);
   if(previousSocket && previousSocket!==ws && previousSocket.readyState===previousSocket.OPEN) previousSocket.close(1000,"Replaced by a newer connection");
+  ws.sessionToken = token;
   sockets.set(userId, ws);
+  const sessionCheck = hasDatabase ? setInterval(async () => {
+    if (ws.readyState !== ws.OPEN) return;
+    try {
+      if (!(await postgresStore.userBySession(token))) ws.close(1008, "Session expired");
+    } catch (error) {
+      console.error("WebSocket session validation failed", error);
+      ws.close(1013, "Service unavailable");
+    }
+  }, 30_000) : null;
+  sessionCheck?.unref?.();
   let socketWindowStart=Date.now(),socketMessageCount=0;
   ws.send(JSON.stringify({ type: "ready", userId }));
   if (hasDatabase) {
@@ -230,6 +253,7 @@ wss.on("connection", async (ws, req) => {
   ws.on("message", async raw => {
     try {
       if (sockets.get(userId) !== ws) return ws.close(1008, "Connection replaced");
+      if (hasDatabase && !(await postgresStore.userBySession(token))) return ws.close(1008, "Session expired");
       if(raw.length>16_384)return ws.close(1009,"Message too large");
       const now=Date.now();if(now-socketWindowStart>=10_000){socketWindowStart=now;socketMessageCount=0;}if(++socketMessageCount>100)return ws.close(1008,"Rate limit");
       const data = JSON.parse(raw.toString());
@@ -258,7 +282,7 @@ wss.on("connection", async (ws, req) => {
       ws.send(JSON.stringify({ type: "message", message }));
     } catch (error) { console.error("WebSocket message handling failed",error); if(ws.readyState===ws.OPEN) ws.send(JSON.stringify({ type: "error", error: error?.code==="CLIENT_MESSAGE_ID_CONFLICT" ? "client_message_id_conflict" : "service_unavailable" })); }
   });
-  const clearSocket=()=>{if(sockets.get(userId)===ws)sockets.delete(userId);};
+  const clearSocket=()=>{if(sessionCheck)clearInterval(sessionCheck);if(sockets.get(userId)===ws)sockets.delete(userId);};
   ws.on("close",clearSocket);
   ws.on("error",error=>{console.error("WebSocket transport error",error);clearSocket();});
 });
