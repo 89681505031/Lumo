@@ -60,6 +60,50 @@ export const postgresStore = {
     await dbQuery("insert into messages(id,sender_id,recipient_id,text,created_at,delivered_at,read_at) values($1,$2,$3,$4,$5,$6,$7)",[m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt]);
     return {message:m,inserted:true};
   },
+  // Only direct-message participants may react. No lookup ever returns an
+  // unrelated user's message, including when the caller knows its UUID.
+  async messageAccessible(messageId,userId) {
+    const r=await dbQuery(
+      "select 1 from messages where id=$1 and (sender_id=$2 or recipient_id=$2)",
+      [messageId,userId]
+    );
+    return r.rowCount>0;
+  },
+  async addReaction(messageId,userId,emoji) {
+    const result=await dbQuery(
+      `insert into message_reactions(message_id,user_id,emoji)
+       select m.id,$2,$3 from messages m
+       where m.id=$1 and (m.sender_id=$2 or m.recipient_id=$2)
+       on conflict (message_id,user_id,emoji) do nothing
+       returning message_id`,
+      [messageId,userId,emoji]
+    );
+    // Existing reaction is also a successful, idempotent PUT, but a
+    // nonexistent/unrelated message must not be treated as successful.
+    return result.rowCount>0 || await this.messageAccessible(messageId,userId);
+  },
+  async removeReaction(messageId,userId,emoji) {
+    if(!await this.messageAccessible(messageId,userId))return false;
+    await dbQuery(
+      `delete from message_reactions r using messages m
+       where r.message_id=m.id and m.id=$1 and r.user_id=$2 and r.emoji=$3
+         and (m.sender_id=$2 or m.recipient_id=$2)`,
+      [messageId,userId,emoji]
+    );
+    return true;
+  },
+  async reactionsWithPeer(userId,peerId) {
+    const r=await dbQuery(
+      `select r.message_id,r.user_id,r.emoji from message_reactions r
+       join messages m on m.id=r.message_id
+       where (m.sender_id=$1 and m.recipient_id=$2)
+          or (m.sender_id=$2 and m.recipient_id=$1)
+       order by m.created_at desc,r.created_at desc
+       limit 500`,
+      [userId,peerId]
+    );
+    return r.rows.map(x=>({messageId:x.message_id,userId:x.user_id,emoji:x.emoji}));
+  },
   async markMessageDelivered(messageId,userId) {
     const r=await dbQuery("update messages set delivered_at=coalesce(delivered_at,now()) where id=$1 and recipient_id=$2 returning *",[messageId,userId]);
     return r.rows[0] ? mapMessage(r.rows[0]) : null;

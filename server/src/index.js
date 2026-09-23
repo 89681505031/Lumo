@@ -156,6 +156,59 @@ app.get("/api/messages/:peerId", auth, async (req, res) => {
 
 // HTTP transport is a durable fallback when WebSocket peers connect to different instances.
 const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// Opt-in experimental reactions; the production chat API is unchanged unless
+// a staging operator explicitly enables the feature after DB/security checks.
+const reactionsEnabled=hasDatabase && process.env.LUMO_REACTIONS_ENABLED==="true";
+const reactionEmojis=new Set(["👍","❤️","😂","😮","👏","🚀"]);
+function requireReactions(_req,res,next){
+  if(!reactionsEnabled)return res.status(404).json({error:"reactions_unavailable"});
+  next();
+}
+app.get("/api/reactions/capabilities",auth,(_req,res)=>{
+  res.json({enabled:reactionsEnabled,emojis:reactionsEnabled?[...reactionEmojis]:[]});
+});
+app.get("/api/reactions/with/:peerId",auth,requireReactions,async(req,res)=>{
+  const peerId=req.params.peerId;
+  if(!uuidPattern.test(peerId)||peerId===req.user.id)
+    return res.status(400).json({error:"invalid_peer_id"});
+  try{
+    return res.json(await postgresStore.reactionsWithPeer(req.user.id,peerId));
+  }catch(error){
+    console.error("Reaction list failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+app.put("/api/reactions/:messageId",auth,requireReactions,rateLimit({windowMs:60_000,max:80}),async(req,res)=>{
+  const id=req.params.messageId;
+  const emoji=req.body?.emoji;
+  if(!uuidPattern.test(id))return res.status(400).json({error:"invalid_message_id"});
+  if(typeof emoji!=="string" || !reactionEmojis.has(emoji))
+    return res.status(400).json({error:"invalid_reaction"});
+  try{
+    const allowed=await postgresStore.addReaction(id,req.user.id,emoji);
+    if(!allowed)return res.status(404).json({error:"message_not_found"});
+    return res.json({messageId:id,emoji,active:true});
+  }catch(error){
+    console.error("Reaction add failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+app.delete("/api/reactions/:messageId",auth,requireReactions,rateLimit({windowMs:60_000,max:80}),async(req,res)=>{
+  const id=req.params.messageId;
+  const emoji=req.body?.emoji;
+  if(!uuidPattern.test(id))return res.status(400).json({error:"invalid_message_id"});
+  if(typeof emoji!=="string" || !reactionEmojis.has(emoji))
+    return res.status(400).json({error:"invalid_reaction"});
+  try{
+    const allowed=await postgresStore.removeReaction(id,req.user.id,emoji);
+    if(!allowed)return res.status(404).json({error:"message_not_found"});
+    return res.status(204).end();
+  }catch(error){
+    console.error("Reaction removal failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
 app.post("/api/messages", auth, requireDatabase, async (req,res)=>{
   const to=req.body?.to;
   const clientMessageId=req.body?.clientMessageId;

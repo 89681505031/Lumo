@@ -631,12 +631,70 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
 
 @Composable fun Chat(token:String,me:User,peer:User,back:()->Unit){
  val context=LocalContext.current;val scope=rememberCoroutineScope();val queuePrefs=remember{context.getSharedPreferences("lumo_pending",Context.MODE_PRIVATE)};val queueKey="pending_"+me.id+"_"+peer.id
+ var activeMessage by remember(peer.id){mutableStateOf<Msg?>(null)}
+ var forwardingMessage by remember(peer.id){mutableStateOf<Msg?>(null)}
+ var replyTarget by remember(peer.id){mutableStateOf<Msg?>(null)}
+ var reactionsEnabled by remember(token,peer.id){mutableStateOf(false)}
+ var reactions by remember(peer.id){mutableStateOf<List<LumoReaction>>(emptyList())}
+ var reactionRefresh by remember{mutableIntStateOf(0)}
+ var reactionBusy by remember{mutableStateOf(false)}
+ var actionError by remember{mutableStateOf("")}
+ LaunchedEffect(token,peer.id) {
+  reactionsEnabled=runCatching {
+   kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){LumoReactionApi.enabled(token)}
+  }.getOrDefault(false)
+ }
+ LaunchedEffect(token,peer.id,reactionsEnabled,reactionRefresh) {
+  if(reactionsEnabled) while(true) {
+   runCatching {
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+     LumoReactionApi.list(token,peer.id)
+    }
+   }.onSuccess{reactions=it}
+   kotlinx.coroutines.delay(12_000)
+  }
+ }
  val msgs=remember{mutableStateListOf<Msg>()};var input by remember{mutableStateOf("")};var ws by remember{mutableStateOf<WebSocket?>(null)};var socketGeneration by remember{mutableIntStateOf(0)};var connected by remember{mutableStateOf(false)};var socketError by remember{mutableStateOf("")};var historyError by remember{mutableStateOf(false)};val pending=remember{mutableStateListOf<PendingMessage>().apply{val a=runCatching{JSONArray(queuePrefs.getString(queueKey,"[]"))}.getOrNull();if(a!=null)for(i in 0 until a.length()){val o=a.optJSONObject(i);if(o!=null){val id=o.optString("clientMessageId");val text=o.optString("text");if(id.isNotBlank()&&text.isNotBlank())add(PendingMessage(id,text))}else{val text=a.optString(i);if(text.isNotBlank())add(PendingMessage(java.util.UUID.randomUUID().toString(),text))}}}}
  fun savePending(){val a=JSONArray();pending.forEach{a.put(JSONObject().put("clientMessageId",it.clientMessageId).put("text",it.text))};queuePrefs.edit().putString(queueKey,a.toString()).apply()}
  DisposableEffect(peer.id){
   scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{historyError=false;val merged=mergeChatMessages(msgs,it);msgs.clear();msgs.addAll(merged);val unread=it.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true}}
   fun syncHistory(){scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{fresh->historyError=false;val byId=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(byId);val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->scope.launch{if(m.from==peer.id||m.to==peer.id){if(m.from==me.id&&m.clientMessageId.isNotBlank()){pending.removeAll{it.clientMessageId==m.clientMessageId};savePending()};val existing=msgs.indexOfFirst{it.id==m.id};if(existing>=0){msgs[existing]=mergeChatMessages(listOf(msgs[existing]),listOf(m)).first()}else msgs.add(m);if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}}},{r->scope.launch{val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=old.deliveredAt.ifBlank{r.deliveredAt},readAt=old.readAt.ifBlank{r.readAt})}}},{e->scope.launch{socketError=when(e){"service_unavailable"->"Сервер временно недоступен. Переподключаемся…";"recipient_not_found"->"Получатель больше не найден.";"message_too_long"->"Сообщение слишком длинное.";"empty_message"->"Пустое сообщение не отправлено.";"client_message_id_conflict"->"Конфликт повторной отправки. Сообщение сохранено.";"invalid_client_message_id"->"Ошибка идентификатора сообщения.";"invalid_recipient_id"->"Некорректный получатель.";"invalid_server_message"->"Получен некорректный ответ сервера.";"cannot_message_self"->"Нельзя отправить сообщение самому себе." ;else->"Не удалось отправить сообщение"};if(e=="service_unavailable"){connected=false;ws?.close(1012,"retry")}}},{scope.launch{connected=true;socketError="";for(p in pending.toList()){val sent=ws?.send(JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId).toString())==true;if(!sent){connected=false;ws?.close(1012,"retry");break}};syncHistory()}},{scope.launch{if(generation==socketGeneration){connected=false;kotlinx.coroutines.delay(2000);if(generation==socketGeneration)connect()}}})};connect()
   onDispose{socketGeneration++;ws?.close(1000,"bye")}
+ }
+ // A message can be replied to or explicitly copied to another contact on
+ // current text-only production. Reactions require the separate gated backend.
+ activeMessage?.let { selected ->
+  LumoMessageOptions(
+   message=selected,
+   reactionsEnabled=reactionsEnabled && !reactionBusy,
+   onDismiss={activeMessage=null},
+   onReply={replyTarget=selected;activeMessage=null},
+   onForward={forwardingMessage=selected;activeMessage=null},
+   onReact={emoji->
+    if(!reactionBusy) {
+     val add=reactions.none {
+      it.messageId==selected.id && it.userId==me.id && it.emoji==emoji
+     }
+     activeMessage=null
+     reactionBusy=true
+     scope.launch {
+      runCatching {
+       kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+        LumoReactionApi.set(token,selected.id,emoji,add)
+       }
+      }.onSuccess{reactionRefresh++}
+       .onFailure{actionError="Не удалось изменить реакцию. Проверь соединение."}
+      reactionBusy=false
+     }
+    }
+   }
+  )
+ }
+ forwardingMessage?.let { chosen ->
+  LumoForwardDialog(
+   token=token,me=me,source=chosen,
+   onDismiss={forwardingMessage=null}
+  )
  }
  // Reconcile through PostgreSQL-backed HTTP because Vercel peers may use different function instances.
  LaunchedEffect(token,peer.id){
@@ -705,6 +763,13 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
        color=Color(0xFFFFD5E4),style=MaterialTheme.typography.bodySmall)
      }
     }
+    if(actionError.isNotBlank()){
+     Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(16).padding(9.dp)){
+      Text(actionError,color=Color(0xFFFFDBE8),
+       style=MaterialTheme.typography.bodySmall,modifier=Modifier.weight(1f))
+      TextButton(onClick={actionError=""}){Text("×",color=Color.White)}
+     }
+    }
     LazyColumn(
      Modifier.weight(1f).fillMaxWidth(),
      contentPadding=PaddingValues(horizontal=13.dp,vertical=14.dp),
@@ -721,9 +786,10 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
         LumoNeonAvatar(peer.displayName,size=30.dp)
         Spacer(Modifier.width(7.dp))
        }
-       Box(Modifier.widthIn(max=290.dp).lumoBubble(own).padding(horizontal=14.dp,vertical=10.dp)){
-        Column {
-         if(m.text.isNotBlank())Text(m.text,color=Color.White)
+       Column(horizontalAlignment=if(own)Alignment.End else Alignment.Start){
+        Box(Modifier.widthIn(max=290.dp).lumoBubble(own).padding(horizontal=14.dp,vertical=10.dp)){
+         Column {
+          if(m.text.isNotBlank())Text(m.text,color=Color.White)
          if(m.attachmentId.isNotBlank())MediaAttachmentButton(token,m.attachmentId)
          Spacer(Modifier.height(5.dp))
          Row(
@@ -742,8 +808,33 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
             style=MaterialTheme.typography.labelSmall
            )
           }
+          Spacer(Modifier.width(5.dp))
+          TextButton(onClick={activeMessage=m},contentPadding=PaddingValues(horizontal=7.dp)){
+           Text("⋯",color=LumoCyan,style=MaterialTheme.typography.titleMedium)
+          }
          }
         }
+       }
+       if(reactionsEnabled){
+        LumoReactionBadges(
+         entries=reactions.filter{it.messageId==m.id},
+         meId=me.id,
+         onTap={emoji,add->
+          if(!reactionBusy){
+           reactionBusy=true
+           scope.launch{
+            runCatching{
+             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+              LumoReactionApi.set(token,m.id,emoji,add)
+             }
+            }.onSuccess{reactionRefresh++}
+             .onFailure{actionError="Не удалось изменить реакцию. Проверь соединение."}
+            reactionBusy=false
+           }
+          }
+         }
+        )
+       }
        }
       }
      }
@@ -766,6 +857,24 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
      val merged=mergeChatMessages(msgs,listOf(attached))
      msgs.clear();msgs.addAll(merged)
     }
+    replyTarget?.let { original ->
+     Row(
+      Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=5.dp)
+       .lumoGlass(18).padding(horizontal=12.dp,vertical=6.dp),
+      verticalAlignment=Alignment.CenterVertically
+     ){
+      Column(Modifier.weight(1f)){
+       Text("Ответ на сообщение",color=LumoCyan,style=MaterialTheme.typography.labelLarge)
+       Text(
+        (if(original.text.isBlank())"Вложение" else original.text)
+         .replace("\n"," ").take(115),
+        color=Color.White.copy(alpha=.9f),
+        style=MaterialTheme.typography.bodySmall,maxLines=1
+       )
+      }
+      TextButton(onClick={replyTarget=null}){Text("×",color=Color.White)}
+     }
+    }
     Row(
      Modifier.fillMaxWidth().imePadding().padding(horizontal=11.dp,vertical=8.dp)
       .lumoGlass(30).padding(7.dp),
@@ -778,10 +887,18 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
      )
      Spacer(Modifier.width(7.dp))
      LumoNeonButton(
-      text="➤",enabled=input.isNotBlank(),modifier=Modifier.width(56.dp),
+      text="➤",
+      enabled=input.isNotBlank() && (
+       input.trim().length+if(replyTarget!=null)150 else 0
+      )<=4000,
+      modifier=Modifier.width(56.dp),
       onClick={
-       val text=input.trim()
-       if(text.isNotEmpty()){
+       val quote=replyTarget?.let{
+        "↪ "+(if(it.text.isBlank())"Вложение" else it.text)
+         .replace("\n"," ").take(120)+"\n"
+       }.orEmpty()
+       val text=quote+input.trim()
+       if(text.isNotBlank()&&text.length<=4000){
         val p=PendingMessage(java.util.UUID.randomUUID().toString(),text)
         pending.add(p);savePending()
         if(connected){
@@ -792,6 +909,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
          if(!sent){connected=false;ws?.close(1012,"retry")}
         }
         input=""
+        replyTarget=null
        }
       }
      )

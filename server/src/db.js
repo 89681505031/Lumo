@@ -33,6 +33,16 @@ export async function initDatabase() {
   await pool.query(`create unique index if not exists messages_sender_client_id_uidx on messages(sender_id, client_message_id) where client_message_id is not null`);
   await pool.query(`create index if not exists messages_sender_idx on messages(sender_id, created_at desc)`);
   await pool.query(`create index if not exists messages_recipient_idx on messages(recipient_id, created_at desc)`);
+  // Safe to repeat on old databases. Reaction ownership is enforced by the API
+  // and by the foreign keys: deleting a message/account removes its reactions.
+  await pool.query(`create table if not exists message_reactions (
+    message_id uuid not null references messages(id) on delete cascade,
+    user_id uuid not null references users(id) on delete cascade,
+    emoji varchar(12) not null,
+    created_at timestamptz not null default now(),
+    primary key (message_id,user_id,emoji)
+  )`);
+  await pool.query(`create index if not exists message_reactions_user_idx on message_reactions(user_id,created_at desc)`);
   return true;
 }
 export async function dbHealth() {
