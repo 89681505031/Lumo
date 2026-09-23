@@ -35,6 +35,7 @@ android {
  }
  buildTypes {
   getByName("debug") {
+   if (stagingBase != null) applicationIdSuffix=".staging"
    buildConfigField("String","LUMO_HTTP_BASE", "\"$httpForDebug\"")
    buildConfigField("String","LUMO_WS_BASE", "\"$wsForDebug\"")
    buildConfigField("boolean","LUMO_FCM_CONFIGURED",fcmConfigured.toString())
