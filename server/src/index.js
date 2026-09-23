@@ -4,6 +4,8 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { dbHealth, hasDatabase, initDatabase } from "./db.js";
 import { postgresStore } from "./postgres-store.js";
+import { mediaReady, mediaStore } from "./media-store.js";
+const mediaEnabled=mediaReady && process.env.MEDIA_ENABLE_UPLOADS==="true";
 import { hashPassword, verifyPassword, validPassword } from "./password.js";
 
 if (hasDatabase) { try { await initDatabase(); console.log("Lumo PostgreSQL schema ready"); } catch (error) { console.error("Lumo PostgreSQL initialization failed", error); } }
@@ -49,6 +51,7 @@ async function auth(req, res, next) {
 }
 
 app.get("/live", (_req, res) => res.json({ ok: true, service: "lumo-server" }));
+app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled}));
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase,ok:false}; if(hasDatabase){try{database=await dbHealth()}catch(error){console.error("Database health check failed",error);database={configured:true,ok:false}}} const ok=database.configured===true&&database.ok===true; res.status(ok?200:503).json({ ok, service:"lumo-server", database }); });
 
@@ -220,6 +223,76 @@ app.post("/api/messages/read",auth,requireDatabase,async(req,res)=>{
     for(const m of receipts) sendTo(m.from,{type:"receipt",messageId:m.id,deliveredAt:m.deliveredAt,readAt:m.readAt});
     return res.json({receipts:receipts.map(m=>({messageId:m.id,deliveredAt:m.deliveredAt,readAt:m.readAt}))});
   }catch(error){console.error("HTTP read receipt failed",error);return res.status(503).json({error:"service_unavailable"});}
+});
+
+// Media objects live in a PRIVATE S3 bucket. Only short-lived upload/download
+// requests are signed; clients never receive permanent S3 credentials.
+function mediaError(res,error){
+  const status={
+    invalid_recipient_id:400,invalid_file_name:400,unsupported_media_type:400,
+    invalid_media_size:400,invalid_client_message_id:400,invalid_caption:400,
+    recipient_not_found:404,media_not_found:404,upload_not_found:409,
+    upload_mismatch:409,upload_incomplete:409,media_already_sent:409,
+    client_message_id_conflict:409,user_blocked:403,
+    upload_expired:410,media_unavailable:503
+  }[error] || 503;
+  return res.status(status).json({error});
+}
+app.post("/api/media/init",auth,requireDatabase,rateLimit({windowMs:60_000,max:20}),async(req,res)=>{
+  if(!mediaEnabled)return mediaError(res,"media_unavailable");
+  const to=req.body?.to;
+  if(typeof to!=="string" || !uuidPattern.test(to) || to===req.user.id)
+    return mediaError(res,"invalid_recipient_id");
+  try{
+    if(!await postgresStore.userExists(to))return mediaError(res,"recipient_not_found");
+    if(await postgresStore.blockedBetween(req.user.id,to))return mediaError(res,"user_blocked");
+    const upload=await mediaStore.initiate(req.user.id,to,{
+      mime:req.body?.mime,bytes:req.body?.bytes,filename:req.body?.filename
+    });
+    return upload.error ? mediaError(res,upload.error) : res.status(201).json(upload);
+  }catch(error){
+    console.error("Media init failed:",error?.name||"unknown");
+    return mediaError(res,"media_unavailable");
+  }
+});
+app.post("/api/media/:id/complete",auth,requireDatabase,rateLimit({windowMs:60_000,max:30}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))return res.status(400).json({error:"invalid_media_id"});
+  try{
+    const result=await mediaStore.confirm(req.user.id,req.params.id);
+    return result.error ? mediaError(res,result.error) : res.json(result.asset);
+  }catch(error){
+    console.error("Media completion check failed:",error?.name||"unknown");
+    return res.status(503).json({error:"media_unavailable"});
+  }
+});
+app.post("/api/media/:id/send",auth,requireDatabase,rateLimit({windowMs:60_000,max:30}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))return res.status(400).json({error:"invalid_media_id"});
+  if(typeof req.body?.clientMessageId!=="string" || !uuidPattern.test(req.body.clientMessageId))
+    return mediaError(res,"invalid_client_message_id");
+  if(req.body?.caption!==undefined &&
+     (typeof req.body.caption!=="string" || req.body.caption.trim().length>1000))
+    return mediaError(res,"invalid_caption");
+  try{
+    const result=await mediaStore.send(
+      req.user.id,req.params.id,req.body.clientMessageId,req.body.caption?.trim()||""
+    );
+    if(result.error)return mediaError(res,result.error);
+    if(result.inserted)sendTo(result.message.to,{type:"message",message:result.message});
+    return res.status(result.inserted?201:200).json(result.message);
+  }catch(error){
+    console.error("Media message commit failed:",error?.name||"unknown");
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+app.get("/api/media/:id/download",auth,requireDatabase,rateLimit({windowMs:60_000,max:90}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))return res.status(400).json({error:"invalid_media_id"});
+  try{
+    const result=await mediaStore.signedDownload(req.user.id,req.params.id);
+    return result.error ? mediaError(res,result.error) : res.json(result);
+  }catch(error){
+    console.error("Media download link failed:",error?.name||"unknown");
+    return res.status(503).json({error:"media_unavailable"});
+  }
 });
 
 const server = createServer(app);
