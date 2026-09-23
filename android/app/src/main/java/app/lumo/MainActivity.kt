@@ -225,8 +225,8 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  for(m in current+incoming){
   val old=merged[m.id]
   merged[m.id]=if(old==null)m else m.copy(
-   deliveredAt=maxOf(old.deliveredAt,m.deliveredAt),
-   readAt=maxOf(old.readAt,m.readAt),
+   deliveredAt=if(m.deliveredAt.isNotBlank())m.deliveredAt else old.deliveredAt,
+   readAt=if(m.readAt.isNotBlank())m.readAt else old.readAt,
    clientMessageId=m.clientMessageId.ifBlank{old.clientMessageId}
   )
  }
