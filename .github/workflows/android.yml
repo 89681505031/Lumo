@@ -72,10 +72,24 @@ jobs:
       - name: Verify persistent release signature
         if: env.LUMO_SIGNED_RELEASE == 'true'
         shell: bash
+        env:
+          LUMO_EXPECTED_CERT_SHA256: "4d0c7d55658a469902a4935c41ba2e2a3f7a7fab6506319e67b7aa1c90bbc78b"
         run: |
           TOOLS_DIR="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          test -f app/build/outputs/apk/release/app-release.apk
-          "$TOOLS_DIR/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK"
+          VERIFY_OUTPUT="$("$TOOLS_DIR/apksigner" verify --verbose --print-certs "$APK")"
+          printf '%s\n' "$VERIFY_OUTPUT"
+          ACTUAL_CERT="$(printf '%s\n' "$VERIFY_OUTPUT" | sed -n 's/.*certificate SHA-256 digest: //p' | head -n 1 | tr '[:upper:]' '[:lower:]')"
+          if [ -z "$ACTUAL_CERT" ]; then
+            echo "::error::Could not read the release signing certificate digest."
+            exit 1
+          fi
+          if [ "$ACTUAL_CERT" != "$LUMO_EXPECTED_CERT_SHA256" ]; then
+            echo "::error::Release signing certificate mismatch. Refusing to publish an APK that cannot update existing Lumo installations."
+            exit 1
+          fi
+          echo "Lumo release certificate verified: $ACTUAL_CERT"
 
       - uses: actions/upload-artifact@v4
         with:
