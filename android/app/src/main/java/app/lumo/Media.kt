@@ -567,6 +567,7 @@ fun GroupMediaComposer(
   ActivityResultContracts.PickVisualMedia()
  ){uri->
   if(uri!=null){
+   chosen?.file?.delete()
    runCatching{selectedVisual(context,uri)}
     .onSuccess{chosen=it;status="Файл выбран. Нажмите отправить."}
     .onFailure{chosen=null;status=it.message?:"Не удалось открыть файл"}
@@ -576,6 +577,7 @@ fun GroupMediaComposer(
   ActivityResultContracts.OpenDocument()
  ){uri->
   if(uri!=null){
+   chosen?.file?.delete()
    runCatching{selectedDocument(context,uri)}
     .onSuccess{chosen=it;status="Документ выбран. Нажмите отправить."}
     .onFailure{chosen=null;status=it.message?:"Не удалось открыть документ"}
@@ -689,7 +691,7 @@ fun GroupMediaComposer(
       style=MaterialTheme.typography.bodySmall,
       modifier=Modifier.weight(1f)
      )
-     TextButton(onClick={chosen=null;status=""},enabled=!busy){Text("×")}
+     TextButton(onClick={chosen?.file?.delete();chosen=null;status=""},enabled=!busy){Text("×")}
     }
     OutlinedTextField(
      value=caption,onValueChange={caption=it.take(1000)},
