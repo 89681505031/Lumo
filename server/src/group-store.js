@@ -3,8 +3,15 @@ import { dbQuery, pool } from "./db.js";
 
 const iso = value => value?.toISOString?.() || value || null;
 const message = row => ({
-  id:row.id, groupId:row.group_id, from:row.sender_id,
-  text:row.text, createdAt:iso(row.created_at), clientMessageId:row.client_message_id
+  id:row.id,
+  groupId:row.group_id,
+  from:row.sender_id,
+  text:row.text,
+  createdAt:iso(row.created_at),
+  clientMessageId:row.client_message_id,
+  replyToMessageId:row.reply_to_message_id || null,
+  replyPreviewText:row.reply_preview_text || null,
+  replyPreviewFrom:row.reply_preview_from || null
 });
 const group = row => ({
   id:row.id, title:row.title, ownerId:row.owner_id,
@@ -192,32 +199,93 @@ export const groupStore = {
     const membership=await this.membership(userId,groupId);
     if(!membership)return null;
     const rows=await dbQuery(`
-      select gm.* from chat_group_members m
+      select gm.*,
+        case when reply.created_at>=m.joined_at then left(reply.text,240) end as reply_preview_text,
+        case when reply.created_at>=m.joined_at then reply.sender_id end as reply_preview_from
+      from chat_group_members m
       join chat_group_messages gm on gm.group_id=m.group_id
         and gm.created_at>=m.joined_at
+      left join chat_group_messages reply
+        on reply.id=gm.reply_to_message_id and reply.group_id=gm.group_id
       where m.group_id=$1 and m.user_id=$2
       order by gm.created_at desc,gm.id desc limit 100`,[groupId,userId]);
     return rows.rows.reverse().map(message);
   },
-  async send(userId,groupId,text,clientMessageId) {
+  async search(userId,groupId,query) {
+    const rows=await dbQuery(`
+      select gm.*,
+        case when reply.created_at>=m.joined_at then left(reply.text,240) end as reply_preview_text,
+        case when reply.created_at>=m.joined_at then reply.sender_id end as reply_preview_from
+      from chat_group_members m
+      join chat_group_messages gm on gm.group_id=m.group_id
+        and gm.created_at>=m.joined_at
+      left join chat_group_messages reply
+        on reply.id=gm.reply_to_message_id and reply.group_id=gm.group_id
+      where m.group_id=$1 and m.user_id=$2
+        and strpos(lower(gm.text),lower($3))>0
+      order by gm.created_at desc,gm.id desc limit 50`,
+      [groupId,userId,query]
+    );
+    if(!rows.rowCount){
+      const member=await this.membership(userId,groupId);
+      if(!member)return null;
+    }
+    return rows.rows.map(message);
+  },
+  async send(userId,groupId,text,clientMessageId,replyToMessageId=null) {
+    // Resolve a reply only if it belongs to the same group and was visible
+    // during the sender's current membership period.
+    let replyTarget=null;
+    if(replyToMessageId){
+      const found=await dbQuery(`
+        select reply.id,left(reply.text,240) as text,reply.sender_id
+        from chat_group_members m
+        join chat_group_messages reply on reply.group_id=m.group_id
+          and reply.created_at>=m.joined_at
+        where m.group_id=$1 and m.user_id=$2 and reply.id=$3`,
+        [groupId,userId,replyToMessageId]
+      );
+      replyTarget=found.rows[0]||null;
+      if(!replyTarget)return {error:"reply_message_not_found"};
+    }
     // Scope a new write to CURRENT membership in the insertion statement.
-    // A retry is accepted only for the same group, sender, and original text.
+    // A retry is accepted only for the same group, sender, text and reply target.
     const id=randomUUID();
     const inserted=await dbQuery(`
-      insert into chat_group_messages(id,group_id,sender_id,text,client_message_id)
-      select $1,$2,$3,$4,$5 from chat_group_members m
+      insert into chat_group_messages(
+        id,group_id,sender_id,text,client_message_id,reply_to_message_id
+      )
+      select $1,$2,$3,$4,$5,$6 from chat_group_members m
       where m.group_id=$2 and m.user_id=$3
       on conflict(group_id,sender_id,client_message_id) do nothing returning *`,
-      [id,groupId,userId,text,clientMessageId]);
-    if(inserted.rows[0])return {message:message(inserted.rows[0]),inserted:true};
+      [id,groupId,userId,text,clientMessageId,replyToMessageId]);
+    if(inserted.rows[0]){
+      return {
+        message:message({
+          ...inserted.rows[0],
+          reply_preview_text:replyTarget?.text||null,
+          reply_preview_from:replyTarget?.sender_id||null
+        }),
+        inserted:true
+      };
+    }
     const existing=await dbQuery(`
       select gm.* from chat_group_messages gm
       join chat_group_members m on m.group_id=gm.group_id and m.user_id=$2
       where gm.group_id=$1 and gm.sender_id=$2 and gm.client_message_id=$3
         and gm.created_at>=m.joined_at`,[groupId,userId,clientMessageId]);
     if(existing.rows[0]){
-      if(existing.rows[0].text!==text)return {error:"client_message_id_conflict"};
-      return {message:message(existing.rows[0]),inserted:false};
+      if(existing.rows[0].text!==text ||
+         (existing.rows[0].reply_to_message_id||null)!==replyToMessageId)
+        return {error:"client_message_id_conflict"};
+      return {
+        message:message({
+          ...existing.rows[0],
+          reply_preview_text:replyTarget?.text||null,
+          reply_preview_from:replyTarget?.sender_id||null
+        }),
+        inserted:false
+      };
     }
     return {error:"group_not_found"};
   },
@@ -227,5 +295,24 @@ export const groupStore = {
       [groupId,createdAt]
     );
     return rows.rows.map(r=>r.user_id);
+  },
+  async recipientViews(groupId,createdAt,replyToMessageId=null) {
+    const rows=await dbQuery(`
+      select m.user_id,
+        case
+          when $3::uuid is null then true
+          when reply.id is null then false
+          else reply.created_at>=m.joined_at
+        end as can_see_reply
+      from chat_group_members m
+      left join chat_group_messages reply
+        on reply.id=$3 and reply.group_id=m.group_id
+      where m.group_id=$1 and m.joined_at<=$2`,
+      [groupId,createdAt,replyToMessageId]
+    );
+    return rows.rows.map(r=>({
+      userId:r.user_id,
+      canSeeReply:Boolean(r.can_see_reply)
+    }));
   }
 };

@@ -124,3 +124,6 @@ create table if not exists chat_group_messages (
   unique(group_id,sender_id,client_message_id)
 );
 create index if not exists chat_group_messages_history_idx on chat_group_messages(group_id,created_at desc,id desc);
+alter table chat_group_messages add column if not exists reply_to_message_id uuid;
+do 'begin if not exists (select 1 from pg_constraint where conname = ''chat_group_messages_reply_to_fk'' and conrelid = ''chat_group_messages''::regclass) then alter table chat_group_messages add constraint chat_group_messages_reply_to_fk foreign key (reply_to_message_id) references chat_group_messages(id) on delete set null; end if; end';
+create index if not exists chat_group_messages_reply_idx on chat_group_messages(reply_to_message_id) where reply_to_message_id is not null;
