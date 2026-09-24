@@ -41,7 +41,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.launch
 
-data class User(val id:String,val username:String,val displayName:String,val bio:String="")
+data class User(val id:String,val username:String,val displayName:String,val bio:String="",val bioSupported:Boolean=false)
 data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="",val attachmentId:String="")
 data class Conversation(val peer:User,val lastMessage:String,val lastAt:String="")
 data class UpdateInfo(val versionCode:Int,val downloadUrl:String)
@@ -454,7 +454,7 @@ class MainActivity:ComponentActivity(){
  val profilePrefs=remember{context.getSharedPreferences("lumo_local_profile",Context.MODE_PRIVATE)}
  var editing by remember{mutableStateOf(false)}
  var name by remember(me.displayName){mutableStateOf(me.displayName)}
- var bio by remember(me.id,me.bio){mutableStateOf(me.bio.ifBlank{profilePrefs.getString("bio_"+me.id,"")?:""})}
+ var bio by remember(me.id,me.bio,me.bioSupported){mutableStateOf(if(me.bioSupported)me.bio else me.bio.ifBlank{profilePrefs.getString("bio_"+me.id,"")?:""})}
  var bioNotice by remember(me.id){mutableStateOf("")}
  var saving by remember{mutableStateOf(false)}
  var profileError by remember{mutableStateOf("")}
@@ -537,7 +537,7 @@ class MainActivity:ComponentActivity(){
     TextButton(
      onClick={
       name=me.displayName
-      bio=me.bio.ifBlank{profilePrefs.getString("bio_"+me.id,"")?:""}
+      bio=if(me.bioSupported)me.bio else me.bio.ifBlank{profilePrefs.getString("bio_"+me.id,"")?:""}
       editing=false;profileError=""
      },modifier=Modifier.align(Alignment.CenterHorizontally)
     ){Text("Отмена",color=Color.White)}
@@ -1115,6 +1115,6 @@ object Api{
  }
  fun latestRelease():UpdateInfo{val r=Request.Builder().url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest").header("Accept","application/vnd.github+json").build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Обновление: "+x.code);val o=JSONObject(x.body!!.string());val code=Regex("versionCode=(\\d+)").find(o.optString("body"))?.groupValues?.get(1)?.toIntOrNull()?:0;val a=o.getJSONArray("assets");for(i in 0 until a.length()){val asset=a.getJSONObject(i);if(asset.optString("name")=="app-debug.apk" || asset.optString("name")=="app-release.apk" || asset.optString("label")=="Lumo.apk")return UpdateInfo(code,asset.getString("browser_download_url"))};error("APK не найден")}}
  fun socket(t:String,onMessage:(Msg)->Unit,onReceipt:(Receipt)->Unit,onError:(String)->Unit,onReady:()->Unit,onDisconnected:()->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS).header("Authorization","Bearer "+t).build(),object:WebSocketListener(){override fun onOpen(w:WebSocket,response:Response){};override fun onMessage(w:WebSocket,s:String){runCatching{val o=JSONObject(s);when(o.optString("type")){"ready"->onReady();"message"->onMessage(msg(o.getJSONObject("message")));"receipt"->onReceipt(Receipt(o.getString("messageId"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt")));"error"->onError(o.optString("error"));else->Unit}}.onFailure{onError("invalid_server_message")}};override fun onClosed(w:WebSocket,code:Int,reason:String)=onDisconnected();override fun onFailure(w:WebSocket,t:Throwable,response:Response?)=onDisconnected()})}
- private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"),nullableJsonText(o,"bio"))
+ private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"),nullableJsonText(o,"bio"),o.has("bio"))
  private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"),nullableJsonText(o,"attachmentId"))
 }
