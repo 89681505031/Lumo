@@ -41,7 +41,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.launch
 
-data class User(val id:String,val username:String,val displayName:String,val bio:String="",val bioSupported:Boolean=false)
+data class User(val id:String,val username:String,val displayName:String,val bio:String="",val bioSupported:Boolean=false,val hasAvatar:Boolean=false,val avatarVersion:String="")
 data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="",val attachmentId:String="")
 data class Conversation(val peer:User,val lastMessage:String,val lastAt:String="")
 data class UpdateInfo(val versionCode:Int,val downloadUrl:String)
@@ -362,7 +362,7 @@ class MainActivity:ComponentActivity(){
       Modifier.fillMaxWidth().lumoGlass(22).clickable{open(chat.peer)}.padding(12.dp),
       verticalAlignment=Alignment.CenterVertically
      ){
-      LumoNeonAvatar(chat.peer.displayName,size=54.dp)
+      LumoUserAvatar(token,chat.peer,size=54.dp)
       Spacer(Modifier.width(12.dp))
       Column(Modifier.weight(1f)){
        Text(chat.peer.displayName,style=MaterialTheme.typography.titleMedium,
@@ -427,7 +427,7 @@ class MainActivity:ComponentActivity(){
      Modifier.fillMaxWidth().lumoGlass(22).clickable{open(u)}.padding(12.dp),
      verticalAlignment=Alignment.CenterVertically
     ){
-     LumoNeonAvatar(u.displayName,size=52.dp)
+     LumoUserAvatar(token,u,size=52.dp)
      Spacer(Modifier.width(14.dp))
      Column(Modifier.weight(1f)){
       Text(u.displayName,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleMedium,
@@ -478,12 +478,12 @@ class MainActivity:ComponentActivity(){
   horizontalAlignment=Alignment.CenterHorizontally
  ){
   Spacer(Modifier.height(6.dp))
-  LumoEditableAvatar(me.id,me.displayName,size=122.dp)
+  LumoEditableAvatar(token,me,profileChanged,size=122.dp)
   Spacer(Modifier.height(14.dp))
   Text(me.displayName,style=MaterialTheme.typography.headlineMedium,
    fontWeight=FontWeight.Bold,color=Color.White)
   Text("@"+me.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
-  Text("Фото профиля хранится только на этом телефоне",
+  Text("Публичное фото синхронизируется только после твоего отдельного подтверждения.",
    style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
   Spacer(Modifier.height(24.dp))
 
@@ -885,7 +885,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
      verticalAlignment=Alignment.CenterVertically
     ){
      TextButton(back){Text("‹",style=MaterialTheme.typography.headlineMedium,color=Color.White)}
-     LumoNeonAvatar(peer.displayName,size=43.dp)
+     LumoUserAvatar(token,peer,size=43.dp)
      Spacer(Modifier.width(10.dp))
      Column(Modifier.weight(1f)){
       Text(peer.displayName,fontWeight=FontWeight.Bold,color=Color.White,
@@ -934,7 +934,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
        verticalAlignment=Alignment.Bottom
       ){
        if(!own){
-        LumoNeonAvatar(peer.displayName,size=30.dp)
+        LumoUserAvatar(token,peer,size=30.dp)
         Spacer(Modifier.width(7.dp))
        }
        Column(horizontalAlignment=if(own)Alignment.End else Alignment.Start){
@@ -1115,6 +1115,6 @@ object Api{
  }
  fun latestRelease():UpdateInfo{val r=Request.Builder().url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest").header("Accept","application/vnd.github+json").build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Обновление: "+x.code);val o=JSONObject(x.body!!.string());val code=Regex("versionCode=(\\d+)").find(o.optString("body"))?.groupValues?.get(1)?.toIntOrNull()?:0;val a=o.getJSONArray("assets");for(i in 0 until a.length()){val asset=a.getJSONObject(i);if(asset.optString("name")=="app-debug.apk" || asset.optString("name")=="app-release.apk" || asset.optString("label")=="Lumo.apk")return UpdateInfo(code,asset.getString("browser_download_url"))};error("APK не найден")}}
  fun socket(t:String,onMessage:(Msg)->Unit,onReceipt:(Receipt)->Unit,onError:(String)->Unit,onReady:()->Unit,onDisconnected:()->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS).header("Authorization","Bearer "+t).build(),object:WebSocketListener(){override fun onOpen(w:WebSocket,response:Response){};override fun onMessage(w:WebSocket,s:String){runCatching{val o=JSONObject(s);when(o.optString("type")){"ready"->onReady();"message"->onMessage(msg(o.getJSONObject("message")));"receipt"->onReceipt(Receipt(o.getString("messageId"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt")));"error"->onError(o.optString("error"));else->Unit}}.onFailure{onError("invalid_server_message")}};override fun onClosed(w:WebSocket,code:Int,reason:String)=onDisconnected();override fun onFailure(w:WebSocket,t:Throwable,response:Response?)=onDisconnected()})}
- private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"),nullableJsonText(o,"bio"),o.has("bio"))
+ private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"),nullableJsonText(o,"bio"),o.has("bio"),o.optBoolean("hasAvatar",false),nullableJsonText(o,"avatarVersion"))
  private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"),nullableJsonText(o,"attachmentId"))
 }
