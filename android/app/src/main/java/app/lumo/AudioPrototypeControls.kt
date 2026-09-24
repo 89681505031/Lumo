@@ -86,7 +86,7 @@ fun AudioPrototypeControls(
             call.status != "accepted" || call.kind != "audio") return
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
             PackageManager.PERMISSION_GRANTED) {
-            status = "Для теста нужен доступ к микрофону"
+            status = "Для звонка нужен доступ к микрофону"
             return
         }
         val ticket = gate.begin() ?: return
@@ -171,7 +171,7 @@ fun AudioPrototypeControls(
                 engine = created
                 routes = created.availableAudioRoutes()
                 selectedRouteId = created.selectedAudioRouteId()
-                status = "Создаём тестовое аудиосоединение…"
+                status = "Создаём аудиосоединение…"
                 created.start()
             } catch (cancel: CancellationException) {
                 if (gate.isCurrent(ticket)) stop()
@@ -183,7 +183,7 @@ fun AudioPrototypeControls(
                         "call_inactive" -> "Приглашение завершено"
                         else -> "Ошибка аудиоэтапа: ${error.code}"
                     }
-                    else -> "Тестовое аудио не запустилось"
+                    else -> "Аудиозвонок не запустился"
                 })
             } finally {
                 if (gate.isCurrent(ticket)) {
@@ -305,7 +305,7 @@ fun AudioPrototypeControls(
         // stop immediately when its host activity is no longer visible.
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP && (engine != null || busy)) {
-                stop("Тестовое аудио остановлено: приложение свернуто")
+                stop("Аудио остановлено: приложение свернуто")
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -399,10 +399,10 @@ fun AudioPrototypeControls(
                 },
                 enabled = !busy && call.status == "accepted"
             ) {
-                Text(if (busy) "Подключаем..." else "Включить тест аудио")
+                Text(if (busy) "Подключаем..." else "Включить аудио")
             }
         } else {
-            Text("Сначала завершите другое тестовое аудиосоединение.")
+            Text("Сначала завершите другое аудиосоединение.")
         }
         Text(
             "Аудио включается только вручную после принятия вызова. " +
