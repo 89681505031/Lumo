@@ -62,7 +62,7 @@ async function auth(req, res, next) {
 }
 
 app.get("/live", (_req, res) => res.json({ ok: true, service: "lumo-server" }));
-app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled,documentsReady:mediaEnabled,groupsReady:hasDatabase}));
+app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled,documentsReady:mediaEnabled,groupsReady:hasDatabase,groupLinkedReplies:hasDatabase,groupSearch:hasDatabase}));
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase,ok:false}; if(hasDatabase){try{database=await dbHealth()}catch(error){console.error("Database health check failed",error);database={configured:true,ok:false}}} const ok=database.configured===true&&database.ok===true; res.status(ok?200:503).json({ ok, service:"lumo-server", database }); });
 
@@ -318,7 +318,8 @@ function groupError(res,error) {
     already_member:409,
     owner_role_immutable:409,
     owner_cannot_leave:409,
-    client_message_id_conflict:409
+    client_message_id_conflict:409,
+    reply_message_not_found:404
   }[error] || 503;
   return res.status(status).json({error});
 }
@@ -420,24 +421,53 @@ app.get("/api/groups/:id/messages",auth,requireDatabase,async(req,res)=>{
   }
 });
 
+app.get("/api/groups/:id/messages/search",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  const q=typeof req.query.q==="string" ? req.query.q.trim() : "";
+  if(q.length<2 || q.length>100)
+    return res.status(400).json({error:"invalid_search_query"});
+  try{
+    const found=await groupStore.search(req.user.id,req.params.id,q);
+    return found===null ? groupError(res,"group_not_found") : res.json(found);
+  }catch(error){
+    console.error("Group search failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
 app.post("/api/groups/:id/messages",auth,requireDatabase,rateLimit({windowMs:60_000,max:120}),async(req,res)=>{
   if(!uuidPattern.test(req.params.id))
     return res.status(400).json({error:"invalid_group_id"});
   const id=req.body?.clientMessageId,raw=req.body?.text;
+  const replyToMessageId=req.body?.replyToMessageId ?? null;
   if(typeof id!=="string" || !uuidPattern.test(id))
     return res.status(400).json({error:"invalid_client_message_id"});
+  if(replyToMessageId!==null &&
+     (typeof replyToMessageId!=="string" || !uuidPattern.test(replyToMessageId)))
+    return res.status(400).json({error:"invalid_reply_message_id"});
   if(typeof raw!=="string" || !raw.trim())
     return res.status(400).json({error:"empty_message"});
   const text=raw.trim();
   if(text.length>4000)
     return res.status(400).json({error:"message_too_long"});
   try{
-    const saved=await groupStore.send(req.user.id,req.params.id,text,id);
+    const saved=await groupStore.send(
+      req.user.id,req.params.id,text,id,replyToMessageId
+    );
     if(saved.error)return groupError(res,saved.error);
     if(saved.inserted){
-      const recipients=await groupStore.recipients(req.params.id,saved.message.createdAt);
-      for(const userId of recipients)
-        sendTo(userId,{type:"group_message",message:saved.message});
+      const views=await groupStore.recipientViews(
+        req.params.id,saved.message.createdAt,saved.message.replyToMessageId
+      );
+      for(const view of views){
+        const live=view.canSeeReply ? saved.message : {
+          ...saved.message,
+          replyPreviewText:null,
+          replyPreviewFrom:null
+        };
+        sendTo(view.userId,{type:"group_message",message:live});
+      }
     }
     return res.status(saved.inserted?201:200).json(saved.message);
   }catch(error){
