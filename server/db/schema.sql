@@ -146,3 +146,76 @@ alter table chat_group_messages add column if not exists media_id uuid reference
 create index if not exists chat_group_messages_media_idx on chat_group_messages(media_id) where media_id is not null;
 do 'begin if not exists (select 1 from pg_constraint where conname = ''chat_group_messages_reply_to_fk'' and conrelid = ''chat_group_messages''::regclass) then alter table chat_group_messages add constraint chat_group_messages_reply_to_fk foreign key (reply_to_message_id) references chat_group_messages(id) on delete set null; end if; end';
 create index if not exists chat_group_messages_reply_idx on chat_group_messages(reply_to_message_id) where reply_to_message_id is not null;
+create table if not exists push_devices (
+  session_token uuid primary key references sessions(token) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  token_hash varchar(64) not null unique,
+  fcm_token text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists push_devices_user_idx on push_devices(user_id);
+create table if not exists push_outbox (
+  id bigserial primary key,
+  direct_message_id uuid references messages(id) on delete cascade,
+  group_message_id uuid references chat_group_messages(id) on delete cascade,
+  session_token uuid not null references sessions(token) on delete cascade,
+  recipient_id uuid not null references users(id) on delete cascade,
+  status varchar(16) not null default 'pending'
+    check(status in ('pending','sent','dropped')),
+  attempts integer not null default 0,
+  available_at timestamptz not null default now(),
+  lease_until timestamptz,
+  processed_at timestamptz,
+  created_at timestamptz not null default now(),
+  last_error_code varchar(40),
+  constraint push_outbox_scope_ck
+    check ((direct_message_id is null) <> (group_message_id is null))
+);
+create unique index if not exists push_outbox_direct_session_uidx
+  on push_outbox(direct_message_id,session_token)
+  where direct_message_id is not null;
+create unique index if not exists push_outbox_group_session_uidx
+  on push_outbox(group_message_id,session_token)
+  where group_message_id is not null;
+create index if not exists push_outbox_claim_idx
+  on push_outbox(available_at,id) where status='pending';
+
+create or replace function lumo_enqueue_direct_push() returns trigger as '
+begin
+  insert into push_outbox(direct_message_id,session_token,recipient_id)
+  select new.id,p.session_token,new.recipient_id
+  from push_devices p
+  join sessions s on s.token=p.session_token
+    and s.user_id=p.user_id and s.expires_at>now()
+  where p.user_id=new.recipient_id
+  on conflict do nothing;
+  return new;
+end;
+' language plpgsql;
+do 'begin if not exists (
+  select 1 from pg_trigger
+  where tgname = ''lumo_message_push_outbox''
+    and tgrelid = ''messages''::regclass and not tgisinternal
+) then execute ''create trigger lumo_message_push_outbox after insert on messages for each row execute function lumo_enqueue_direct_push()''; end if; end';
+
+create or replace function lumo_enqueue_group_push() returns trigger as '
+begin
+  insert into push_outbox(group_message_id,session_token,recipient_id)
+  select new.id,p.session_token,m.user_id
+  from chat_group_members m
+  join push_devices p on p.user_id=m.user_id
+  join sessions s on s.token=p.session_token
+    and s.user_id=p.user_id and s.expires_at>now()
+  where m.group_id=new.group_id
+    and m.user_id<>new.sender_id
+    and m.joined_at<=new.created_at
+  on conflict do nothing;
+  return new;
+end;
+' language plpgsql;
+do 'begin if not exists (
+  select 1 from pg_trigger
+  where tgname = ''lumo_group_message_push_outbox''
+    and tgrelid = ''chat_group_messages''::regclass and not tgisinternal
+) then execute ''create trigger lumo_group_message_push_outbox after insert on chat_group_messages for each row execute function lumo_enqueue_group_push()''; end if; end';
