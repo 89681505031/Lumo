@@ -32,6 +32,7 @@ The server adds a short system instruction that explicitly tells the provider no
 - If the server capability is off, Android shows that the feature is unavailable and does not expose a fake working chat.
 - When enabled, user messages and assistant answers use the existing neon/cosmic message language.
 - A privacy card is always visible above the AI thread explaining that ordinary chats and device resources are not automatically shared.
+- A direct-message menu can now **prepare** that message text as an AI draft, but it does not call the AI endpoint automatically. The selected text is placed only in the Lumo AI input box; the user can edit/delete it and must press Send themselves.
 - `Очистить` clears only the current in-memory AI session.
 
 ## Still required before production
