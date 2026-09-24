@@ -135,5 +135,13 @@ create table if not exists chat_group_message_reactions (
   primary key(message_id,user_id,emoji)
 );
 create index if not exists chat_group_message_reactions_message_idx on chat_group_message_reactions(message_id,created_at desc);
+alter table media_assets alter column recipient_id drop not null;
+alter table media_assets add column if not exists group_id uuid;
+alter table media_assets add column if not exists claimed_group_message_id uuid;
+do 'begin if not exists (select 1 from pg_constraint where conname = ''media_assets_group_fk'' and conrelid = ''media_assets''::regclass) then alter table media_assets add constraint media_assets_group_fk foreign key(group_id) references chat_groups(id) on delete cascade; end if; end';
+do 'begin if not exists (select 1 from pg_constraint where conname = ''media_assets_scope_ck'' and conrelid = ''media_assets''::regclass) then alter table media_assets add constraint media_assets_scope_ck check ((recipient_id is null) <> (group_id is null)); end if; end';
+create unique index if not exists media_assets_claimed_group_uidx on media_assets(claimed_group_message_id) where claimed_group_message_id is not null;
+alter table chat_group_messages add column if not exists media_id uuid references media_assets(id) on delete set null;
+create index if not exists chat_group_messages_media_idx on chat_group_messages(media_id) where media_id is not null;
 do 'begin if not exists (select 1 from pg_constraint where conname = ''chat_group_messages_reply_to_fk'' and conrelid = ''chat_group_messages''::regclass) then alter table chat_group_messages add constraint chat_group_messages_reply_to_fk foreign key (reply_to_message_id) references chat_group_messages(id) on delete set null; end if; end';
 create index if not exists chat_group_messages_reply_idx on chat_group_messages(reply_to_message_id) where reply_to_message_id is not null;
