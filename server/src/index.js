@@ -442,6 +442,17 @@ app.delete("/api/groups/:id",auth,requireDatabase,rateLimit({windowMs:60_000,max
   if(!uuidPattern.test(req.params.id))
     return res.status(400).json({error:"invalid_group_id"});
   try{
+    const detail=await groupStore.detail(req.user.id,req.params.id);
+    if(!detail || detail.group?.role!=="owner")
+      return groupError(res,"group_not_found");
+    const assetCount=await mediaStore.groupAssetCount(req.params.id);
+    if(assetCount>0){
+      if(process.env.MEDIA_ENABLE_UPLOADS!=="true" || !mediaReady)
+        return res.status(503).json({error:"media_cleanup_unavailable"});
+      const cleanup=await mediaStore.cleanupGroupAssets(req.params.id);
+      if(cleanup.error)
+        return res.status(503).json({error:cleanup.error});
+    }
     const deleted=await groupStore.delete(req.user.id,req.params.id);
     return deleted ? res.status(204).end() : groupError(res,"group_not_found");
   }catch(error){
