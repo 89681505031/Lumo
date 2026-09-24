@@ -176,7 +176,7 @@ test("private cross-instance call signaling and TURN credentials are participant
 
     const conflict=await request("/api/calls/"+callId+"/signals",{
       token:alice.token,method:"POST",
-      body:{...offer,payload:{sdp:"different"}}
+      body:{...offer,payload:{mediaSessionId:firstMediaSession,sdp:"different"}}
     });
     assert.equal(conflict.status,409);
 
