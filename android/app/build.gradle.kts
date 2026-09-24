@@ -63,13 +63,16 @@ dependencies {
  implementation("androidx.compose.ui:ui")
  implementation("androidx.compose.animation:animation-core")
  implementation("com.squareup.okhttp3:okhttp:4.12.0")
+ implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+ // Staging WebRTC audio transport; UI still requires explicit accepted call + mic permission + TURN.
+ implementation("io.github.webrtc-sdk:android:150.7871.01")
 
  // Debug only: no provider configuration or token generation unless owner
  // supplies explicit staging flags and a local google-services.json.
  debugImplementation(platform("com.google.firebase:firebase-bom:34.19.0"))
  debugImplementation("com.google.firebase:firebase-messaging")
  debugImplementation("androidx.work:work-runtime-ktx:2.10.0")
- debugImplementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+
 
  testImplementation("junit:junit:4.13.2")
 }
