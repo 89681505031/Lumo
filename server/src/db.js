@@ -34,6 +34,15 @@ export async function initDatabase() {
   await pool.query(`create index if not exists sessions_expiry_idx on sessions(expires_at)`);
   await pool.query(`create table if not exists messages (id uuid primary key, sender_id uuid not null references users(id) on delete cascade, recipient_id uuid not null references users(id) on delete cascade, text varchar(4000) not null, created_at timestamptz not null default now(), delivered_at timestamptz, read_at timestamptz)`);
   await pool.query(`alter table messages add column if not exists client_message_id uuid`);
+  await pool.query(`alter table messages add column if not exists reply_to_message_id uuid`);
+  const replyFk=await pool.query(
+    "select 1 from pg_constraint where conname=$1 and conrelid='messages'::regclass",
+    ["messages_reply_to_fk"]
+  );
+  if(!replyFk.rowCount) {
+    await pool.query(`alter table messages add constraint messages_reply_to_fk foreign key (reply_to_message_id) references messages(id) on delete set null`);
+  }
+  await pool.query(`create index if not exists messages_reply_to_idx on messages(reply_to_message_id) where reply_to_message_id is not null`);
   await pool.query(`create unique index if not exists messages_sender_client_id_uidx on messages(sender_id, client_message_id) where client_message_id is not null`);
   await pool.query(`create index if not exists messages_sender_idx on messages(sender_id, created_at desc)`);
   await pool.query(`create index if not exists messages_recipient_idx on messages(recipient_id, created_at desc)`);
@@ -64,7 +73,9 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='avatar_updated_at') as avatar_updated_column,
     exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='messages' and column_name='reply_to_message_id') as reply_column,
+    exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.session_expiry_column), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.session_expiry_column), now:row.now };
 }
