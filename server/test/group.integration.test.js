@@ -406,16 +406,14 @@ test("private groups: durable membership, roles, history privacy and idempotent 
     assert.equal(p1.json.messages.length,50);
     assert.ok(p1.json.next);
     const p2=await request(
-      pagePrefix+"/messages/page?limit=50&beforeAt="+
-       encodeURIComponent(p1.json.next.createdAt)+"&beforeId="+p1.json.next.id,
+      pagePrefix+"/messages/page?limit=50&beforeId="+p1.json.next.id,
       "GET",owner.token
     );
     assert.equal(p2.status,200);
     assert.equal(p2.json.messages.length,50);
     assert.ok(p2.json.next);
     const p3=await request(
-      pagePrefix+"/messages/page?limit=50&beforeAt="+
-       encodeURIComponent(p2.json.next.createdAt)+"&beforeId="+p2.json.next.id,
+      pagePrefix+"/messages/page?limit=50&beforeId="+p2.json.next.id,
       "GET",owner.token
     );
     assert.equal(p3.status,200);
@@ -426,9 +424,9 @@ test("private groups: durable membership, roles, history privacy and idempotent 
     assert.deepEqual(new Set(pagedIds),new Set(pageMessageIds));
 
     assert.equal((await request(
-      pagePrefix+"/messages/page?beforeAt="+encodeURIComponent(p1.json.next.createdAt),
+      pagePrefix+"/messages/page?beforeId=not-a-uuid",
       "GET",owner.token
-    )).status,400,"partial cursor is rejected");
+    )).status,400,"malformed cursor is rejected");
     assert.equal((await request(
       pagePrefix+"/messages/page?limit=101","GET",owner.token
     )).status,400);
@@ -443,6 +441,12 @@ test("private groups: durable membership, roles, history privacy and idempotent 
     assert.equal(latePage.status,200);
     assert.deepEqual(latePage.json.messages,[],
       "late joiner pagination cannot reveal old history");
+    const invisibleCursor=await request(
+      pagePrefix+"/messages/page?limit=50&beforeId="+pageMessageIds[0],
+      "GET",outsider.token
+    );
+    assert.equal(invisibleCursor.status,400);
+    assert.equal(invisibleCursor.json.error,"history_cursor_not_found");
 
     const currentPageMessage=await request(pagePrefix+"/messages","POST",owner.token,{
       text:"Visible after join",clientMessageId:randomUUID()
