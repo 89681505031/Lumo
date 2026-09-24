@@ -340,6 +340,16 @@ object LumoOfflineStore {
         }.getOrDefault(emptyList())
     }
 
+    fun removeGroupFromList(
+        context:Context,userId:String,groupId:String
+    ){
+        val current=loadGroups(context.applicationContext,userId)
+        saveGroups(
+            context.applicationContext,userId,
+            current.filterNot{it.id==groupId}
+        )
+    }
+
     fun saveGroupHistory(
         context:Context,userId:String,groupId:String,messages:List<LumoGroupMessage>
     ){
