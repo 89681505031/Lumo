@@ -657,7 +657,7 @@ export function registerMediaCleanup(app){
       if(abandoned.error)return res.status(503).json({error:abandoned.error});
       const unreferenced=await mediaStore.cleanupUnreferenced(100);
       if(unreferenced.error)return res.status(503).json({error:unreferenced.error});
-      return res.json({ok:true,abandoned,unreferenced});
+      return res.json({ok:true,...abandoned,abandoned,unreferenced});
     }catch(error){
       console.error(
         "Media cleanup failed",
