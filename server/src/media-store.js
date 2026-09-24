@@ -248,7 +248,7 @@ export const mediaStore={
     if(!mediaReady)return {error:"media_unavailable"};
     const r=await dbQuery(`
       select a.* from media_assets a
-      left join messages m on m.id=a.claimed_message_id and m.media_id=a.id
+      left join messages m on m.id=a.claimed_message_id and m.media_id=a.id and m.deleted_at is null
       where a.id=$1 and a.uploaded_at is not null
         and (a.owner_id=$2 or (a.recipient_id=$2 and m.id is not null))`,
       [id,userId]

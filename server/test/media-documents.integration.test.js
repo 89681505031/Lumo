@@ -224,6 +224,18 @@ test("private document attachments are allowlisted, signed, participant-only and
     );
     assert.equal(rows.rows[0].n,1);
 
+    const deleted=await request(
+      "/api/messages/"+sent.json.id,"DELETE",alice.token
+    );
+    assert.equal(deleted.status,200);
+    assert.ok(deleted.json.deletedAt);
+    assert.equal((await request(
+      "/api/media/"+init.json.assetId+"/download","GET",bob.token
+    )).status,404,"message deletion revokes future recipient signed URLs");
+    assert.equal((await request(
+      "/api/media/"+init.json.assetId+"/download","GET",alice.token
+    )).status,200,"storage owner keeps access until retention cleanup");
+
     // Verify an allowlisted OpenXML document receives a signed upload policy.
     expectedMime="application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     expectedBytes=Buffer.from("PK\u0003\u0004fake-docx");

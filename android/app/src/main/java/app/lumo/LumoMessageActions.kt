@@ -108,9 +108,13 @@ fun LumoMessageOptions(
     message:Msg,
     reactionsEnabled:Boolean,
     aiEnabled:Boolean,
+    canEdit:Boolean,
+    canDelete:Boolean,
     onDismiss:()->Unit,
     onReply:()->Unit,
     onForward:()->Unit,
+    onEdit:()->Unit,
+    onDelete:()->Unit,
     onAskAi:()->Unit,
     onReact:(emoji:String)->Unit
 ) {
@@ -124,28 +128,44 @@ fun LumoMessageOptions(
                     style=MaterialTheme.typography.bodyMedium
                 )
                 Spacer(Modifier.height(13.dp))
-                LumoNeonButton("↩ Ответить",onReply,Modifier.fillMaxWidth())
-                Spacer(Modifier.height(8.dp))
-                if(message.text.isNotBlank() && message.attachmentId.isBlank()){
-                    OutlinedButton(
-                        onClick=onForward,shape=RoundedCornerShape(22.dp),
-                        modifier=Modifier.fillMaxWidth()
-                    ){Text("↗ Переслать текст")}
+                if(message.deletedAt.isBlank()){
+                    LumoNeonButton("↩ Ответить",onReply,Modifier.fillMaxWidth())
                     Spacer(Modifier.height(8.dp))
+                    if(message.text.isNotBlank() && message.attachmentId.isBlank()){
+                        OutlinedButton(
+                            onClick=onForward,shape=RoundedCornerShape(22.dp),
+                            modifier=Modifier.fillMaxWidth()
+                        ){Text("↗ Переслать текст")}
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    if(canEdit){
+                        OutlinedButton(
+                            onClick=onEdit,shape=RoundedCornerShape(22.dp),
+                            modifier=Modifier.fillMaxWidth()
+                        ){Text("✎ Изменить")}
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    if(canDelete){
+                        OutlinedButton(
+                            onClick=onDelete,shape=RoundedCornerShape(22.dp),
+                            modifier=Modifier.fillMaxWidth()
+                        ){Text("Удалить сообщение")}
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    if(aiEnabled && message.text.isNotBlank()){
+                        OutlinedButton(
+                            onClick=onAskAi,
+                            shape=RoundedCornerShape(22.dp),
+                            modifier=Modifier.fillMaxWidth()
+                        ){Text("✦ Подготовить для Lumo AI")}
+                        Text(
+                            "Текст не отправится ИИ, пока ты сам не нажмёшь отправить.",
+                            style=MaterialTheme.typography.labelSmall
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
                 }
-                if(aiEnabled && message.text.isNotBlank()){
-                    OutlinedButton(
-                        onClick=onAskAi,
-                        shape=RoundedCornerShape(22.dp),
-                        modifier=Modifier.fillMaxWidth()
-                    ){Text("✦ Подготовить для Lumo AI")}
-                    Text(
-                        "Текст не отправится ИИ, пока ты сам не нажмёшь отправить.",
-                        style=MaterialTheme.typography.labelSmall
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-                if(reactionsEnabled){
+                if(reactionsEnabled && message.deletedAt.isBlank()){
                     Text("Реакция",fontWeight=FontWeight.SemiBold,
                         style=MaterialTheme.typography.labelLarge)
                     Spacer(Modifier.height(8.dp))

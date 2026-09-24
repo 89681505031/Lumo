@@ -35,6 +35,8 @@ export async function initDatabase() {
   await pool.query(`create table if not exists messages (id uuid primary key, sender_id uuid not null references users(id) on delete cascade, recipient_id uuid not null references users(id) on delete cascade, text varchar(4000) not null, created_at timestamptz not null default now(), delivered_at timestamptz, read_at timestamptz)`);
   await pool.query(`alter table messages add column if not exists client_message_id uuid`);
   await pool.query(`alter table messages add column if not exists reply_to_message_id uuid`);
+  await pool.query(`alter table messages add column if not exists edited_at timestamptz`);
+  await pool.query(`alter table messages add column if not exists deleted_at timestamptz`);
   const replyFk=await pool.query(
     "select 1 from pg_constraint where conname=$1 and conrelid='messages'::regclass",
     ["messages_reply_to_fk"]
@@ -131,9 +133,13 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='messages' and column_name='reply_to_message_id') as reply_column,
     exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='messages' and column_name='edited_at') as edited_column,
+    exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='messages' and column_name='deleted_at') as deleted_column,
+    exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='messages' and column_name='media_id') as media_column,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.user_blocks_table && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.user_blocks_table && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
 }

@@ -401,7 +401,7 @@ app.get("/api/media/:id/download",auth,requireDatabase,rateLimit({windowMs:60_00
 });
 
 app.get("/api/messages/capabilities",auth,(_req,res)=>{
-  res.json({linkedReplies:true});
+  res.json({linkedReplies:true,messageEdit:true,messageDelete:true,messageSearch:true});
 });
 
 app.get("/api/messages/:peerId", auth, async (req, res) => {
@@ -472,6 +472,60 @@ app.delete("/api/reactions/:messageId",auth,requireReactions,rateLimit({windowMs
     return res.status(204).end();
   }catch(error){
     console.error("Reaction removal failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/messages/search/:peerId",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  const peerId=req.params.peerId;
+  const q=typeof req.query.q==="string" ? req.query.q.trim() : "";
+  if(!uuidPattern.test(peerId) || peerId===req.user.id)
+    return res.status(400).json({error:"invalid_peer_id"});
+  if(q.length<2 || q.length>100)
+    return res.status(400).json({error:"invalid_search_query"});
+  try{
+    if(!await postgresStore.userExists(peerId))
+      return res.status(404).json({error:"peer_not_found"});
+    return res.json(await postgresStore.searchMessages(req.user.id,peerId,q));
+  }catch(error){
+    console.error("Search messages failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.patch("/api/messages/:id",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  const id=req.params.id;
+  if(!uuidPattern.test(id))
+    return res.status(400).json({error:"invalid_message_id"});
+  if(typeof req.body?.text!=="string" || !req.body.text.trim())
+    return res.status(400).json({error:"empty_message"});
+  const text=req.body.text.trim();
+  if(text.length>4000)
+    return res.status(400).json({error:"message_too_long"});
+  try{
+    const message=await postgresStore.editMessage(req.user.id,id,text);
+    if(!message)return res.status(404).json({error:"message_not_editable"});
+    sendTo(message.from,{type:"message",message});
+    sendTo(message.to,{type:"message",message});
+    return res.json(message);
+  }catch(error){
+    console.error("Edit message failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.delete("/api/messages/:id",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  const id=req.params.id;
+  if(!uuidPattern.test(id))
+    return res.status(400).json({error:"invalid_message_id"});
+  try{
+    const message=await postgresStore.deleteMessage(req.user.id,id);
+    if(!message)return res.status(404).json({error:"message_not_editable"});
+    sendTo(message.from,{type:"message",message});
+    sendTo(message.to,{type:"message",message});
+    return res.json(message);
+  }catch(error){
+    console.error("Delete message failed",error);
     return res.status(503).json({error:"service_unavailable"});
   }
 });

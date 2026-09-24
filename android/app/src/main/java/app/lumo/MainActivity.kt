@@ -43,7 +43,7 @@ import org.json.JSONObject
 import kotlinx.coroutines.launch
 
 data class User(val id:String,val username:String,val displayName:String,val bio:String="",val bioSupported:Boolean=false,val hasAvatar:Boolean=false,val avatarVersion:String="")
-data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="",val attachmentId:String="",val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="")
+data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="",val attachmentId:String="",val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="",val editedAt:String="",val deletedAt:String="")
 data class Conversation(val peer:User,val lastMessage:String,val lastAt:String="")
 data class UpdateInfo(val versionCode:Int,val downloadUrl:String)
 data class Receipt(val messageId:String,val deliveredAt:String,val readAt:String)
@@ -702,14 +702,26 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  val merged=LinkedHashMap<String,Msg>()
  for(m in current+incoming){
   val old=merged[m.id]
-  merged[m.id]=if(old==null)m else m.copy(
-   deliveredAt=old.deliveredAt.ifBlank{m.deliveredAt},
-   readAt=old.readAt.ifBlank{m.readAt},
-   clientMessageId=m.clientMessageId.ifBlank{old.clientMessageId},
-   attachmentId=m.attachmentId.ifBlank{old.attachmentId},
-   replyToMessageId=m.replyToMessageId.ifBlank{old.replyToMessageId},
-   replyPreviewText=m.replyPreviewText.ifBlank{old.replyPreviewText},
-   replyPreviewFrom=m.replyPreviewFrom.ifBlank{old.replyPreviewFrom}
+  if(old==null){merged[m.id]=m;continue}
+  // A delayed socket/history response must never resurrect text that was
+  // already edited or deleted on this device.
+  val oldWins=when{
+   old.deletedAt.isNotBlank() && m.deletedAt.isBlank()->true
+   old.deletedAt.isNotBlank() && m.deletedAt.isNotBlank()->old.deletedAt>m.deletedAt
+   old.editedAt.isNotBlank() && m.deletedAt.isBlank() &&
+    (m.editedAt.isBlank() || old.editedAt>m.editedAt)->true
+   else->false
+  }
+  val preferred=if(oldWins)old else m
+  val other=if(oldWins)m else old
+  merged[m.id]=preferred.copy(
+   deliveredAt=preferred.deliveredAt.ifBlank{other.deliveredAt},
+   readAt=preferred.readAt.ifBlank{other.readAt},
+   clientMessageId=preferred.clientMessageId.ifBlank{other.clientMessageId},
+   attachmentId=preferred.attachmentId.ifBlank{other.attachmentId},
+   replyToMessageId=preferred.replyToMessageId.ifBlank{other.replyToMessageId},
+   replyPreviewText=preferred.replyPreviewText.ifBlank{other.replyPreviewText},
+   replyPreviewFrom=preferred.replyPreviewFrom.ifBlank{other.replyPreviewFrom}
   )
  }
  return merged.values.sortedBy{it.createdAt}
@@ -723,6 +735,19 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  var reactionsEnabled by remember(token,peer.id){mutableStateOf(false)}
  var aiEnabled by remember(token,peer.id){mutableStateOf(false)}
  var linkedRepliesEnabled by remember(token,peer.id){mutableStateOf(false)}
+ var messageEditEnabled by remember(token,peer.id){mutableStateOf(false)}
+ var messageDeleteEnabled by remember(token,peer.id){mutableStateOf(false)}
+ var messageSearchEnabled by remember(token,peer.id){mutableStateOf(false)}
+ var editTarget by remember(peer.id){mutableStateOf<Msg?>(null)}
+ var editDraft by remember(peer.id){mutableStateOf("")}
+ var deleteTarget by remember(peer.id){mutableStateOf<Msg?>(null)}
+ var mutationBusy by remember{mutableStateOf(false)}
+ var showSearch by remember(peer.id){mutableStateOf(false)}
+ var searchText by remember(peer.id){mutableStateOf("")}
+ var searchResults by remember(peer.id){mutableStateOf<List<Msg>>(emptyList())}
+ var searchBusy by remember{mutableStateOf(false)}
+ var searchPerformed by remember{mutableStateOf(false)}
+ var searchError by remember{mutableStateOf("")}
  var reactions by remember(peer.id){mutableStateOf<List<LumoReaction>>(emptyList())}
  var reactionRefresh by remember{mutableIntStateOf(0)}
  var reactionBusy by remember{mutableStateOf(false)}
@@ -739,6 +764,14 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
   linkedRepliesEnabled=runCatching {
    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.linkedRepliesSupported(token)}
   }.getOrDefault(false)
+  val mutationCaps=runCatching {
+   kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+    Api.messageMutationCapabilities(token)
+   }
+  }.getOrDefault(Triple(false,false,false))
+  messageEditEnabled=mutationCaps.first
+  messageDeleteEnabled=mutationCaps.second
+  messageSearchEnabled=mutationCaps.third
  }
  LaunchedEffect(token,peer.id,reactionsEnabled,reactionRefresh) {
   if(reactionsEnabled) while(true) {
@@ -826,9 +859,13 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    message=selected,
    reactionsEnabled=reactionsEnabled && !reactionBusy,
    aiEnabled=aiEnabled,
+   canEdit=messageEditEnabled && selected.from==me.id && selected.deletedAt.isBlank(),
+   canDelete=messageDeleteEnabled && selected.from==me.id && selected.deletedAt.isBlank(),
    onDismiss={activeMessage=null},
    onReply={replyTarget=selected;activeMessage=null},
    onForward={forwardingMessage=selected;activeMessage=null},
+   onEdit={editDraft=selected.text;editTarget=selected;activeMessage=null;actionError=""},
+   onDelete={deleteTarget=selected;activeMessage=null;actionError=""},
    onAskAi={askAi(selected.text);activeMessage=null},
    onReact={emoji->
     if(!reactionBusy) {
@@ -848,6 +885,100 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
      }
     }
    }
+  )
+ }
+ editTarget?.let { target ->
+  AlertDialog(
+   onDismissRequest={if(!mutationBusy)editTarget=null},
+   title={Text("Изменить сообщение")},
+   text={
+    OutlinedTextField(
+     value=editDraft,
+     onValueChange={editDraft=it.take(4000)},
+     label={Text(if(target.attachmentId.isBlank())"Текст" else "Подпись")},
+     modifier=Modifier.fillMaxWidth(),
+     maxLines=6
+    )
+   },
+   confirmButton={
+    TextButton(
+     enabled=!mutationBusy&&editDraft.trim().isNotEmpty()&&editDraft.trim().length<=4000,
+     onClick={
+      mutationBusy=true;actionError=""
+      scope.launch{
+       runCatching{
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+         Api.editMessage(token,target.id,editDraft)
+        }
+       }.onSuccess{changed->
+        val updated=msgs.map{m->
+         when{
+          m.id==changed.id->changed
+          m.replyToMessageId==changed.id->m.copy(replyPreviewText=changed.text.take(240))
+          else->m
+         }
+        }
+        msgs.clear();msgs.addAll(updated)
+        searchResults=searchResults.map{m->
+         when{
+          m.id==changed.id->changed
+          m.replyToMessageId==changed.id->m.copy(replyPreviewText=changed.text.take(240))
+          else->m
+         }
+        }
+        persistHistory()
+        editTarget=null
+       }.onFailure{actionError="Не удалось изменить сообщение. Проверь соединение."}
+       mutationBusy=false
+      }
+     }
+    ){Text(if(mutationBusy)"Сохраняем…" else "Сохранить")}
+   },
+   dismissButton={TextButton(onClick={editTarget=null},enabled=!mutationBusy){Text("Отмена")}}
+  )
+ }
+ deleteTarget?.let { target ->
+  AlertDialog(
+   onDismissRequest={if(!mutationBusy)deleteTarget=null},
+   title={Text("Удалить сообщение?")},
+   text={Text(
+    if(target.attachmentId.isBlank())
+     "Текст будет заменён пометкой «Сообщение удалено»."
+    else "Вложение перестанет открываться у получателя, а сообщение станет пометкой об удалении."
+   )},
+   confirmButton={
+    TextButton(
+     enabled=!mutationBusy,
+     onClick={
+      mutationBusy=true;actionError=""
+      scope.launch{
+       runCatching{
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+         Api.deleteMessage(token,target.id)
+        }
+       }.onSuccess{changed->
+        val updated=msgs.map{m->
+         when{
+          m.id==changed.id->changed
+          m.replyToMessageId==changed.id->m.copy(replyPreviewText="Сообщение удалено")
+          else->m
+         }
+        }
+        msgs.clear();msgs.addAll(updated)
+        searchResults=searchResults.filterNot{it.id==changed.id}.map{m->
+         if(m.replyToMessageId==changed.id)m.copy(replyPreviewText="Сообщение удалено") else m
+        }
+        reactions=reactions.filterNot{it.messageId==changed.id}
+        if(replyTarget?.id==changed.id)replyTarget=null
+        persistHistory()
+        deleteTarget=null
+       }.onFailure{actionError="Не удалось удалить сообщение. Проверь соединение."}
+       mutationBusy=false
+      }
+     }
+    ){Text(if(mutationBusy)"Удаляем…" else "Удалить")}
+   },
+   dismissButton={TextButton(onClick={deleteTarget=null},enabled=!mutationBusy){Text("Отмена")}}
   )
  }
  forwardingMessage?.let { chosen ->
@@ -904,6 +1035,18 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       Text("@"+peer.username,style=MaterialTheme.typography.labelMedium,
        color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
      }
+     if(messageSearchEnabled){
+      TextButton(onClick={
+       showSearch=!showSearch
+       searchResults=emptyList()
+       searchPerformed=false
+       searchError=""
+       if(!showSearch)searchText=""
+      }){
+       Text(if(showSearch)"×" else "⌕",color=LumoCyan,
+        style=MaterialTheme.typography.titleLarge)
+      }
+     }
     }
    }
   ){pad->
@@ -932,13 +1075,63 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       TextButton(onClick={actionError=""}){Text("×",color=Color.White)}
      }
     }
+    if(showSearch){
+     Column(
+      Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp)
+       .lumoGlass(20).padding(10.dp)
+     ){
+      Row(verticalAlignment=Alignment.CenterVertically){
+       LumoSearchField(
+        value=searchText,
+        onValueChange={
+         searchText=it.take(100)
+         searchPerformed=false
+         searchResults=emptyList()
+         searchError=""
+        },
+        placeholder="Найти в переписке",
+        modifier=Modifier.weight(1f)
+       )
+       Spacer(Modifier.width(7.dp))
+       TextButton(
+        enabled=!searchBusy&&searchText.trim().length in 2..100,
+        onClick={
+         searchBusy=true;searchError=""
+         scope.launch{
+          runCatching{
+           kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+            Api.searchMessages(token,peer.id,searchText)
+           }
+          }.onSuccess{
+           searchResults=it
+           searchPerformed=true
+          }.onFailure{searchError="Поиск временно недоступен"}
+          searchBusy=false
+         }
+        }
+       ){Text("Найти",color=LumoCyan)}
+      }
+      if(searchBusy)LinearProgressIndicator(Modifier.fillMaxWidth(),color=LumoCyan)
+      if(searchError.isNotBlank())Text(
+       searchError,color=MaterialTheme.colorScheme.error,
+       style=MaterialTheme.typography.bodySmall
+      )
+      if(searchPerformed)Text(
+       if(searchResults.isEmpty())"Совпадений не найдено"
+       else "Найдено: "+searchResults.size,
+       color=MaterialTheme.colorScheme.onSurfaceVariant,
+       style=MaterialTheme.typography.labelMedium
+      )
+     }
+    }
+    val visibleMessages=if(showSearch&&searchPerformed)searchResults else msgs.toList()
     LazyColumn(
      state=listState,
      modifier=Modifier.weight(1f).fillMaxWidth(),
      contentPadding=PaddingValues(horizontal=13.dp,vertical=14.dp),
      verticalArrangement=Arrangement.spacedBy(11.dp)
     ){
-     items(msgs,key={it.id}){m->
+     items(visibleMessages,key={it.id}){m->
       val own=m.from==me.id
       Row(
        Modifier.fillMaxWidth(),
@@ -956,7 +1149,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
           Box(
            Modifier.fillMaxWidth().lumoGlass(14)
             .clickable{
-             val index=msgs.indexOfFirst{it.id==m.replyToMessageId}
+             val index=visibleMessages.indexOfFirst{it.id==m.replyToMessageId}
              if(index>=0)scope.launch{listState.animateScrollToItem(index)}
             }
             .padding(horizontal=9.dp,vertical=7.dp)
@@ -977,12 +1170,28 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
           }
           Spacer(Modifier.height(7.dp))
          }
-         if(m.text.isNotBlank())Text(m.text,color=Color.White)
-         if(m.attachmentId.isNotBlank())MediaAttachmentButton(token,m.attachmentId)
+         if(m.text.isNotBlank())Text(
+          m.text,
+          color=if(m.deletedAt.isNotBlank())
+           MaterialTheme.colorScheme.onSurfaceVariant else Color.White,
+          fontStyle=if(m.deletedAt.isNotBlank())
+           androidx.compose.ui.text.font.FontStyle.Italic
+           else androidx.compose.ui.text.font.FontStyle.Normal
+         )
+         if(m.attachmentId.isNotBlank() && m.deletedAt.isBlank())
+          MediaAttachmentButton(token,m.attachmentId)
          Spacer(Modifier.height(5.dp))
          Row(
           Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically
          ){
+          if(m.editedAt.isNotBlank() && m.deletedAt.isBlank()){
+           Text(
+            "изменено",
+            color=Color.White.copy(alpha=.62f),
+            style=MaterialTheme.typography.labelSmall
+           )
+           Spacer(Modifier.width(5.dp))
+          }
           if(m.createdAt.isNotBlank())Text(
            formatMessageTime(m.createdAt),
            color=Color.White.copy(alpha=.73f),
@@ -996,14 +1205,16 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
             style=MaterialTheme.typography.labelSmall
            )
           }
-          Spacer(Modifier.width(5.dp))
-          TextButton(onClick={activeMessage=m},contentPadding=PaddingValues(horizontal=7.dp)){
-           Text("⋯",color=LumoCyan,style=MaterialTheme.typography.titleMedium)
+          if(m.deletedAt.isBlank()){
+           Spacer(Modifier.width(5.dp))
+           TextButton(onClick={activeMessage=m},contentPadding=PaddingValues(horizontal=7.dp)){
+            Text("⋯",color=LumoCyan,style=MaterialTheme.typography.titleMedium)
+           }
           }
          }
         }
        }
-       if(reactionsEnabled){
+       if(reactionsEnabled && m.deletedAt.isBlank()){
         LumoReactionBadges(
          entries=reactions.filter{it.messageId==m.id},
          meId=me.id,
@@ -1027,7 +1238,9 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       }
      }
      items(
-      pending.filter{p->msgs.none{it.from==me.id&&it.clientMessageId==p.clientMessageId}},
+      if(showSearch)emptyList() else pending.filter{p->
+       msgs.none{it.from==me.id&&it.clientMessageId==p.clientMessageId}
+      },
       key={"pending-"+it.clientMessageId}
      ){p->
       Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
@@ -1174,6 +1387,53 @@ object Api{
    }.getOrDefault(false)
   }
  }
+ fun messageMutationCapabilities(t:String):Triple<Boolean,Boolean,Boolean>{
+  val request=Request.Builder().url(HTTP+"/api/messages/capabilities")
+   .header("Authorization","Bearer "+t).get().build()
+  c.newCall(request).execute().use{response->
+   if(response.code==401)throw SessionExpiredException()
+   if(!response.isSuccessful)return Triple(false,false,false)
+   return runCatching{
+    val o=JSONObject(response.body?.string().orEmpty())
+    Triple(
+     o.optBoolean("messageEdit",false),
+     o.optBoolean("messageDelete",false),
+     o.optBoolean("messageSearch",false)
+    )
+   }.getOrDefault(Triple(false,false,false))
+  }
+ }
+ fun searchMessages(t:String,peerId:String,q:String):List<Msg>{
+  val url=(HTTP+"/api/messages/search/"+peerId).toHttpUrl().newBuilder()
+   .addQueryParameter("q",q.trim()).build()
+  val request=Request.Builder().url(url).header("Authorization","Bearer "+t).get().build()
+  c.newCall(request).execute().use{x->
+   if(x.code==401)throw SessionExpiredException()
+   if(!x.isSuccessful)error("Поиск: "+x.code)
+   val a=JSONArray(x.body?.string().orEmpty())
+   return (0 until a.length()).map{msg(a.getJSONObject(it))}
+  }
+ }
+ fun editMessage(t:String,messageId:String,text:String):Msg{
+  val body=JSONObject().put("text",text.trim())
+  val request=Request.Builder().url(HTTP+"/api/messages/"+messageId)
+   .header("Authorization","Bearer "+t)
+   .patch(body.toString().toRequestBody("application/json".toMediaType())).build()
+  c.newCall(request).execute().use{x->
+   if(x.code==401)throw SessionExpiredException()
+   if(!x.isSuccessful)error("Изменение: "+x.code)
+   return msg(JSONObject(x.body?.string().orEmpty()))
+  }
+ }
+ fun deleteMessage(t:String,messageId:String):Msg{
+  val request=Request.Builder().url(HTTP+"/api/messages/"+messageId)
+   .header("Authorization","Bearer "+t).delete().build()
+  c.newCall(request).execute().use{x->
+   if(x.code==401)throw SessionExpiredException()
+   if(!x.isSuccessful)error("Удаление: "+x.code)
+   return msg(JSONObject(x.body?.string().orEmpty()))
+  }
+ }
  fun sendMessage(t:String,to:String,p:PendingMessage):Msg{
   fun perform(body:JSONObject):Pair<Int,String>{
    val request=Request.Builder().url(HTTP+"/api/messages")
@@ -1213,5 +1473,5 @@ object Api{
  fun latestRelease():UpdateInfo{val r=Request.Builder().url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest").header("Accept","application/vnd.github+json").build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Обновление: "+x.code);val o=JSONObject(x.body!!.string());val code=Regex("versionCode=(\\d+)").find(o.optString("body"))?.groupValues?.get(1)?.toIntOrNull()?:0;val a=o.getJSONArray("assets");for(i in 0 until a.length()){val asset=a.getJSONObject(i);if(asset.optString("name")=="app-debug.apk" || asset.optString("name")=="app-release.apk" || asset.optString("label")=="Lumo.apk")return UpdateInfo(code,asset.getString("browser_download_url"))};error("APK не найден")}}
  fun socket(t:String,onMessage:(Msg)->Unit,onReceipt:(Receipt)->Unit,onError:(String)->Unit,onReady:()->Unit,onDisconnected:()->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS).header("Authorization","Bearer "+t).build(),object:WebSocketListener(){override fun onOpen(w:WebSocket,response:Response){};override fun onMessage(w:WebSocket,s:String){runCatching{val o=JSONObject(s);when(o.optString("type")){"ready"->onReady();"message"->onMessage(msg(o.getJSONObject("message")));"receipt"->onReceipt(Receipt(o.getString("messageId"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt")));"error"->onError(o.optString("error"));else->Unit}}.onFailure{onError("invalid_server_message")}};override fun onClosed(w:WebSocket,code:Int,reason:String)=onDisconnected();override fun onFailure(w:WebSocket,t:Throwable,response:Response?)=onDisconnected()})}
  private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"),nullableJsonText(o,"bio"),o.has("bio"),o.optBoolean("hasAvatar",false),nullableJsonText(o,"avatarVersion"))
- private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"),nullableJsonText(o,"attachmentId"),nullableJsonText(o,"replyToMessageId"),nullableJsonText(o,"replyPreviewText"),nullableJsonText(o,"replyPreviewFrom"))
+ private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"),nullableJsonText(o,"attachmentId"),nullableJsonText(o,"replyToMessageId"),nullableJsonText(o,"replyPreviewText"),nullableJsonText(o,"replyPreviewFrom"),nullableJsonText(o,"editedAt"),nullableJsonText(o,"deletedAt"))
 }
