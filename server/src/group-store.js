@@ -11,7 +11,9 @@ const message = row => ({
   clientMessageId:row.client_message_id,
   replyToMessageId:row.reply_to_message_id || null,
   replyPreviewText:row.reply_preview_text || null,
-  replyPreviewFrom:row.reply_preview_from || null
+  replyPreviewFrom:row.reply_preview_from || null,
+  editedAt:iso(row.edited_at),
+  deletedAt:iso(row.deleted_at)
 });
 const group = row => ({
   id:row.id, title:row.title, ownerId:row.owner_id,
@@ -222,6 +224,7 @@ export const groupStore = {
       left join chat_group_messages reply
         on reply.id=gm.reply_to_message_id and reply.group_id=gm.group_id
       where m.group_id=$1 and m.user_id=$2
+        and gm.deleted_at is null
         and strpos(lower(gm.text),lower($3))>0
       order by gm.created_at desc,gm.id desc limit 50`,
       [groupId,userId,query]
@@ -241,7 +244,7 @@ export const groupStore = {
         select reply.id,left(reply.text,240) as text,reply.sender_id
         from chat_group_members m
         join chat_group_messages reply on reply.group_id=m.group_id
-          and reply.created_at>=m.joined_at
+          and reply.created_at>=m.joined_at and reply.deleted_at is null
         where m.group_id=$1 and m.user_id=$2 and reply.id=$3`,
         [groupId,userId,replyToMessageId]
       );
@@ -288,6 +291,86 @@ export const groupStore = {
       };
     }
     return {error:"group_not_found"};
+  },
+  async editMessage(userId,groupId,messageId,text) {
+    const r=await dbQuery(`
+      update chat_group_messages gm
+      set text=$4,edited_at=now()
+      from chat_group_members m
+      where gm.id=$1 and gm.group_id=$2 and gm.sender_id=$3
+        and gm.deleted_at is null
+        and m.group_id=gm.group_id and m.user_id=$3
+        and gm.created_at>=m.joined_at
+      returning gm.*`,
+      [messageId,groupId,userId,text]
+    );
+    return r.rows[0] ? message(r.rows[0]) : null;
+  },
+  async deleteMessage(userId,groupId,messageId) {
+    const r=await dbQuery(`
+      with updated as (
+        update chat_group_messages gm
+        set text='Сообщение удалено',
+            deleted_at=coalesce(gm.deleted_at,now())
+        from chat_group_members m
+        where gm.id=$1 and gm.group_id=$2 and gm.sender_id=$3
+          and m.group_id=gm.group_id and m.user_id=$3
+          and gm.created_at>=m.joined_at
+        returning gm.*
+      ), cleared as (
+        delete from chat_group_message_reactions r
+        where r.message_id in (select id from updated)
+      )
+      select * from updated`,
+      [messageId,groupId,userId]
+    );
+    return r.rows[0] ? message(r.rows[0]) : null;
+  },
+  async reactionAccessible(userId,groupId,messageId) {
+    const r=await dbQuery(`
+      select 1
+      from chat_group_members m
+      join chat_group_messages gm on gm.group_id=m.group_id
+        and gm.created_at>=m.joined_at
+      where m.group_id=$1 and m.user_id=$2 and gm.id=$3
+        and gm.deleted_at is null`,
+      [groupId,userId,messageId]
+    );
+    return r.rowCount>0;
+  },
+  async setReaction(userId,groupId,messageId,emoji,active) {
+    if(!await this.reactionAccessible(userId,groupId,messageId))return false;
+    if(active){
+      await dbQuery(`
+        insert into chat_group_message_reactions(message_id,user_id,emoji)
+        values($1,$2,$3)
+        on conflict(message_id,user_id,emoji) do nothing`,
+        [messageId,userId,emoji]
+      );
+    }else{
+      await dbQuery(`
+        delete from chat_group_message_reactions
+        where message_id=$1 and user_id=$2 and emoji=$3`,
+        [messageId,userId,emoji]
+      );
+    }
+    return true;
+  },
+  async reactions(userId,groupId) {
+    const rows=await dbQuery(`
+      select r.message_id,r.user_id,r.emoji
+      from chat_group_members m
+      join chat_group_messages gm on gm.group_id=m.group_id
+        and gm.created_at>=m.joined_at and gm.deleted_at is null
+      join chat_group_message_reactions r on r.message_id=gm.id
+      where m.group_id=$1 and m.user_id=$2
+      order by gm.created_at desc,r.created_at desc
+      limit 800`,
+      [groupId,userId]
+    );
+    return rows.rows.map(r=>({
+      messageId:r.message_id,userId:r.user_id,emoji:r.emoji
+    }));
   },
   async recipients(groupId,createdAt) {
     const rows=await dbQuery(
