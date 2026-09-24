@@ -494,6 +494,9 @@ fun GroupMediaComposer(
  var caption by remember(groupId){mutableStateOf("")}
  var busy by remember{mutableStateOf(false)}
  var status by remember{mutableStateOf("")}
+ var recorder by remember(groupId){mutableStateOf<MediaRecorder?>(null)}
+ var voiceFile by remember(groupId){mutableStateOf<File?>(null)}
+ var startedAt by remember(groupId){mutableLongStateOf(0L)}
 
  fun rememberPending(value:PendingAttachment?){
   pending=value
@@ -506,6 +509,58 @@ fun GroupMediaComposer(
    .put("filename",value.filename)
    .toString())
   edit.apply()
+ }
+
+ fun stopRecording(cancel:Boolean){
+  val r=recorder?:return
+  recorder=null
+  val file=voiceFile
+  var valid=!cancel
+  try{r.stop()}catch(_:RuntimeException){valid=false}
+  finally{r.reset();r.release()}
+  voiceFile=null
+  if(valid&&file!=null&&file.length() in 1..MAX_VOICE_BYTES){
+   chosen=ChosenMedia("audio/mp4","voice.m4a",file.length(),file=file)
+   status="Голосовое записано. Нажмите отправить."
+  }else{
+   file?.delete()
+   if(!cancel)status="Не удалось записать голосовое. Попробуйте ещё раз."
+  }
+ }
+ fun startRecording(){
+  if(busy||recorder!=null||pending!=null||!available||!allowSend)return
+  val file=File.createTempFile("lumo-group-voice-", ".m4a",context.cacheDir)
+  val r=if(Build.VERSION.SDK_INT>=31)MediaRecorder(context)
+   else @Suppress("DEPRECATION") MediaRecorder()
+  try{
+   r.setAudioSource(MediaRecorder.AudioSource.MIC)
+   r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+   r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+   r.setAudioEncodingBitRate(64000)
+   r.setAudioSamplingRate(44100)
+   r.setOutputFile(file.absolutePath)
+   r.setMaxDuration(120_000)
+   r.setMaxFileSize(MAX_VOICE_BYTES)
+   r.setOnInfoListener{_,code,_->
+    if(code==MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED||
+       code==MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED)
+      stopRecording(false)
+   }
+   r.prepare();r.start()
+   voiceFile=file
+   recorder=r
+   startedAt=SystemClock.elapsedRealtime()
+   status="Идёт запись. Нажмите «Готово», чтобы завершить."
+  }catch(_:Exception){
+   r.release();file.delete()
+   status="Микрофон не удалось включить"
+  }
+ }
+ val askMicrophone=rememberLauncherForActivityResult(
+  ActivityResultContracts.RequestPermission()
+ ){granted->
+  if(granted)startRecording()
+  else status="Разрешите доступ к микрофону для голосовых"
  }
 
  val chooseVisual=rememberLauncherForActivityResult(
@@ -534,8 +589,25 @@ fun GroupMediaComposer(
   }.getOrDefault(false)
   checking=false
  }
+ val lifecycleHost=context as? LifecycleOwner
+ DisposableEffect(lifecycleHost,groupId){
+  val observer=LifecycleEventObserver{_,event->
+   if(event==Lifecycle.Event.ON_STOP&&recorder!=null){
+    stopRecording(true)
+    status="Запись остановлена при сворачивании приложения"
+   }
+  }
+  lifecycleHost?.lifecycle?.addObserver(observer)
+  onDispose{lifecycleHost?.lifecycle?.removeObserver(observer)}
+ }
  DisposableEffect(groupId){
-  onDispose{chosen?.file?.delete()}
+  onDispose{
+   recorder?.let{r->runCatching{r.stop()};runCatching{r.reset()};r.release()}
+   recorder=null
+   voiceFile?.delete()
+   voiceFile=null
+   chosen?.file?.delete()
+  }
  }
 
  if(checking||(!available&&pending==null))return
@@ -574,21 +646,41 @@ fun GroupMediaComposer(
     ){Text("Отменить")}
    }
   }else{
-   Row(Modifier.fillMaxWidth()){
+   if(recorder==null){
+    Row(Modifier.fillMaxWidth()){
+     TextButton(
+      enabled=available&&allowSend&&!busy,
+      modifier=Modifier.weight(1f),
+      onClick={
+       chooseVisual.launch(PickVisualMediaRequest(
+        ActivityResultContracts.PickVisualMedia.ImageAndVideo
+       ))
+      }
+     ){Text("◉ Фото / видео",color=LumoCyan,maxLines=1)}
+     TextButton(
+      enabled=available&&allowSend&&!busy,
+      modifier=Modifier.weight(1f),
+      onClick={chooseDocument.launch(documentMimes)}
+     ){Text("📎 Документ",color=LumoCyan,maxLines=1)}
+    }
     TextButton(
-     enabled=available&&allowSend&&!busy,
-     modifier=Modifier.weight(1f),
-     onClick={
-      chooseVisual.launch(PickVisualMediaRequest(
-       ActivityResultContracts.PickVisualMedia.ImageAndVideo
-      ))
-     }
-    ){Text("◉ Фото / видео",color=LumoCyan,maxLines=1)}
-    TextButton(
-     enabled=available&&allowSend&&!busy,
-     modifier=Modifier.weight(1f),
-     onClick={chooseDocument.launch(documentMimes)}
-    ){Text("📎 Документ",color=LumoCyan,maxLines=1)}
+     enabled=available&&allowSend&&!busy&&chosen==null,
+     onClick={askMicrophone.launch(Manifest.permission.RECORD_AUDIO)}
+    ){Text("🎙 Голосовое",color=LumoCyan)}
+   }else{
+    Row(Modifier.fillMaxWidth()){
+     TextButton(
+      enabled=!busy,
+      onClick={
+       if(SystemClock.elapsedRealtime()-startedAt>=700L)stopRecording(false)
+       else status="Запишите хотя бы одну секунду"
+      }
+     ){Text("■ Готово")}
+     TextButton(
+      enabled=!busy,
+      onClick={stopRecording(true);status="Запись отменена"}
+     ){Text("Отмена")}
+    }
    }
    chosen?.let{selected->
     Row(Modifier.fillMaxWidth(),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
@@ -605,7 +697,7 @@ fun GroupMediaComposer(
      modifier=Modifier.fillMaxWidth(),maxLines=2,enabled=!busy
     )
     Button(
-     enabled=allowSend&&!busy,
+     enabled=allowSend&&!busy&&recorder==null,
      onClick={
       val source=chosen?:return@Button
       busy=true;status="Загрузка..."
@@ -620,6 +712,7 @@ fun GroupMediaComposer(
         )
        }}.onSuccess{item->
         rememberPending(item)
+        chosen?.file?.delete()
         chosen=null
         runCatching{withContext(Dispatchers.IO){
          MediaApi.sendGroup(token,groupId,item)
