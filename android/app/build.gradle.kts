@@ -63,6 +63,8 @@ dependencies {
  implementation("androidx.compose.ui:ui")
  implementation("androidx.compose.animation:animation-core")
  implementation("com.squareup.okhttp3:okhttp:4.12.0")
+ // Staging WebRTC audio transport; UI still requires explicit accepted call + mic permission + TURN.
+ implementation("io.github.webrtc-sdk:android:150.7871.01")
 
  // Debug only: no provider configuration or token generation unless owner
  // supplies explicit staging flags and a local google-services.json.
