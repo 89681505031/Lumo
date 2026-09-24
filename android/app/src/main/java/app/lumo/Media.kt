@@ -477,14 +477,24 @@ fun GroupMediaComposer(
 ){
  val context=LocalContext.current
  val scope=rememberCoroutineScope()
- val prefs=remember{context.getSharedPreferences("lumo_group_media_pending",Context.MODE_PRIVATE)}
+ val legacyPrefs=remember{
+  context.getSharedPreferences("lumo_group_media_pending",Context.MODE_PRIVATE)
+ }
  val key=remember(me.id,groupId){"group_media_"+me.id+"_"+groupId}
  var available by remember(token,groupId){mutableStateOf(false)}
  var checking by remember(token,groupId){mutableStateOf(true)}
  var chosen by remember(groupId){mutableStateOf<ChosenMedia?>(null)}
+ val encryptedPendingJson=remember(me.id,groupId){
+  runCatching{LumoOfflineStore.loadGroupMediaPendingJson(context,me.id,groupId)}
+   .getOrNull()
+ }
+ val legacyPendingJson=remember(key,encryptedPendingJson){
+  if(encryptedPendingJson!=null)null else legacyPrefs.getString(key,null)
+ }
  var pending by remember(key){mutableStateOf(
   runCatching{
-   val o=JSONObject(prefs.getString(key,null)?:return@runCatching null)
+   val raw=encryptedPendingJson?:legacyPendingJson?:return@runCatching null
+   val o=JSONObject(raw)
    PendingAttachment(
     o.getString("assetId"),o.getString("clientId"),
     o.optString("caption"),o.optString("filename")
@@ -493,22 +503,35 @@ fun GroupMediaComposer(
  )}
  var caption by remember(groupId){mutableStateOf("")}
  var busy by remember{mutableStateOf(false)}
- var status by remember{mutableStateOf("")}
+ var status by remember{mutableStateOf(
+  if(pending!=null)"Восстановлена зашифрованная очередь вложения." else ""
+ )}
  var recorder by remember(groupId){mutableStateOf<MediaRecorder?>(null)}
  var voiceFile by remember(groupId){mutableStateOf<File?>(null)}
  var startedAt by remember(groupId){mutableLongStateOf(0L)}
 
  fun rememberPending(value:PendingAttachment?){
   pending=value
-  val edit=prefs.edit()
-  if(value==null)edit.remove(key)
-  else edit.putString(key,JSONObject()
-   .put("assetId",value.assetId)
-   .put("clientId",value.clientId)
-   .put("caption",value.caption)
-   .put("filename",value.filename)
-   .toString())
-  edit.apply()
+  val json=value?.let{JSONObject()
+   .put("assetId",it.assetId)
+   .put("clientId",it.clientId)
+   .put("caption",it.caption)
+   .put("filename",it.filename)
+   .toString()}
+  runCatching{
+   LumoOfflineStore.saveGroupMediaPendingJson(context,me.id,groupId,json)
+  }
+  legacyPrefs.edit().remove(key).apply()
+ }
+ LaunchedEffect(key){
+  if(encryptedPendingJson==null&&legacyPendingJson!=null){
+   runCatching{withContext(Dispatchers.IO){
+    LumoOfflineStore.saveGroupMediaPendingJson(
+     context,me.id,groupId,legacyPendingJson
+    )
+   }}
+   legacyPrefs.edit().remove(key).apply()
+  }
  }
 
  fun stopRecording(cancel:Boolean){

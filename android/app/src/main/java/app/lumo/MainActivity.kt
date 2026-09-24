@@ -96,7 +96,7 @@ class MainActivity:ComponentActivity(){
   viewingGroups -> LumoBackdrop(Modifier.fillMaxSize()){
    Column(Modifier.fillMaxSize().statusBarsPadding()){
     TextButton(onClick={viewingGroups=false}){Text("‹ К чатам",color=Color.White)}
-    GroupsScreen(token!!){activeGroup=it}
+    GroupsScreen(token!!,me!!){activeGroup=it}
    }
   }
   viewingCalls -> LumoCallsLab(token!!,me!!){viewingCalls=false}

@@ -154,20 +154,31 @@ fun Api.groupRemove(t:String,id:String,memberId:String){groupCall(t,"/api/groups
 fun Api.groupDelete(t:String,id:String){groupCall(t,"/api/groups/"+id,"DELETE")}
 
 @Composable
-fun GroupsScreen(token:String,openGroup:(LumoGroup)->Unit){
+fun GroupsScreen(token:String,me:User,openGroup:(LumoGroup)->Unit){
  val scope=rememberCoroutineScope()
- var groups by remember(token){mutableStateOf<List<LumoGroup>>(emptyList())}
- var loading by remember{mutableStateOf(true)}
- var error by remember{mutableStateOf("")}
+ val context=LocalContext.current
+ val cachedGroups=remember(me.id){
+  runCatching{LumoOfflineStore.loadGroups(context,me.id)}.getOrDefault(emptyList())
+ }
+ var groups by remember(token,me.id){mutableStateOf(cachedGroups)}
+ var loading by remember{mutableStateOf(cachedGroups.isEmpty())}
+ var error by remember{mutableStateOf(if(cachedGroups.isNotEmpty())"Офлайн-копия групп" else "")}
  var createDialog by remember{mutableStateOf(false)}
  var title by remember{mutableStateOf("")}
  var creating by remember{mutableStateOf(false)}
  var refresh by remember{mutableIntStateOf(0)}
- LaunchedEffect(token,refresh){
+ LaunchedEffect(token,me.id,refresh){
   while(true){
    runCatching{withContext(Dispatchers.IO){Api.listGroups(token)}}
-    .onSuccess{groups=it;error="";loading=false}
-    .onFailure{error=it.message?:"Не удалось загрузить группы";loading=false}
+    .onSuccess{
+     groups=it;error="";loading=false
+     runCatching{withContext(Dispatchers.IO){LumoOfflineStore.saveGroups(context,me.id,it)}}
+    }
+    .onFailure{
+     error=if(groups.isNotEmpty())"Нет сети — показана зашифрованная офлайн-копия групп"
+      else (it.message?:"Не удалось загрузить группы")
+     loading=false
+    }
    delay(10_000)
   }
  }
@@ -179,7 +190,11 @@ fun GroupsScreen(token:String,openGroup:(LumoGroup)->Unit){
     creating=true
     scope.launch{
      runCatching{withContext(Dispatchers.IO){Api.createGroup(token,title.trim())}}
-      .onSuccess{groups=listOf(it)+groups;createDialog=false;title="";openGroup(it)}
+      .onSuccess{created->
+       groups=listOf(created)+groups
+       runCatching{LumoOfflineStore.saveGroups(context,me.id,groups)}
+       createDialog=false;title="";openGroup(created)
+      }
       .onFailure{error="Не удалось создать группу"}
      creating=false
     }
@@ -222,11 +237,20 @@ fun GroupsScreen(token:String,openGroup:(LumoGroup)->Unit){
 fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
  val scope=rememberCoroutineScope()
  val context=LocalContext.current
- val queuePrefs=remember{context.getSharedPreferences("lumo_group_pending",android.content.Context.MODE_PRIVATE)}
+ val legacyQueuePrefs=remember{
+  context.getSharedPreferences("lumo_group_pending",android.content.Context.MODE_PRIVATE)
+ }
  val queueKey="group_"+me.id+"_"+initial.id
- var pending by remember(queueKey){mutableStateOf(
-  runCatching{
-   val raw=queuePrefs.getString(queueKey,null)?:return@runCatching null
+ val cachedHistory=remember(me.id,initial.id){
+  runCatching{LumoOfflineStore.loadGroupHistory(context,me.id,initial.id)}
+   .getOrDefault(emptyList())
+ }
+ val encryptedPending=remember(me.id,initial.id){
+  runCatching{LumoOfflineStore.loadGroupPending(context,me.id,initial.id)}.getOrNull()
+ }
+ val legacyPending=remember(queueKey,encryptedPending){
+  if(encryptedPending!=null)null else runCatching{
+   val raw=legacyQueuePrefs.getString(queueKey,null)?:return@runCatching null
    val data=JSONObject(raw)
    LumoGroupPending(
     data.getString("clientId"),
@@ -236,26 +260,28 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     data.optString("replyPreviewFrom")
    )
   }.getOrNull()
- )}
+ }
+ var pending by remember(queueKey){mutableStateOf(encryptedPending?:legacyPending)}
  fun savePending(value:LumoGroupPending?){
   pending=value
-  val edit=queuePrefs.edit()
-  if(value==null)edit.remove(queueKey)
-  else edit.putString(queueKey,JSONObject()
-   .put("clientId",value.clientId)
-   .put("text",value.text)
-   .put("replyToMessageId",value.replyToMessageId)
-   .put("replyPreviewText",value.replyPreviewText)
-   .put("replyPreviewFrom",value.replyPreviewFrom)
-   .toString())
-  edit.apply()
+  runCatching{LumoOfflineStore.saveGroupPending(context,me.id,initial.id,value)}
+  legacyQueuePrefs.edit().remove(queueKey).apply()
+ }
+ LaunchedEffect(queueKey){
+  if(encryptedPending==null&&legacyPending!=null){
+   runCatching{withContext(Dispatchers.IO){
+    LumoOfflineStore.saveGroupPending(context,me.id,initial.id,legacyPending)
+   }}
+   legacyQueuePrefs.edit().remove(queueKey).apply()
+  }
  }
 
  var detail by remember(initial.id){mutableStateOf<LumoGroupDetail?>(null)}
- var history by remember(initial.id){mutableStateOf<List<LumoGroupMessage>>(emptyList())}
+ var history by remember(initial.id){mutableStateOf(cachedHistory)}
+ var historyInitialized by remember(initial.id){mutableStateOf(cachedHistory.isNotEmpty())}
  var input by remember(queueKey){mutableStateOf(pending?.text?:"")}
- var error by remember{mutableStateOf("")}
- var loading by remember{mutableStateOf(true)}
+ var error by remember{mutableStateOf(if(cachedHistory.isNotEmpty())"Офлайн-копия переписки" else "")}
+ var loading by remember{mutableStateOf(cachedHistory.isEmpty())}
  var sending by remember{mutableStateOf(false)}
  var actionBusy by remember{mutableStateOf(false)}
  var inviteDialog by remember{mutableStateOf(false)}
@@ -306,13 +332,38 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     Api.groupDetail(token,initial.id) to Api.groupHistory(token,initial.id)
    }}
    response.onSuccess{pair->
-    detail=pair.first;history=pair.second;error="";loading=false
+    detail=pair.first;history=pair.second;historyInitialized=true;error="";loading=false
+    runCatching{withContext(Dispatchers.IO){
+     LumoOfflineStore.saveGroupHistory(context,me.id,initial.id,pair.second)
+    }}
     if(pair.second.any{it.from==me.id&&it.clientMessageId.isNotBlank()&&it.clientMessageId==pending?.clientId}){
      savePending(null);input=""
     }
    }
-    .onFailure{error="Нет связи с группой или вы больше не участник";loading=false}
+    .onFailure{failure->
+     val confirmedRemoval=failure.message?.contains("HTTP 404 group_not_found")==true
+     if(confirmedRemoval){
+      history=emptyList();historyInitialized=false;savePending(null)
+      runCatching{withContext(Dispatchers.IO){
+       LumoOfflineStore.clearGroup(context,me.id,initial.id)
+       LumoOfflineStore.removeGroupFromList(context,me.id,initial.id)
+      }}
+      error="Вы больше не участник этой группы"
+     }else{
+      error=if(history.isNotEmpty())
+       "Нет сети — показана зашифрованная офлайн-копия переписки"
+      else "Нет связи с группой"
+     }
+     loading=false
+    }
    delay(5_000)
+  }
+ }
+ LaunchedEffect(history,historyInitialized,me.id,initial.id){
+  if(historyInitialized){
+   runCatching{withContext(Dispatchers.IO){
+    LumoOfflineStore.saveGroupHistory(context,me.id,initial.id,history)
+   }}
   }
  }
  // Same-instance group events arrive immediately; polling remains the durable
@@ -412,7 +463,16 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     actionBusy=true
     scope.launch{
      runCatching{withContext(Dispatchers.IO){Api.groupRemove(token,initial.id,person.id)}}
-      .onSuccess{removeUser=null;if(person.id==me.id)back() else reload()}
+      .onSuccess{
+       removeUser=null
+       if(person.id==me.id){
+        runCatching{
+         LumoOfflineStore.clearGroup(context,me.id,initial.id)
+         LumoOfflineStore.removeGroupFromList(context,me.id,initial.id)
+        }
+        back()
+       }else reload()
+      }
       .onFailure{error="Не удалось изменить состав группы";removeUser=null}
      actionBusy=false
     }
@@ -428,7 +488,13 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     actionBusy=true
     scope.launch{
      runCatching{withContext(Dispatchers.IO){Api.groupDelete(token,initial.id)}}
-      .onSuccess{deleteGroupDialog=false;back()}
+      .onSuccess{
+       runCatching{
+        LumoOfflineStore.clearGroup(context,me.id,initial.id)
+        LumoOfflineStore.removeGroupFromList(context,me.id,initial.id)
+       }
+       deleteGroupDialog=false;back()
+      }
       .onFailure{error="Не удалось удалить группу";deleteGroupDialog=false}
      actionBusy=false
     }
