@@ -33,6 +33,8 @@ create table if not exists messages (
   client_message_id uuid
 );
 alter table messages add column if not exists reply_to_message_id uuid;
+alter table messages add column if not exists edited_at timestamptz;
+alter table messages add column if not exists deleted_at timestamptz;
 do 'begin if not exists (select 1 from pg_constraint where conname = ''messages_reply_to_fk'' and conrelid = ''messages''::regclass) then alter table messages add constraint messages_reply_to_fk foreign key (reply_to_message_id) references messages(id) on delete set null; end if; end';
 create index if not exists messages_reply_to_idx on messages(reply_to_message_id) where reply_to_message_id is not null;
 create unique index if not exists messages_sender_client_id_uidx on messages(sender_id, client_message_id) where client_message_id is not null;
