@@ -859,9 +859,13 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    message=selected,
    reactionsEnabled=reactionsEnabled && !reactionBusy,
    aiEnabled=aiEnabled,
+   canEdit=messageEditEnabled && selected.from==me.id && selected.deletedAt.isBlank(),
+   canDelete=messageDeleteEnabled && selected.from==me.id && selected.deletedAt.isBlank(),
    onDismiss={activeMessage=null},
    onReply={replyTarget=selected;activeMessage=null},
    onForward={forwardingMessage=selected;activeMessage=null},
+   onEdit={editDraft=selected.text;editTarget=selected;activeMessage=null;actionError=""},
+   onDelete={deleteTarget=selected;activeMessage=null;actionError=""},
    onAskAi={askAi(selected.text);activeMessage=null},
    onReact={emoji->
     if(!reactionBusy) {
@@ -881,6 +885,90 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
      }
     }
    }
+  )
+ }
+ editTarget?.let { target ->
+  AlertDialog(
+   onDismissRequest={if(!mutationBusy)editTarget=null},
+   title={Text("Изменить сообщение")},
+   text={
+    OutlinedTextField(
+     value=editDraft,
+     onValueChange={editDraft=it.take(4000)},
+     label={Text(if(target.attachmentId.isBlank())"Текст" else "Подпись")},
+     modifier=Modifier.fillMaxWidth(),
+     maxLines=6
+    )
+   },
+   confirmButton={
+    TextButton(
+     enabled=!mutationBusy&&editDraft.trim().isNotEmpty()&&editDraft.trim().length<=4000,
+     onClick={
+      mutationBusy=true;actionError=""
+      scope.launch{
+       runCatching{
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+         Api.editMessage(token,target.id,editDraft)
+        }
+       }.onSuccess{changed->
+        val updated=msgs.map{m->
+         when{
+          m.id==changed.id->changed
+          m.replyToMessageId==changed.id->m.copy(replyPreviewText=changed.text.take(240))
+          else->m
+         }
+        }
+        msgs.clear();msgs.addAll(updated)
+        persistHistory()
+        editTarget=null
+       }.onFailure{actionError="Не удалось изменить сообщение. Проверь соединение."}
+       mutationBusy=false
+      }
+     }
+    ){Text(if(mutationBusy)"Сохраняем…" else "Сохранить")}
+   },
+   dismissButton={TextButton(onClick={editTarget=null},enabled=!mutationBusy){Text("Отмена")}}
+  )
+ }
+ deleteTarget?.let { target ->
+  AlertDialog(
+   onDismissRequest={if(!mutationBusy)deleteTarget=null},
+   title={Text("Удалить сообщение?")},
+   text={Text(
+    if(target.attachmentId.isBlank())
+     "Текст будет заменён пометкой «Сообщение удалено»."
+    else "Вложение перестанет открываться у получателя, а сообщение станет пометкой об удалении."
+   )},
+   confirmButton={
+    TextButton(
+     enabled=!mutationBusy,
+     onClick={
+      mutationBusy=true;actionError=""
+      scope.launch{
+       runCatching{
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+         Api.deleteMessage(token,target.id)
+        }
+       }.onSuccess{changed->
+        val updated=msgs.map{m->
+         when{
+          m.id==changed.id->changed
+          m.replyToMessageId==changed.id->m.copy(replyPreviewText="Сообщение удалено")
+          else->m
+         }
+        }
+        msgs.clear();msgs.addAll(updated)
+        reactions=reactions.filterNot{it.messageId==changed.id}
+        if(replyTarget?.id==changed.id)replyTarget=null
+        persistHistory()
+        deleteTarget=null
+       }.onFailure{actionError="Не удалось удалить сообщение. Проверь соединение."}
+       mutationBusy=false
+      }
+     }
+    ){Text(if(mutationBusy)"Удаляем…" else "Удалить")}
+   },
+   dismissButton={TextButton(onClick={deleteTarget=null},enabled=!mutationBusy){Text("Отмена")}}
   )
  }
  forwardingMessage?.let { chosen ->
