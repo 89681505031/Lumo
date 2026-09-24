@@ -1025,6 +1025,18 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       Text("@"+peer.username,style=MaterialTheme.typography.labelMedium,
        color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
      }
+     if(messageSearchEnabled){
+      TextButton(onClick={
+       showSearch=!showSearch
+       searchResults=emptyList()
+       searchPerformed=false
+       searchError=""
+       if(!showSearch)searchText=""
+      }){
+       Text(if(showSearch)"×" else "⌕",color=LumoCyan,
+        style=MaterialTheme.typography.titleLarge)
+      }
+     }
     }
    }
   ){pad->
@@ -1053,13 +1065,63 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       TextButton(onClick={actionError=""}){Text("×",color=Color.White)}
      }
     }
+    if(showSearch){
+     Column(
+      Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp)
+       .lumoGlass(20).padding(10.dp)
+     ){
+      Row(verticalAlignment=Alignment.CenterVertically){
+       LumoSearchField(
+        value=searchText,
+        onValueChange={
+         searchText=it.take(100)
+         searchPerformed=false
+         searchResults=emptyList()
+         searchError=""
+        },
+        placeholder="Найти в переписке",
+        modifier=Modifier.weight(1f)
+       )
+       Spacer(Modifier.width(7.dp))
+       TextButton(
+        enabled=!searchBusy&&searchText.trim().length in 2..100,
+        onClick={
+         searchBusy=true;searchError=""
+         scope.launch{
+          runCatching{
+           kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+            Api.searchMessages(token,peer.id,searchText)
+           }
+          }.onSuccess{
+           searchResults=it
+           searchPerformed=true
+          }.onFailure{searchError="Поиск временно недоступен"}
+          searchBusy=false
+         }
+        }
+       ){Text("Найти",color=LumoCyan)}
+      }
+      if(searchBusy)LinearProgressIndicator(Modifier.fillMaxWidth(),color=LumoCyan)
+      if(searchError.isNotBlank())Text(
+       searchError,color=MaterialTheme.colorScheme.error,
+       style=MaterialTheme.typography.bodySmall
+      )
+      if(searchPerformed)Text(
+       if(searchResults.isEmpty())"Совпадений не найдено"
+       else "Найдено: "+searchResults.size,
+       color=MaterialTheme.colorScheme.onSurfaceVariant,
+       style=MaterialTheme.typography.labelMedium
+      )
+     }
+    }
+    val visibleMessages=if(showSearch&&searchPerformed)searchResults else msgs.toList()
     LazyColumn(
      state=listState,
      modifier=Modifier.weight(1f).fillMaxWidth(),
      contentPadding=PaddingValues(horizontal=13.dp,vertical=14.dp),
      verticalArrangement=Arrangement.spacedBy(11.dp)
     ){
-     items(msgs,key={it.id}){m->
+     items(visibleMessages,key={it.id}){m->
       val own=m.from==me.id
       Row(
        Modifier.fillMaxWidth(),
@@ -1148,7 +1210,9 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       }
      }
      items(
-      pending.filter{p->msgs.none{it.from==me.id&&it.clientMessageId==p.clientMessageId}},
+      if(showSearch)emptyList() else pending.filter{p->
+       msgs.none{it.from==me.id&&it.clientMessageId==p.clientMessageId}
+      },
       key={"pending-"+it.clientMessageId}
      ){p->
       Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
