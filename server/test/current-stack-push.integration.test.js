@@ -207,23 +207,12 @@ test("generic push outbox covers direct and private-group messages without conte
     const sharedToken="fcm-shared-"+randomUUID();
     await registerDevice(bob,sharedToken);
     await registerDevice(carol,sharedToken);
-    const owners=await pool.query(
-      "select user_id from push_devices where token_hash=encode(digest($1,'sha256'),'hex')",
+    const byToken=await pool.query(
+      "select user_id from push_devices where fcm_token=$1",
       [sharedToken]
-    ).catch(()=>null);
-    if(owners){
-      assert.equal(owners.rowCount,1);
-      assert.equal(owners.rows[0].user_id,carol.user.id);
-    }else{
-      // CI databases do not promise pgcrypto; verify by raw token without
-      // requiring an optional extension.
-      const byToken=await pool.query(
-        "select user_id from push_devices where fcm_token=$1",
-        [sharedToken]
-      );
-      assert.equal(byToken.rowCount,1);
-      assert.equal(byToken.rows[0].user_id,carol.user.id);
-    }
+    );
+    assert.equal(byToken.rowCount,1);
+    assert.equal(byToken.rows[0].user_id,carol.user.id);
 
     assert.equal((await request("/internal/push-dispatch")).status,404,
       "provider delivery stays disabled without explicit staging configuration");
