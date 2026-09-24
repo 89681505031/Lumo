@@ -63,6 +63,115 @@ async function auth(req, res, next) {
 }
 
 app.get("/live", (_req, res) => res.json({ ok: true, service: "lumo-server" }));
+const lumoLandingPage = String.raw`<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0b1020">
+  <meta name="description" content="Lumo — современный мессенджер для общения. Скачать приложение Lumo для Android.">
+  <title>Lumo — мессенджер для своих</title>
+  <style>
+    :root{--bg:#070b14;--panel:#0d1424;--panel2:#101a2f;--text:#f5f7ff;--muted:#9aa7bf;--accent:#7c5cff;--accent2:#25d0ff;--line:rgba(255,255,255,.09)}
+    *{box-sizing:border-box} html{scroll-behavior:smooth} body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:
+    radial-gradient(900px 500px at 15% -10%,rgba(124,92,255,.25),transparent 60%),
+    radial-gradient(700px 460px at 95% 15%,rgba(37,208,255,.18),transparent 62%),var(--bg);color:var(--text)}
+    a{color:inherit;text-decoration:none}.wrap{width:min(1120px,calc(100% - 32px));margin:auto}
+    header{position:sticky;top:0;z-index:20;background:rgba(7,11,20,.72);backdrop-filter:blur(18px);border-bottom:1px solid var(--line)}
+    .nav{height:72px;display:flex;align-items:center;justify-content:space-between}.brand{display:flex;gap:11px;align-items:center;font-weight:800;font-size:21px}
+    .logo{width:38px;height:38px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 8px 30px rgba(78,96,255,.35);font-weight:900}
+    .navlinks{display:flex;gap:22px;align-items:center;color:var(--muted);font-size:14px}.navlinks a:hover{color:#fff}
+    .navbtn,.cta{display:inline-flex;align-items:center;justify-content:center;gap:9px;border-radius:15px;font-weight:750;transition:.2s}
+    .navbtn{padding:11px 16px;background:#fff;color:#08101f}.hero{padding:78px 0 48px;display:grid;grid-template-columns:1.1fr .9fr;gap:54px;align-items:center}
+    .badge{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.04);color:#c8d1e4;font-size:13px}
+    .dot{width:8px;height:8px;border-radius:50%;background:#37e097;box-shadow:0 0 14px #37e097}
+    h1{font-size:clamp(46px,7vw,82px);line-height:.98;letter-spacing:-.055em;margin:22px 0 22px;max-width:720px}
+    .grad{background:linear-gradient(90deg,#fff 10%,#9d90ff 50%,#51ddff);-webkit-background-clip:text;background-clip:text;color:transparent}
+    .lead{font-size:clamp(18px,2vw,22px);line-height:1.55;color:#b6c1d6;max-width:680px}
+    .actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:30px}.cta{padding:15px 21px;border:1px solid var(--line)}
+    .cta.primary{background:linear-gradient(135deg,var(--accent),#5c7cff);box-shadow:0 15px 45px rgba(92,124,255,.28)}
+    .cta.secondary{background:rgba(255,255,255,.05)}.cta:hover{transform:translateY(-2px)}
+    .meta{margin-top:14px;color:#8190aa;font-size:13px}.phone-wrap{display:grid;place-items:center;min-height:520px;position:relative}
+    .glow{position:absolute;width:360px;height:360px;border-radius:50%;filter:blur(60px);background:linear-gradient(135deg,rgba(124,92,255,.45),rgba(37,208,255,.22));opacity:.85}
+    .phone{position:relative;width:min(330px,86vw);height:640px;border-radius:42px;padding:12px;background:linear-gradient(145deg,#27324a,#050914 55%,#1a2234);box-shadow:0 35px 100px rgba(0,0,0,.55),inset 0 0 0 1px rgba(255,255,255,.18)}
+    .screen{height:100%;border-radius:32px;background:linear-gradient(180deg,#11192b,#08101f);overflow:hidden;position:relative;border:1px solid rgba(255,255,255,.06)}
+    .island{width:105px;height:27px;border-radius:0 0 18px 18px;background:#03050a;margin:auto}.screen-inner{padding:24px 18px}
+    .hello{display:flex;align-items:center;justify-content:space-between}.avatar{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#6e55ff,#24cfff)}
+    .bubble{margin-top:34px;padding:18px;border-radius:22px 22px 22px 7px;background:#202b42;width:82%;font-size:15px;line-height:1.45}
+    .bubble.me{margin:14px 0 0 auto;border-radius:22px 22px 7px 22px;background:linear-gradient(135deg,#7259ff,#556ff7);width:70%}
+    .composer{position:absolute;left:14px;right:14px;bottom:15px;height:54px;border-radius:18px;background:#141d2e;border:1px solid var(--line);display:flex;align-items:center;padding:0 15px;color:#74829a}
+    section{padding:60px 0}.section-title{font-size:clamp(30px,5vw,48px);letter-spacing:-.04em;margin:0 0 12px}.section-sub{color:var(--muted);font-size:17px;max-width:680px}
+    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:30px}.card{padding:24px;border:1px solid var(--line);border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.025))}
+    .icon{width:44px;height:44px;border-radius:14px;background:rgba(124,92,255,.16);display:grid;place-items:center;font-size:22px}.card h3{margin:18px 0 8px;font-size:18px}.card p{margin:0;color:var(--muted);line-height:1.55}
+    .download{margin:45px 0 80px;padding:34px;border-radius:30px;border:1px solid var(--line);background:linear-gradient(135deg,rgba(124,92,255,.16),rgba(37,208,255,.08));display:flex;justify-content:space-between;align-items:center;gap:22px}
+    .download h2{font-size:clamp(28px,4vw,44px);margin:0 0 8px;letter-spacing:-.04em}.download p{margin:0;color:var(--muted)}
+    footer{border-top:1px solid var(--line);padding:26px 0 38px;color:#77859e;font-size:13px}
+    @media(max-width:860px){.hero{grid-template-columns:1fr;padding-top:52px}.phone-wrap{min-height:auto;margin-top:8px}.grid{grid-template-columns:1fr}.navlinks a:not(.navbtn){display:none}.download{align-items:flex-start;flex-direction:column}}
+    @media(max-width:480px){.phone{height:600px}.hero{gap:34px}.download{padding:24px}}
+  </style>
+</head>
+<body>
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="/"><span class="logo">L</span><span>Lumo</span></a>
+    <nav class="navlinks">
+      <a href="#features">Возможности</a>
+      <a href="#download">Скачать</a>
+      <a class="navbtn" href="#download">Для Android</a>
+    </nav>
+  </div>
+</header>
+<main class="wrap">
+  <div class="hero">
+    <div>
+      <span class="badge"><span class="dot"></span>Lumo 1.0.6 • Android</span>
+      <h1>Общайся проще.<br><span class="grad">Оставайся ближе.</span></h1>
+      <p class="lead">Lumo — современный мессенджер для личных сообщений, групповых чатов и звонков. Быстрый интерфейс, удобные диалоги и всё необходимое для общения в одном приложении.</p>
+      <div class="actions">
+        <a class="cta primary" href="https://github.com/89681505031/Lumo/actions/runs/36041104190#artifacts" target="_blank" rel="noopener">⬇ Скачать Lumo для Android</a>
+        <a class="cta secondary" href="#features">Узнать больше</a>
+      </div>
+      <div class="meta">Android • версия 1.0.6 • APK-сборка</div>
+    </div>
+    <div class="phone-wrap" aria-label="Предпросмотр интерфейса Lumo">
+      <div class="glow"></div>
+      <div class="phone"><div class="screen"><div class="island"></div><div class="screen-inner">
+        <div class="hello"><div><div style="font-size:13px;color:#7f8ca4">Добро пожаловать</div><div style="font-size:24px;font-weight:800;margin-top:3px">Lumo</div></div><div class="avatar"></div></div>
+        <div class="bubble">Привет! Я уже в Lumo 👋</div><div class="bubble me">Отлично. Тогда пишем здесь ✨</div>
+        <div class="bubble" style="width:64%">Созвонимся позже?</div>
+        <div class="composer">Сообщение...</div>
+      </div></div></div>
+    </div>
+  </div>
+
+  <section id="features">
+    <h2 class="section-title">Всё для ежедневного общения</h2>
+    <p class="section-sub">Основные возможности Lumo собраны в простом мобильном интерфейсе без перегруженных экранов.</p>
+    <div class="grid">
+      <article class="card"><div class="icon">💬</div><h3>Личные сообщения</h3><p>Быстрые диалоги, история переписки и удобная работа с сообщениями.</p></article>
+      <article class="card"><div class="icon">👥</div><h3>Групповые чаты</h3><p>Общайся сразу с несколькими людьми, отвечай на сообщения и оставайся в контексте.</p></article>
+      <article class="card"><div class="icon">📞</div><h3>Звонки</h3><p>Связь внутри приложения для разговоров с контактами Lumo.</p></article>
+      <article class="card"><div class="icon">📎</div><h3>Медиа и файлы</h3><p>Отправляй материалы прямо в чат и получай их на телефоне.</p></article>
+      <article class="card"><div class="icon">🔎</div><h3>Поиск</h3><p>Находи нужные переписки и сообщения быстрее.</p></article>
+      <article class="card"><div class="icon">⚡</div><h3>Быстрый Android-клиент</h3><p>Lumo сделан прежде всего для удобной работы на смартфоне.</p></article>
+    </div>
+  </section>
+
+  <section id="download">
+    <div class="download">
+      <div><h2>Скачай Lumo</h2><p>Актуальная Android-сборка Lumo 1.0.6.</p></div>
+      <a class="cta primary" href="https://github.com/89681505031/Lumo/actions/runs/36041104190#artifacts" target="_blank" rel="noopener">⬇ Скачать приложение</a>
+    </div>
+  </section>
+</main>
+<footer><div class="wrap">© 2026 Lumo. Страница загрузки Android-приложения.</div></footer>
+</body>
+</html>`;
+
+app.get("/", (_req, res) => {
+  res.type("html").set("Cache-Control", "public, max-age=300").send(lumoLandingPage);
+});
+
 app.get("/api/capabilities",(_req,res)=>res.json({
   backendRevision:(process.env.VERCEL_GIT_COMMIT_SHA || process.env.GITHUB_SHA || "local").slice(0,12),
   mediaReady:mediaEnabled,
