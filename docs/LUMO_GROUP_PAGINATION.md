@@ -6,8 +6,8 @@ This stacked branch removes the latest-100-history ceiling for private groups wi
 
 - Existing `GET /api/groups/:id/messages` remains unchanged for older Android builds and still returns the newest 100 visible messages.
 - New clients can use `GET /api/groups/:id/messages/page` with a bounded `limit` from 1 to 100.
-- Older pages use a stable two-part cursor: `beforeAt` (message timestamp) plus `beforeId` (UUID). Both fields are required together.
-- PostgreSQL sorts by `(created_at DESC, id DESC)`, so multiple messages with the same timestamp are paged without duplicate/skip ambiguity.
+- Older pages use a stable `beforeId` message UUID cursor. PostgreSQL resolves that message's exact timestamp internally, so JavaScript timestamp precision cannot create skips.
+- PostgreSQL sorts by `(created_at DESC, id DESC)` and resolves the cursor row server-side, so equal-timestamp messages are paged without duplicate/skip ambiguity.
 - Page replies keep the same membership-window reply-preview redaction as normal history.
 
 ## Membership privacy
@@ -16,7 +16,7 @@ This stacked branch removes the latest-100-history ceiling for private groups wi
 - A late joiner cannot paginate backward into messages created before joining.
 - Leaving/removal makes the paged endpoint unavailable immediately.
 - Rejoining creates a new history boundary and does not reopen pages from the previous membership period.
-- Invalid/partial cursors and oversized page limits are rejected server-side before database access.
+- Malformed cursors, cursors outside the current membership window, and oversized page limits are rejected server-side.
 
 ## Android behavior
 
@@ -29,7 +29,7 @@ This stacked branch removes the latest-100-history ceiling for private groups wi
 ## Test coverage
 
 - Integration coverage inserts 125 same-timestamp messages to exercise the UUID tie-breaker across three pages (50 + 50 + 25).
-- Tests reject partial cursors and limits above 100.
+- Tests reject malformed/invisible cursors and limits above 100.
 - Tests verify outsiders cannot page a group and late/rejoined members cannot page older membership history.
 
 ## Still required before production
