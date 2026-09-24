@@ -134,6 +134,15 @@ export async function initDatabase() {
     unique(group_id,sender_id,client_message_id)
   )`);
   await pool.query(`create index if not exists chat_group_messages_history_idx on chat_group_messages(group_id,created_at desc,id desc)`);
+  await pool.query(`alter table chat_group_messages add column if not exists reply_to_message_id uuid`);
+  const groupReplyFk=await pool.query(
+    "select 1 from pg_constraint where conname=$1 and conrelid='chat_group_messages'::regclass",
+    ["chat_group_messages_reply_to_fk"]
+  );
+  if(!groupReplyFk.rowCount){
+    await pool.query(`alter table chat_group_messages add constraint chat_group_messages_reply_to_fk foreign key (reply_to_message_id) references chat_group_messages(id) on delete set null`);
+  }
+  await pool.query(`create index if not exists chat_group_messages_reply_idx on chat_group_messages(reply_to_message_id) where reply_to_message_id is not null`);
   return true;
 }
 export async function dbHealth() {
@@ -149,6 +158,8 @@ export async function dbHealth() {
     to_regclass('chat_groups') as groups_table,
     to_regclass('chat_group_members') as group_members_table,
     to_regclass('chat_group_messages') as group_messages_table,
+    exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='chat_group_messages' and column_name='reply_to_message_id') as group_reply_column,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column,
     exists(select 1 from information_schema.columns
@@ -168,5 +179,5 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.group_reply_column && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
 }
