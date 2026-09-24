@@ -463,7 +463,7 @@ app.delete("/api/groups/:id",auth,requireDatabase,rateLimit({windowMs:60_000,max
       return groupError(res,"group_not_found");
     const assetCount=await mediaStore.groupAssetCount(req.params.id);
     if(assetCount>0){
-      if(process.env.MEDIA_ENABLE_UPLOADS!=="true" || !mediaReady)
+      if(process.env.MEDIA_ENABLE_UPLOADS==="false" || !mediaReady)
         return res.status(503).json({error:"media_cleanup_unavailable"});
       const cleanup=await mediaStore.cleanupGroupAssets(req.params.id);
       if(cleanup.error)
