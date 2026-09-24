@@ -230,7 +230,7 @@ class MainActivity:ComponentActivity(){
   ){pad->
    Box(Modifier.fillMaxSize().padding(pad)){
     when(tab){
-     0->Chats(token,{tab=1},open,openGroups,privacy)
+     0->Chats(token,me,{tab=1},open,openGroups,privacy)
      1->People(token,open)
      else->Profile(token,me,profileChanged,privacy,openCalls,logout)
     }
@@ -239,7 +239,8 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Chats(token:String,find:()->Unit,open:(User)->Unit,openGroups:()->Unit,privacy:LumoPrivacy){
+@Composable fun Chats(token:String,me:User,find:()->Unit,open:(User)->Unit,openGroups:()->Unit,privacy:LumoPrivacy){
+ val context=LocalContext.current
  var chats by remember{mutableStateOf<List<Conversation>>(emptyList())}
  var chatQuery by remember{mutableStateOf("")}
  var groupsReady by remember(token){mutableStateOf(false)}
@@ -253,13 +254,46 @@ class MainActivity:ComponentActivity(){
  var loadError by remember{mutableStateOf(false)}
  var loadErrorDetail by remember{mutableStateOf("")}
  var refreshError by remember{mutableStateOf(false)}
+ var showingCached by remember(me.id){mutableStateOf(false)}
  var retry by remember{mutableIntStateOf(0)}
- LaunchedEffect(token,retry){
-  loading=true;loadError=false;refreshError=false;chats=emptyList()
+ LaunchedEffect(token,me.id,retry){
+  loading=true;loadError=false;refreshError=false
+  if(chats.isEmpty()){
+   val cached=runCatching{
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+     LumoOfflineStore.loadConversations(context,me.id)
+    }
+   }.getOrDefault(emptyList())
+   if(cached.isNotEmpty()){
+    chats=cached
+    showingCached=true
+    loading=false
+   }
+  }
   while(true){
-   val result=runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.conversations(token)}}
-   result.onSuccess{chats=it;loadError=false;refreshError=false}
-    .onFailure{loadErrorDetail=it.message?:"Ошибка соединения";if(chats.isEmpty())loadError=true else refreshError=true}
+   val result=runCatching{
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+     Api.conversations(token)
+    }
+   }
+   result.onSuccess{fresh->
+    chats=fresh
+    loadError=false
+    refreshError=false
+    showingCached=false
+    runCatching{
+     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+      LumoOfflineStore.saveConversations(context,me.id,fresh)
+     }
+    }
+   }.onFailure{
+    loadErrorDetail=it.message?:"Ошибка соединения"
+    if(chats.isEmpty())loadError=true
+    else {
+     refreshError=true
+     showingCached=true
+    }
+   }
    loading=false
    kotlinx.coroutines.delay(12_000)
   }
@@ -294,8 +328,8 @@ class MainActivity:ComponentActivity(){
    chatQuery,{chatQuery=it},"Поиск по чатам",
    modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp)
   )
-  if(refreshError)Text(
-   "Нет связи. Показываем последнюю загруженную историю.",
+  if(refreshError||showingCached)Text(
+   "Офлайн: показываем зашифрованную копию последних чатов с этого телефона.",
    color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(horizontal=18.dp,vertical=6.dp)
   )
   if(chats.isEmpty()){
