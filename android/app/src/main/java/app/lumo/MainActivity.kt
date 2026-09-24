@@ -65,6 +65,7 @@ class MainActivity:ComponentActivity(){
  var activeGroup by remember{mutableStateOf<LumoGroup?>(null)}
  var viewingGroups by remember{mutableStateOf(false)}
  var viewingCalls by remember{mutableStateOf(false)}
+ var callQuery by remember{mutableStateOf("")}
  var viewingAi by remember{mutableStateOf(false)}
  var aiDraft by remember{mutableStateOf("")}
  var logoutNonce by remember{mutableIntStateOf(0)}
@@ -91,7 +92,18 @@ class MainActivity:ComponentActivity(){
    Spacer(Modifier.height(16.dp));Button({restoreRetry++}){Text("Повторить")}
   }
   token==null || me==null -> Register{t,u->prefs.edit().putString("token",t).apply();token=t;me=u}
-  peer==null&&activeGroup==null&&!viewingGroups&&!viewingCalls&&!viewingAi -> Home(token!!,me!!,{peer=it},{viewingGroups=true},{viewingCalls=true},{aiDraft="";viewingAi=true},{me=it},privacy){PushLifecycle.forgetOnLogout(context);prefs.edit().clear().apply();token=null;me=null;peer=null;activeGroup=null;viewingGroups=false;viewingCalls=false;viewingAi=false;logoutNonce++}
+  peer==null&&activeGroup==null&&!viewingGroups&&!viewingCalls&&!viewingAi -> Home(
+   token!!,me!!,
+   {peer=it},
+   {viewingGroups=true},
+   {callQuery="";viewingCalls=true},
+   {aiDraft="";viewingAi=true},
+   {me=it},privacy
+  ){
+   PushLifecycle.forgetOnLogout(context);prefs.edit().clear().apply()
+   token=null;me=null;peer=null;activeGroup=null
+   viewingGroups=false;viewingCalls=false;callQuery="";viewingAi=false;logoutNonce++
+  }
   activeGroup!=null -> GroupRoom(token!!,me!!,activeGroup!!){activeGroup=null}
   viewingGroups -> LumoBackdrop(Modifier.fillMaxSize()){
    Column(Modifier.fillMaxSize().statusBarsPadding()){
@@ -99,9 +111,17 @@ class MainActivity:ComponentActivity(){
     GroupsScreen(token!!,me!!){activeGroup=it}
    }
   }
-  viewingCalls -> LumoCallsLab(token!!,me!!){viewingCalls=false}
+  viewingCalls -> LumoCallsLab(token!!,me!!,initialQuery=callQuery){
+   viewingCalls=false
+   callQuery=""
+  }
   viewingAi -> LumoAiScreen(token!!,initialDraft=aiDraft){aiDraft="";viewingAi=false}
-  else -> Chat(token!!,me!!,peer!!,askAi={text->aiDraft=("Помоги понять это сообщение:\n“"+text.take(1200)+"”");viewingAi=true}){peer=null}
+  else -> Chat(
+   token!!,me!!,peer!!,
+   openCalls={callQuery=peer!!.username;viewingCalls=true},
+   askAi={text->aiDraft=("Помоги понять это сообщение:\n“"+text.take(1200)+"”");viewingAi=true},
+   back={peer=null}
+  )
  }
 }
 
@@ -234,7 +254,7 @@ class MainActivity:ComponentActivity(){
   ){pad->
    Box(Modifier.fillMaxSize().padding(pad)){
     when(tab){
-     0->Chats(token,me,{tab=1},open,openGroups,privacy)
+     0->Chats(token,me,{tab=1},open,openGroups,openCalls,privacy)
      1->People(token,open)
      else->Profile(token,me,profileChanged,privacy,openCalls,openAi,logout)
     }
@@ -243,17 +263,13 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Chats(token:String,me:User,find:()->Unit,open:(User)->Unit,openGroups:()->Unit,privacy:LumoPrivacy){
+@Composable fun Chats(
+ token:String,me:User,find:()->Unit,open:(User)->Unit,
+ openGroups:()->Unit,openCalls:()->Unit,privacy:LumoPrivacy
+){
  val context=LocalContext.current
  var chats by remember{mutableStateOf<List<Conversation>>(emptyList())}
  var chatQuery by remember{mutableStateOf("")}
- var groupsReady by remember(token){mutableStateOf(false)}
- LaunchedEffect(token){
-  while(true){
-   groupsReady=runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.listGroups(token);true}}.getOrDefault(false)
-   kotlinx.coroutines.delay(60_000)
-  }
- }
  var loading by remember{mutableStateOf(true)}
  var loadError by remember{mutableStateOf(false)}
  var loadErrorDetail by remember{mutableStateOf("")}
@@ -316,16 +332,31 @@ class MainActivity:ComponentActivity(){
     OutlinedButton(onClick={retry++}){Text("Повторить")}
    }
   }
-  if(groupsReady){
-   Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp).lumoGlass(22).clickable{openGroups()}.padding(13.dp),verticalAlignment=Alignment.CenterVertically){
-    LumoNeonAvatar("Группы",size=44.dp)
-    Spacer(Modifier.width(12.dp))
-    Column(Modifier.weight(1f)){
-     Text("Группы",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=Color.White)
-     Text("Частные групповые чаты",color=MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-    Text("›",color=Color.White)
+  Row(
+   Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp)
+    .lumoGlass(22).clickable{openGroups()}.padding(13.dp),
+   verticalAlignment=Alignment.CenterVertically
+  ){
+   LumoNeonAvatar("Группы",size=44.dp)
+   Spacer(Modifier.width(12.dp))
+   Column(Modifier.weight(1f)){
+    Text("Группы",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=Color.White)
+    Text("Создать группу или открыть групповой чат",color=MaterialTheme.colorScheme.onSurfaceVariant)
    }
+   Text("›",color=Color.White)
+  }
+  Row(
+   Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp)
+    .lumoGlass(22).clickable{openCalls()}.padding(13.dp),
+   verticalAlignment=Alignment.CenterVertically
+  ){
+   LumoNeonAvatar("Звонки",size=44.dp)
+   Spacer(Modifier.width(12.dp))
+   Column(Modifier.weight(1f)){
+    Text("Звонки",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=Color.White)
+    Text("Аудио и видео",color=MaterialTheme.colorScheme.onSurfaceVariant)
+   }
+   Text("›",color=Color.White)
   }
   LumoSearchField(
    chatQuery,{chatQuery=it},"Поиск по чатам",
@@ -594,7 +625,7 @@ class MainActivity:ComponentActivity(){
    Text("Звонки Lumo. Микрофон и камера включаются только после вашего явного действия.",
     style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
    Spacer(Modifier.height(12.dp))
-   LumoNeonButton("Открыть лабораторию звонков",openCalls,Modifier.fillMaxWidth())
+   LumoNeonButton("Открыть звонки",openCalls,Modifier.fillMaxWidth())
   }
   Spacer(Modifier.height(16.dp))
   Column(Modifier.fillMaxWidth().lumoGlass(25).padding(18.dp)){
@@ -731,7 +762,12 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  return merged.values.sortedBy{it.createdAt}
 }
 
-@Composable fun Chat(token:String,me:User,peer:User,askAi:(String)->Unit,back:()->Unit){
+@Composable fun Chat(
+ token:String,me:User,peer:User,
+ openCalls:()->Unit,
+ askAi:(String)->Unit,
+ back:()->Unit
+){
  val context=LocalContext.current;val scope=rememberCoroutineScope();val queuePrefs=remember{context.getSharedPreferences("lumo_pending",Context.MODE_PRIVATE)};val queueKey="pending_"+me.id+"_"+peer.id
  var activeMessage by remember(peer.id){mutableStateOf<Msg?>(null)}
  var forwardingMessage by remember(peer.id){mutableStateOf<Msg?>(null)}
@@ -1038,6 +1074,9 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
        style=MaterialTheme.typography.titleMedium,maxLines=1)
       Text("@"+peer.username,style=MaterialTheme.typography.labelMedium,
        color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
+     }
+     TextButton(onClick=openCalls,contentPadding=PaddingValues(horizontal=9.dp)){
+      Text("☎",color=LumoCyan,style=MaterialTheme.typography.titleLarge)
      }
      if(messageSearchEnabled){
       TextButton(onClick={

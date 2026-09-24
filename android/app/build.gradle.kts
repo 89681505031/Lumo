@@ -40,8 +40,8 @@ android {
  }
  defaultConfig {
   applicationId="app.lumo"; minSdk=26; targetSdk=35
-  versionCode=(System.getenv("LUMO_VERSION_CODE")?.toIntOrNull() ?: 1001)
-  versionName=System.getenv("LUMO_VERSION_NAME")?.takeIf{it.isNotBlank()} ?: "1.0.1"
+  versionCode=(System.getenv("LUMO_VERSION_CODE")?.toIntOrNull() ?: 1002)
+  versionName=System.getenv("LUMO_VERSION_NAME")?.takeIf{it.isNotBlank()} ?: "1.0.2"
  }
  buildTypes {
   getByName("debug") {

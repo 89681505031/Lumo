@@ -37,10 +37,10 @@ jobs:
         env:
           LUMO_VERSION_CODE: ${{ github.run_number }}
         run: gradle testDebugUnitTest testReleaseUnitTest assembleDebug
-      - name: Build Lumo 1.0.1 release APK
+      - name: Build Lumo 1.0.2 release APK
         env:
-          LUMO_VERSION_CODE: "1001"
-          LUMO_VERSION_NAME: "1.0.1"
+          LUMO_VERSION_CODE: "1002"
+          LUMO_VERSION_NAME: "1.0.2"
         run: gradle assembleRelease
       - uses: actions/upload-artifact@v4
         with:
