@@ -25,7 +25,8 @@ class WebRtcVideoSession(
     private val localRenderer: SurfaceViewRenderer,
     private val remoteRenderer: SurfaceViewRenderer,
     private val onLocalSignal: (String, JSONObject) -> Unit,
-    private val onState: (String) -> Unit
+    private val onState: (String) -> Unit,
+    private val onConnectionState: (Boolean) -> Unit
 ) {
     private val app=context.applicationContext
     private val gate=Any()
@@ -123,16 +124,26 @@ class WebRtcVideoSession(
                 if(closed)return
                 when(state){
                     PeerConnection.IceConnectionState.CONNECTED,
-                    PeerConnection.IceConnectionState.COMPLETED->
+                    PeerConnection.IceConnectionState.COMPLETED->{
+                        onConnectionState(true)
                         onState("Видеоканал подключён через TURN")
-                    PeerConnection.IceConnectionState.CHECKING->
+                    }
+                    PeerConnection.IceConnectionState.CHECKING->{
+                        onConnectionState(false)
                         onState("Проверяем видеосоединение через TURN…")
-                    PeerConnection.IceConnectionState.DISCONNECTED->
-                        onState("Видеосвязь потеряна")
-                    PeerConnection.IceConnectionState.FAILED->
+                    }
+                    PeerConnection.IceConnectionState.DISCONNECTED->{
+                        onConnectionState(false)
+                        onState("Видеосвязь потеряна. Пытаемся восстановить…")
+                    }
+                    PeerConnection.IceConnectionState.FAILED->{
+                        onConnectionState(false)
                         onState("Видеосоединение не установлено")
-                    PeerConnection.IceConnectionState.CLOSED->
+                    }
+                    PeerConnection.IceConnectionState.CLOSED->{
+                        onConnectionState(false)
                         onState("Видеосоединение завершено")
+                    }
                     else->Unit
                 }
             }
@@ -366,6 +377,7 @@ class WebRtcVideoSession(
             pendingLocalIce.clear()
             pendingRemoteIce.clear()
         }
+        onConnectionState(false)
         runCatching{audioTrack.setEnabled(false)}
         runCatching{localVideoTrack.setEnabled(false)}
         if(cameraCapturing)runCatching{capturer.stopCapture()}
