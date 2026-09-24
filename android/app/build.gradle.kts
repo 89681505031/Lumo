@@ -18,6 +18,12 @@ if (fcmRequested && !fcmConfigured)
 if (fcmConfigured) apply(plugin="com.google.gms.google-services")
 val httpForDebug = stagingBase ?: normalHttp
 val wsForDebug = httpForDebug.replaceFirst("https://", "wss://") + "/ws"
+val releaseSigningReady = listOf(
+ System.getenv("LUMO_KEYSTORE_PATH"),
+ System.getenv("LUMO_KEYSTORE_PASSWORD"),
+ System.getenv("LUMO_KEY_ALIAS"),
+ System.getenv("LUMO_KEY_PASSWORD")
+).all { !it.isNullOrBlank() }
 
 android {
  namespace="app.lumo"; compileSdk=35
@@ -46,7 +52,7 @@ android {
   }
   getByName("release") {
    isMinifyEnabled=false
-   signingConfig=signingConfigs.getByName("release")
+   if(releaseSigningReady) signingConfig=signingConfigs.getByName("release")
    buildConfigField("String","LUMO_HTTP_BASE","\"$normalHttp\"")
    buildConfigField("String","LUMO_WS_BASE","\"wss://lumo-gamma-seven.vercel.app/ws\"")
    buildConfigField("boolean","LUMO_FCM_CONFIGURED","false")
