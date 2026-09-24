@@ -100,3 +100,27 @@ create table if not exists call_signals (
   unique(call_id,sender_id,client_signal_id)
 );
 create index if not exists call_signals_created_idx on call_signals(created_at);
+create table if not exists chat_groups (
+  id uuid primary key,
+  title varchar(80) not null,
+  owner_id uuid not null references users(id),
+  created_at timestamptz not null default now()
+);
+create table if not exists chat_group_members (
+  group_id uuid not null references chat_groups(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  role varchar(10) not null check (role in ('owner','admin','member')),
+  joined_at timestamptz not null default now(),
+  primary key(group_id,user_id)
+);
+create index if not exists chat_group_members_user_idx on chat_group_members(user_id,group_id);
+create table if not exists chat_group_messages (
+  id uuid primary key,
+  group_id uuid not null references chat_groups(id) on delete cascade,
+  sender_id uuid not null references users(id),
+  text varchar(4000) not null,
+  client_message_id uuid not null,
+  created_at timestamptz not null default now(),
+  unique(group_id,sender_id,client_message_id)
+);
+create index if not exists chat_group_messages_history_idx on chat_group_messages(group_id,created_at desc,id desc);

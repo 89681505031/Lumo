@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { dbHealth, hasDatabase, initDatabase } from "./db.js";
 import { postgresStore } from "./postgres-store.js";
+import { groupStore } from "./group-store.js";
 import { hashPassword, verifyPassword, validPassword } from "./password.js";
 import { aiReady, completeLumoAi } from "./ai-provider.js";
 import { mediaReady, mediaStore } from "./media-store.js";
@@ -61,7 +62,7 @@ async function auth(req, res, next) {
 }
 
 app.get("/live", (_req, res) => res.json({ ok: true, service: "lumo-server" }));
-app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled,documentsReady:mediaEnabled}));
+app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled,documentsReady:mediaEnabled,groupsReady:hasDatabase}));
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase,ok:false}; if(hasDatabase){try{database=await dbHealth()}catch(error){console.error("Database health check failed",error);database={configured:true,ok:false}}} const ok=database.configured===true&&database.ok===true; res.status(ok?200:503).json({ ok, service:"lumo-server", database }); });
 
@@ -301,6 +302,148 @@ app.get("/api/conversations", auth, async (req, res) => {
     lastAt: last.createdAt
   })).filter(x => x.peer).sort((a,b) => b.lastAt.localeCompare(a.lastAt));
   res.json(result); } catch(error){console.error("Conversation list failed",error);res.status(503).json({error:"service_unavailable"});}
+});
+
+// Private groups. Every read and write is authorized from current
+// PostgreSQL membership; users who are not current members receive no group data.
+function groupError(res,error) {
+  const status={
+    invalid_member:400,
+    group_not_found:404,
+    user_not_found:404,
+    member_not_found:404,
+    forbidden:403,
+    user_blocked:403,
+    group_full:409,
+    already_member:409,
+    owner_role_immutable:409,
+    owner_cannot_leave:409,
+    client_message_id_conflict:409
+  }[error] || 503;
+  return res.status(status).json({error});
+}
+
+app.get("/api/groups",auth,requireDatabase,async(req,res)=>{
+  try{return res.json(await groupStore.list(req.user.id));}
+  catch(error){
+    console.error("Group list failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.post("/api/groups",auth,requireDatabase,rateLimit({windowMs:60_000,max:10}),async(req,res)=>{
+  if(typeof req.body?.title!=="string")
+    return res.status(400).json({error:"invalid_group_title"});
+  const title=req.body.title.trim();
+  if(title.length<2 || title.length>80)
+    return res.status(400).json({error:"invalid_group_title"});
+  try{return res.status(201).json(await groupStore.create(req.user.id,title));}
+  catch(error){
+    console.error("Group create failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/groups/:id",auth,requireDatabase,async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  try{
+    const found=await groupStore.detail(req.user.id,req.params.id);
+    return found ? res.json(found) : groupError(res,"group_not_found");
+  }catch(error){
+    console.error("Group detail failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.post("/api/groups/:id/members",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  const id=req.params.id,userId=req.body?.userId;
+  if(!uuidPattern.test(id) || typeof userId!=="string" || !uuidPattern.test(userId))
+    return res.status(400).json({error:"invalid_member"});
+  try{
+    const result=await groupStore.invite(req.user.id,id,userId);
+    return result.error ? groupError(res,result.error) : res.status(201).json({added:true});
+  }catch(error){
+    console.error("Group invite failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.patch("/api/groups/:id/members/:userId",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id) || !uuidPattern.test(req.params.userId) ||
+     !["admin","member"].includes(req.body?.role))
+    return res.status(400).json({error:"invalid_member_role"});
+  try{
+    const result=await groupStore.setRole(
+      req.user.id,req.params.id,req.params.userId,req.body.role
+    );
+    return result.error ? groupError(res,result.error) : res.json(result);
+  }catch(error){
+    console.error("Group role update failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.delete("/api/groups/:id/members/:userId",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id) || !uuidPattern.test(req.params.userId))
+    return res.status(400).json({error:"invalid_member"});
+  try{
+    const result=await groupStore.remove(req.user.id,req.params.id,req.params.userId);
+    return result.error ? groupError(res,result.error) : res.status(204).end();
+  }catch(error){
+    console.error("Group member removal failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.delete("/api/groups/:id",auth,requireDatabase,rateLimit({windowMs:60_000,max:20}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  try{
+    const deleted=await groupStore.delete(req.user.id,req.params.id);
+    return deleted ? res.status(204).end() : groupError(res,"group_not_found");
+  }catch(error){
+    console.error("Group removal failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/groups/:id/messages",auth,requireDatabase,async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  try{
+    const history=await groupStore.history(req.user.id,req.params.id);
+    return history===null ? groupError(res,"group_not_found") : res.json(history);
+  }catch(error){
+    console.error("Group history failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.post("/api/groups/:id/messages",auth,requireDatabase,rateLimit({windowMs:60_000,max:120}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  const id=req.body?.clientMessageId,raw=req.body?.text;
+  if(typeof id!=="string" || !uuidPattern.test(id))
+    return res.status(400).json({error:"invalid_client_message_id"});
+  if(typeof raw!=="string" || !raw.trim())
+    return res.status(400).json({error:"empty_message"});
+  const text=raw.trim();
+  if(text.length>4000)
+    return res.status(400).json({error:"message_too_long"});
+  try{
+    const saved=await groupStore.send(req.user.id,req.params.id,text,id);
+    if(saved.error)return groupError(res,saved.error);
+    if(saved.inserted){
+      const recipients=await groupStore.recipients(req.params.id,saved.message.createdAt);
+      for(const userId of recipients)
+        sendTo(userId,{type:"group_message",message:saved.message});
+    }
+    return res.status(saved.inserted?201:200).json(saved.message);
+  }catch(error){
+    console.error("Group send failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
 });
 
 // Private attachments use a private S3-compatible bucket. Clients receive
