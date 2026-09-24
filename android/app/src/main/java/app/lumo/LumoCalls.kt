@@ -202,14 +202,14 @@ private fun callErrorText(error:Throwable)=when(error){
  * remains opt-in inside the separate audio/video controls after acceptance.
  */
 @Composable
-fun LumoCallsLab(token:String,me:User,back:()->Unit){
+fun LumoCallsLab(token:String,me:User,initialQuery:String="",back:()->Unit){
     val scope=rememberCoroutineScope()
     var supported by remember(token){mutableStateOf<Boolean?>(null)}
     var calls by remember(token){mutableStateOf<List<LumoCall>>(emptyList())}
     var people by remember(token){mutableStateOf<List<User>>(emptyList())}
     var error by remember{mutableStateOf("")}
     var busy by remember{mutableStateOf<String?>(null)}
-    var query by remember{mutableStateOf("")}
+    var query by remember(initialQuery){mutableStateOf(initialQuery)}
     var refresh by remember{mutableIntStateOf(0)}
     var activeMediaId by remember(token){mutableStateOf<String?>(null)}
 
