@@ -2,6 +2,7 @@ package app.lumo
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -48,7 +49,15 @@ fun VideoPrototypeControls(
     var muted by remember(call.id){mutableStateOf(false)}
     var cameraEnabled by remember(call.id){mutableStateOf(true)}
     var speaker by remember(call.id){mutableStateOf(true)}
+    var connected by remember(call.id){mutableStateOf(false)}
+    var connectedSince by remember(call.id){mutableStateOf<Long?>(null)}
+    var elapsedSeconds by remember(call.id){mutableLongStateOf(0L)}
     var renderGeneration by remember(call.id){mutableIntStateOf(0)}
+
+    fun updateConnected(next:Boolean){
+        connected=next
+        if(next&&connectedSince==null)connectedSince=SystemClock.elapsedRealtime()
+    }
     var localRenderer by remember(call.id,renderGeneration){mutableStateOf<SurfaceViewRenderer?>(null)}
     var remoteRenderer by remember(call.id,renderGeneration){mutableStateOf<SurfaceViewRenderer?>(null)}
 
@@ -69,6 +78,9 @@ fun VideoPrototypeControls(
         muted=false
         cameraEnabled=true
         speaker=true
+        connected=false
+        connectedSince=null
+        elapsedSeconds=0L
         busy=false
         status=message
         onStop(call.id)
@@ -161,6 +173,11 @@ fun VideoPrototypeControls(
                         scope.launch{
                             if(gate.isCurrent(ticket)&&engine!=null)status=next
                         }
+                    },
+                    onConnectionState={next->
+                        scope.launch{
+                            if(gate.isCurrent(ticket)&&engine!=null)updateConnected(next)
+                        }
                     }
                 )
                 if(!gate.isCurrent(ticket)){
@@ -201,6 +218,14 @@ fun VideoPrototypeControls(
                 result[Manifest.permission.RECORD_AUDIO]==true
             if(granted&&call.status=="accepted")start()
             else status="Камера и микрофон не используются: разрешения не предоставлены"
+        }
+    }
+
+    LaunchedEffect(engine,connectedSince){
+        while(engine!=null&&connectedSince!=null&&isActive){
+            elapsedSeconds=((SystemClock.elapsedRealtime()-connectedSince!!)/1000L)
+                .coerceAtLeast(0L)
+            delay(1_000)
         }
     }
 
@@ -314,7 +339,29 @@ fun VideoPrototypeControls(
             }
         }
         Spacer(Modifier.height(7.dp))
-        Text(status,style=MaterialTheme.typography.bodySmall)
+        Row(
+            Modifier.fillMaxWidth().lumoGlass(18).padding(horizontal=12.dp,vertical=9.dp),
+            horizontalArrangement=Arrangement.SpaceBetween
+        ){
+            Column(Modifier.weight(1f)){
+                Text(
+                    when{
+                        connected->"Соединено · "+formatCallElapsed(elapsedSeconds)
+                        connectedSince!=null->"Связь прервана · "+formatCallElapsed(elapsedSeconds)
+                        busy->"Подключение…"
+                        else->"Видеоканал выключен"
+                    },
+                    style=MaterialTheme.typography.labelLarge
+                )
+                Text(status,style=MaterialTheme.typography.bodySmall)
+            }
+            if(engine!=null){
+                Text(
+                    if(speaker)"Динамик" else "Телефон",
+                    style=MaterialTheme.typography.labelMedium
+                )
+            }
+        }
 
         if(engine!=null){
             Row(
@@ -350,7 +397,7 @@ fun VideoPrototypeControls(
                         engine?.setSpeakerphone(speaker)
                     },
                     modifier=Modifier.weight(1f)
-                ){Text(if(speaker)"Динамик ✓" else "Динамик")}
+                ){Text(if(speaker)"К телефону" else "На динамик")}
             }
             TextButton(onClick={stop("Видеосоединение отключено")}){
                 Text("Отключить видео")
