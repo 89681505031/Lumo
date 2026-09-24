@@ -1378,7 +1378,35 @@ object Api{
  fun updateMe(t:String,name:String,bio:String):Pair<User,Boolean>{val j=JSONObject().put("displayName",name).put("bio",bio);val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).patch(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful)error("Профиль: "+x.code);val o=JSONObject(x.body!!.string());return user(o) to o.has("bio")}}
  fun me(t:String):User{val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful)error("Сессия: "+x.code);return user(JSONObject(x.body!!.string()))}}
  fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
- fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful){val reason=when(x.code){429->"Слишком много запросов. Подожди немного.";503->"Сервис чатов временно недоступен.";else->"Ошибка сервера HTTP "+x.code};error(reason)};val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"),o.optString("lastAt"))}}}
+ fun conversations(t:String):List<Conversation>{
+  val request=Request.Builder().url(HTTP+"/api/conversations")
+   .header("Authorization","Bearer "+t).build()
+  c.newCall(request).execute().use{response->
+   if(response.code==401)throw SessionExpiredException()
+   if(response.isSuccessful){
+    val a=JSONArray(response.body?.string().orEmpty())
+    return (0 until a.length()).map{val o=a.getJSONObject(it)
+     Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"),o.optString("lastAt"))
+    }
+   }
+   if(response.code==503)return conversationsCompatibilityFallback(t)
+   val reason=when(response.code){
+    429->"Слишком много запросов. Подожди немного."
+    else->"Ошибка сервера HTTP "+response.code
+   }
+   error(reason)
+  }
+ }
+ private fun conversationsCompatibilityFallback(t:String):List<Conversation>{
+  val peers=users(t,"").take(50)
+  val restored=ArrayList<Conversation>()
+  for(peer in peers){
+   val last=runCatching{history(t,peer.id).maxByOrNull{it.createdAt}}.getOrNull()?:continue
+   val preview=if(last.deletedAt.isNotBlank())"Сообщение удалено" else last.text
+   restored.add(Conversation(peer,preview,last.createdAt))
+  }
+  return restored.sortedByDescending{it.lastAt}
+ }
  fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/messages/"+p).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("История: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{msg(a.getJSONObject(it))}}}
  fun linkedRepliesSupported(t:String):Boolean{
   val request=Request.Builder().url(HTTP+"/api/messages/capabilities")
