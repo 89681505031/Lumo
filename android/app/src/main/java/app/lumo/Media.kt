@@ -129,6 +129,13 @@ private object MediaApi{
    return JSONObject(res.body?.string().orEmpty()).optBoolean("mediaReady",false)
   }
  }
+ fun groupEnabled():Boolean{
+  val req=Request.Builder().url(Api.HTTP+"/api/capabilities").build()
+  client.newCall(req).execute().use{res->
+   if(!res.isSuccessful)return false
+   return JSONObject(res.body?.string().orEmpty()).optBoolean("groupAttachments",false)
+  }
+ }
  private fun authorized(token:String,url:String,method:String,body:JSONObject?=null):JSONObject{
   val b=Request.Builder().url(Api.HTTP+url).header("Authorization","Bearer "+token)
   val request=when(method){
@@ -148,6 +155,11 @@ private object MediaApi{
  fun initiate(token:String,peerId:String,item:ChosenMedia):UploadTicket{
   val json=authorized(token,"/api/media/init","POST",JSONObject()
    .put("to",peerId).put("mime",item.mime).put("bytes",item.bytes).put("filename",item.filename))
+  return UploadTicket(json.getString("assetId"),json.getString("uploadUrl"),json.getJSONObject("fields"))
+ }
+ fun initiateGroup(token:String,groupId:String,item:ChosenMedia):UploadTicket{
+  val json=authorized(token,"/api/groups/"+groupId+"/media/init","POST",JSONObject()
+   .put("mime",item.mime).put("bytes",item.bytes).put("filename",item.filename))
   return UploadTicket(json.getString("assetId"),json.getString("uploadUrl"),json.getJSONObject("fields"))
  }
  fun upload(context:Context,ticket:UploadTicket,item:ChosenMedia){
@@ -194,6 +206,23 @@ private object MediaApi{
    readAt=if(json.isNull("readAt"))"" else json.optString("readAt"),
    clientMessageId=json.optString("clientMessageId"),
    attachmentId=json.optString("attachmentId")
+  )
+ }
+ fun sendGroup(token:String,groupId:String,pending:PendingAttachment):LumoGroupMessage{
+  val json=authorized(token,"/api/groups/"+groupId+"/media/"+pending.assetId+"/send","POST",
+   JSONObject().put("clientMessageId",pending.clientId).put("caption",pending.caption))
+  return LumoGroupMessage(
+   id=json.getString("id"),
+   from=json.getString("from"),
+   text=json.getString("text"),
+   createdAt=json.getString("createdAt"),
+   clientMessageId=json.optString("clientMessageId"),
+   attachmentId=json.optString("attachmentId"),
+   replyToMessageId=json.optString("replyToMessageId"),
+   replyPreviewText=json.optString("replyPreviewText"),
+   replyPreviewFrom=json.optString("replyPreviewFrom"),
+   editedAt=json.optString("editedAt"),
+   deletedAt=json.optString("deletedAt")
   )
  }
  fun forward(token:String,assetId:String,to:String,clientMessageId:String,caption:String):Msg{
@@ -432,6 +461,178 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
       busy=false
      }
     },enabled=allowSend&&!busy&&recorder==null){Text(if(busy)"Подождите..." else "Отправить файл")}
+   }
+  }
+ }
+}
+
+
+@Composable
+fun GroupMediaComposer(
+ token:String,
+ me:User,
+ groupId:String,
+ allowSend:Boolean,
+ onSent:(LumoGroupMessage)->Unit
+){
+ val context=LocalContext.current
+ val scope=rememberCoroutineScope()
+ val prefs=remember{context.getSharedPreferences("lumo_group_media_pending",Context.MODE_PRIVATE)}
+ val key=remember(me.id,groupId){"group_media_"+me.id+"_"+groupId}
+ var available by remember(token,groupId){mutableStateOf(false)}
+ var checking by remember(token,groupId){mutableStateOf(true)}
+ var chosen by remember(groupId){mutableStateOf<ChosenMedia?>(null)}
+ var pending by remember(key){mutableStateOf(
+  runCatching{
+   val o=JSONObject(prefs.getString(key,null)?:return@runCatching null)
+   PendingAttachment(
+    o.getString("assetId"),o.getString("clientId"),
+    o.optString("caption"),o.optString("filename")
+   )
+  }.getOrNull()
+ )}
+ var caption by remember(groupId){mutableStateOf("")}
+ var busy by remember{mutableStateOf(false)}
+ var status by remember{mutableStateOf("")}
+
+ fun rememberPending(value:PendingAttachment?){
+  pending=value
+  val edit=prefs.edit()
+  if(value==null)edit.remove(key)
+  else edit.putString(key,JSONObject()
+   .put("assetId",value.assetId)
+   .put("clientId",value.clientId)
+   .put("caption",value.caption)
+   .put("filename",value.filename)
+   .toString())
+  edit.apply()
+ }
+
+ val chooseVisual=rememberLauncherForActivityResult(
+  ActivityResultContracts.PickVisualMedia()
+ ){uri->
+  if(uri!=null){
+   runCatching{selectedVisual(context,uri)}
+    .onSuccess{chosen=it;status="Файл выбран. Нажмите отправить."}
+    .onFailure{chosen=null;status=it.message?:"Не удалось открыть файл"}
+  }
+ }
+ val chooseDocument=rememberLauncherForActivityResult(
+  ActivityResultContracts.OpenDocument()
+ ){uri->
+  if(uri!=null){
+   runCatching{selectedDocument(context,uri)}
+    .onSuccess{chosen=it;status="Документ выбран. Нажмите отправить."}
+    .onFailure{chosen=null;status=it.message?:"Не удалось открыть документ"}
+  }
+ }
+
+ LaunchedEffect(token,groupId){
+  checking=true
+  available=runCatching{
+   withContext(Dispatchers.IO){MediaApi.groupEnabled()}
+  }.getOrDefault(false)
+  checking=false
+ }
+ DisposableEffect(groupId){
+  onDispose{chosen?.file?.delete()}
+ }
+
+ if(checking||(!available&&pending==null))return
+ Column(
+  Modifier.fillMaxWidth().padding(horizontal=10.dp,vertical=4.dp)
+   .lumoGlass(20).padding(10.dp)
+ ){
+  Text("Вложение группе",style=MaterialTheme.typography.titleSmall,color=Color.White)
+  if(status.isNotBlank())Text(
+   status,style=MaterialTheme.typography.bodySmall,
+   color=MaterialTheme.colorScheme.onSurfaceVariant
+  )
+  if(pending!=null){
+   Text("Ожидает отправки: "+pending!!.filename,style=MaterialTheme.typography.bodySmall)
+   Row{
+    TextButton(
+     enabled=allowSend&&!busy,
+     onClick={
+      val item=pending?:return@TextButton
+      busy=true
+      scope.launch{
+       runCatching{withContext(Dispatchers.IO){
+        MediaApi.sendGroup(token,groupId,item)
+       }}.onSuccess{
+        onSent(it);rememberPending(null);caption="";status="Вложение отправлено"
+       }.onFailure{
+        status="Отправка не подтверждена. Повторите с тем же ID."
+       }
+       busy=false
+      }
+     }
+    ){Text("Повторить")}
+    TextButton(
+     enabled=!busy,
+     onClick={rememberPending(null);status="Отправка отменена"}
+    ){Text("Отменить")}
+   }
+  }else{
+   Row(Modifier.fillMaxWidth()){
+    TextButton(
+     enabled=available&&allowSend&&!busy,
+     modifier=Modifier.weight(1f),
+     onClick={
+      chooseVisual.launch(PickVisualMediaRequest(
+       ActivityResultContracts.PickVisualMedia.ImageAndVideo
+      ))
+     }
+    ){Text("◉ Фото / видео",color=LumoCyan,maxLines=1)}
+    TextButton(
+     enabled=available&&allowSend&&!busy,
+     modifier=Modifier.weight(1f),
+     onClick={chooseDocument.launch(documentMimes)}
+    ){Text("📎 Документ",color=LumoCyan,maxLines=1)}
+   }
+   chosen?.let{selected->
+    Row(Modifier.fillMaxWidth(),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+     Text(
+      selected.filename+" ("+selected.bytes/1024+" КБ)",
+      style=MaterialTheme.typography.bodySmall,
+      modifier=Modifier.weight(1f)
+     )
+     TextButton(onClick={chosen=null;status=""},enabled=!busy){Text("×")}
+    }
+    OutlinedTextField(
+     value=caption,onValueChange={caption=it.take(1000)},
+     label={Text("Подпись (необязательно)")},
+     modifier=Modifier.fillMaxWidth(),maxLines=2,enabled=!busy
+    )
+    Button(
+     enabled=allowSend&&!busy,
+     onClick={
+      val source=chosen?:return@Button
+      busy=true;status="Загрузка..."
+      scope.launch{
+       runCatching{withContext(Dispatchers.IO){
+        val ticket=MediaApi.initiateGroup(token,groupId,source)
+        MediaApi.upload(context,ticket,source)
+        MediaApi.complete(token,ticket.assetId)
+        PendingAttachment(
+         ticket.assetId,java.util.UUID.randomUUID().toString(),
+         caption.trim(),source.filename
+        )
+       }}.onSuccess{item->
+        rememberPending(item)
+        chosen=null
+        runCatching{withContext(Dispatchers.IO){
+         MediaApi.sendGroup(token,groupId,item)
+        }}.onSuccess{
+         onSent(it);rememberPending(null);caption="";status="Вложение отправлено"
+        }.onFailure{
+         status="Файл загружен, но отправка не подтверждена. Повторите."
+        }
+       }.onFailure{status=it.message?:"Не удалось загрузить файл"}
+       busy=false
+      }
+     }
+    ){Text(if(busy)"Подождите..." else "Отправить файл")}
    }
   }
  }
