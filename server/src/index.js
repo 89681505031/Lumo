@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { dbHealth, hasDatabase, initDatabase } from "./db.js";
 import { postgresStore } from "./postgres-store.js";
 import { hashPassword, verifyPassword, validPassword } from "./password.js";
+import { aiReady, completeLumoAi } from "./ai-provider.js";
 
 if (hasDatabase) { try { await initDatabase(); console.log("Lumo PostgreSQL schema ready"); } catch (error) { console.error("Lumo PostgreSQL initialization failed", error); } }
 
@@ -113,6 +114,50 @@ app.patch("/api/me", auth, async (req, res) => {
     if(hasDatabase) { const user=await postgresStore.updateUser(req.user.id,displayName); if(!user)return res.status(404).json({error:"user_not_found"}); return res.json(publicUser(user)); }
     req.user.displayName = displayName; users.set(req.user.id, req.user); res.json(publicUser(req.user));
   } catch(error) { console.error("Profile update failed",error); res.status(503).json({error:"service_unavailable"}); }
+});
+
+app.get("/api/ai/capabilities", auth, (_req,res) => {
+  res.json({
+    enabled: aiReady(),
+    maxMessageChars: 2000,
+    historyItems: 8,
+    chatDataSharedAutomatically: false
+  });
+});
+
+app.post("/api/ai/chat", auth, rateLimit({windowMs:60_000,max:20}), async (req,res) => {
+  if(!aiReady()) return res.status(404).json({error:"feature_unavailable"});
+  const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+  const rawHistory = req.body?.history;
+  if(!message || message.length > 2000)
+    return res.status(400).json({error:"invalid_ai_message"});
+  if(rawHistory !== undefined && !Array.isArray(rawHistory))
+    return res.status(400).json({error:"invalid_ai_history"});
+  const input = Array.isArray(rawHistory) ? rawHistory : [];
+  if(input.length > 8)
+    return res.status(400).json({error:"invalid_ai_history"});
+  let total=0;
+  const history=[];
+  for(const item of input){
+    const role=item?.role;
+    const content=typeof item?.content==="string" ? item.content.trim() : "";
+    if(!["user","assistant"].includes(role) || !content || content.length>1500)
+      return res.status(400).json({error:"invalid_ai_history"});
+    total+=content.length;
+    if(total>6000)return res.status(400).json({error:"invalid_ai_history"});
+    history.push({role,content});
+  }
+  try{
+    const reply=await completeLumoAi(history,message);
+    return res.json({reply});
+  }catch(error){
+    if(error?.code==="AI_RATE_LIMITED")
+      return res.status(429).json({error:"ai_provider_rate_limited"});
+    if(error?.code==="AI_UNAVAILABLE")
+      return res.status(404).json({error:"feature_unavailable"});
+    console.error("Lumo AI provider request failed",error?.code||error?.name||"unknown");
+    return res.status(502).json({error:"ai_provider_unavailable"});
+  }
 });
 
 app.get("/api/users", auth, async (req, res) => {

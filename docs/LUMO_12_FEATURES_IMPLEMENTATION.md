@@ -1,38 +1,38 @@
 # Lumo — 12-feature implementation tracker (September 2026)
 
-This document tracks the user's requested expansion of Lumo. The production application and the draft cosmic design branch must not be confused with experimental stacked branches. The 12 areas are **not all shipped**. A feature is "working" only after its relevant server tests, Android build, privacy review, end-to-end device tests, and production configuration have been completed.
+This tracker describes what exists in the stacked development branches. **None of the staging-only server capabilities should be described as production-ready until their own security/device/deployment gates pass.** The latest integration branch is `feature/lumo-ai-assistant-staging`, stacked on PRs #27 → #28 → #29/#31 → #32 → #33 → #34 → #35 → #36.
 
-## 12 areas and real implementation status
+## Current implementation status
 
-| # | Area | Current evidence | What is needed before user-ready release |
+| # | Area | Implemented now | Still required before production |
 | --- | --- | --- | --- |
-| 1 | Living cosmic background | `feature/lumo-cosmic-personalization`: theme-aware native starfield, optional slow twinkle, optional low-power mode; layered illustrations are Compose, not GIFs. | Validate frame time, battery use and reduced-motion expectations on Android. |
-| 2 | Animated 3D identity | Existing design branch has a unique vector planet/orbit mark and Android launcher icon. This feature branch adds a small opt-in animated orbit tilt and glow. | True 3D rendering is **not** implemented; design and benchmark a real 3D asset only if needed. |
-| 3 | Voice messages | Draft PR #15 (private media storage) and PR #16 (Android photo picker / voice recording / media viewer). | Configure private S3-compatible storage, verify consent and recording lifecycle, test on devices. No production voice upload yet. |
-| 4 | Audio/video calls | Draft PRs #17–#20: authenticated signaling, Android call invitation lab, **debug-only audio** WebRTC with explicit mic consent and TURN controls. | Complete cross-device audio testing, configuration, call reliability and privacy review. **Video media path does not exist yet.** |
-| 5 | Private photo, video and document attachments | Draft PRs #15–#16 establish private media backend and Android image/video picker; general document-picker path and broad file types need separate design. | Private object-store configuration, upload bounds, authorization checks, cache protection and Android download UX. |
-| 6 | Replies, reactions, forwards and pins | Draft PR #2 has conversation pinning; draft PR #11 has authenticated edit/delete and in-chat search. | Reply threading, reactions and forwarding backend + UI, authorization and regression coverage remain to be built. |
-| 7 | Themes and customization | `feature/lumo-cosmic-personalization` adds Cosmos, Aurora, Violet, Minimal, plus animation and battery controls stored only on device. | Phone screenshots, accessibility contrast checks, composable UI tests. |
-| 8 | Smart notifications | Draft PR #13 and PRs #21–#26 include opt-in, session-scoped, privacy-first FCM infrastructure and **debug-only staging** client. | Verify server cron and Firebase credentials, device permission/channel revocation, monitoring and safe rollout. No production pushes claimed. |
-| 9 | Full profiles | Cosmic design branch includes name edit and local-only bio. This branch also provides appearance customization. | Optional avatar upload and cross-device bio require authenticated new server APIs + storage + consent; no false global presence indicator. |
-| 10 | Groups | Draft PR #14 has private membership/roles and Android group flow, stacked on PR #2. | Security review, Android integration with selected cosmic UI, data-migration and two-user tests before merge. |
-| 11 | Offline experience | Existing Android client already persists outgoing pending direct messages and retries/synchronizes via HTTP. | Authenticated encrypted local history / offline read cache, storage lifetime, search and conflict tests. Do not store plaintext history in preferences. |
-| 12 | Lumo AI assistant | Not implemented or connected. | Opt-in, separate assistant thread, consent before sharing any existing chat, server-held API key, abuse/rate limits, costs and data-retention policy. |
+| 1 | Living cosmic background | Native Compose starfield/planets, theme-aware glows, optional slow twinkle, low-power mode. | Physical-device battery/frame-time/accessibility checks. |
+| 2 | Animated identity | Planet/orbit vector logo, launcher icon, optional slow orbit/glow animation. | True 3D asset/rendering is still optional future work; current mark is 2D vector animation. |
+| 3 | Voice messages | Android consent-based AAC recorder + private media upload/viewer prototype, server-gated. | Private object storage configuration, security review, two-device tests and production rollout. |
+| 4 | Audio/video calls | Cosmic authenticated invitation screen; separate draft chain has debug-only WebRTC audio with explicit mic permission + TURN requirements. | Cross-device audio reliability, TURN config and privacy tests. **Video media transport is not implemented.** |
+| 5 | Photo/video/files | Private photo/video picker, signed upload, authenticated viewer prototype; no broad gallery permission. | General document/file picker is intentionally not exposed until scanning/safe-download rules exist. |
+| 6 | Message actions | Quote-style replies, explicit text forwarding with retry queue, participant-only feature-flagged reactions; earlier drafts also cover pin/edit/delete/search. | True server-linked reply metadata, forwarded attachments, group reactions, final authorization/device QA. |
+| 7 | Themes/customization | Cosmos, Aurora, Violet, Minimal; animation and battery controls saved locally. | Real-device visual/accessibility checks. |
+| 8 | Notifications | Privacy-first FCM debug/staging path, explicit opt-in, generic content only, offline revoke reconciliation. | Dedicated staging Firebase/backend/cron credentials, physical-device permission/Doze/token tests. Release remains no-op. |
+| 9 | Profiles | Display-name edit, local bio, local Photo Picker avatar, avatar removal, visual/privacy settings. | Cross-device avatar/bio need authenticated server APIs + moderation/storage policy. |
+| 10 | Groups | Cosmic private group UI, membership/roles, invites and message retry flow, gated by server support. | Review/deploy group backend prerequisites to staging; multi-user authorization tests. |
+| 11 | Offline experience | AES-256-GCM Android Keystore recent chat/history cache, cached-chat fallback, encrypted pending-message queue migration, per-account clear control. | Airplane-mode/reconnect/account-isolation/corrupt-key/performance tests; group/media offline cache remains separate work. |
+| 12 | Lumo AI | Separate cosmic assistant screen; server-only provider key; authenticated capability gate; strict prompt/history limits; no automatic private-chat sharing; selected message can be copied only as an **unsent editable AI draft**. | Pick provider/retention terms, moderation/age-safety review, cost/distributed rate limits and isolated staging before production. |
 
-## Integration order
+## Integration / release sequence
 
-1. **Visual foundations and accessibility:** draft PR #27, then this feature branch. Confirm physical Android screenshots before accepting design parity. Low-power setting defaults to disabled; animation defaults to off.
-2. **Private direct-message extensions:** draft PR #2, then #11; reconcile with the cosmetic screens carefully. Do not merge a branch based on another draft straight into `main` without its reviewed prerequisites.
-3. **Storage and voice:** #15 → #16; configure private storage in staging and validate its permission/expiry checks. Do not add a fake microphone or photo button before this is truly functional.
-4. **Groups and notifications:** #14; then #13 → #21 → #22 → #23 → #24 → #25 → #26. Respect opt-in; no message text in push payloads.
-5. **Calls:** #17 → #18 → #19 → #20. Real video is new work after audio privacy/stability are verified.
-6. **Remaining product features:** replies/reactions/forwarding, document files, authenticated profile uploads, encrypted local cache, and explicit-consent AI assistant.
+1. Keep visual and local-only changes reviewable independently from backend migrations.
+2. Review privacy/chat foundations before deploying group/media/reaction server features.
+3. Configure storage, TURN, Firebase and AI credentials only in private staging environments first.
+4. Run Android + PostgreSQL CI and then physical-device tests across two accounts/devices/networks.
+5. Do not merge the stacked development tip straight to `main`; reconcile each dependency intentionally and preserve existing production signing/data.
+6. The separate production `/api/conversations` deployment mismatch remains unrelated to these feature branches and must be resolved independently.
 
-## Release gates
+## Non-negotiable safety/privacy gates
 
-- CI Android debug APK compiles; server tests pass with PostgreSQL.
-- Device tests cover authentication, chat list, message send, retries and background/foreground lifecycle.
-- Feature UI never claims functionality that only exists as backend prototype.
-- Phone screenshots are reviewed against approved cosmic visual references.
-- Do not overwrite production data, deploy draft staging stacks automatically, or merge unfinished dependent PRs.
-- Separately: the production Vercel alias was observed serving a commit older than the `main` SQL-conversation fix. The design work does not modify this deployment; check the live server commit before attributing chat failures to an Android change.
+- No hidden microphone/camera recording; recording/calls require visible user actions and Android permissions.
+- No automatic private-chat export to AI. A selected message handoff stays unsent until the user presses Send in the AI screen.
+- No message text/sender identity in push notifications.
+- No provider/API secrets in APK, GitHub, Android preferences or chat payloads.
+- No claim of E2E encryption: the offline cache is device-at-rest encryption only.
+- No fake controls for unsupported server features; capability-gated UI must remain hidden/disabled when the backend is unavailable.

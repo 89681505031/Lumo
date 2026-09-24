@@ -107,9 +107,11 @@ fun LumoReactionBadges(
 fun LumoMessageOptions(
     message:Msg,
     reactionsEnabled:Boolean,
+    aiEnabled:Boolean,
     onDismiss:()->Unit,
     onReply:()->Unit,
     onForward:()->Unit,
+    onAskAi:()->Unit,
     onReact:(emoji:String)->Unit
 ) {
     AlertDialog(
@@ -129,6 +131,18 @@ fun LumoMessageOptions(
                         onClick=onForward,shape=RoundedCornerShape(22.dp),
                         modifier=Modifier.fillMaxWidth()
                     ){Text("↗ Переслать текст")}
+                    Spacer(Modifier.height(8.dp))
+                }
+                if(aiEnabled && message.text.isNotBlank()){
+                    OutlinedButton(
+                        onClick=onAskAi,
+                        shape=RoundedCornerShape(22.dp),
+                        modifier=Modifier.fillMaxWidth()
+                    ){Text("✦ Подготовить для Lumo AI")}
+                    Text(
+                        "Текст не отправится ИИ, пока ты сам не нажмёшь отправить.",
+                        style=MaterialTheme.typography.labelSmall
+                    )
                     Spacer(Modifier.height(8.dp))
                 }
                 if(reactionsEnabled){

@@ -64,6 +64,8 @@ class MainActivity:ComponentActivity(){
  var activeGroup by remember{mutableStateOf<LumoGroup?>(null)}
  var viewingGroups by remember{mutableStateOf(false)}
  var viewingCalls by remember{mutableStateOf(false)}
+ var viewingAi by remember{mutableStateOf(false)}
+ var aiDraft by remember{mutableStateOf("")}
  var logoutNonce by remember{mutableIntStateOf(0)}
  var restoring by remember{mutableStateOf(token!=null)}
  var restoreError by remember{mutableStateOf(false)}
@@ -88,7 +90,7 @@ class MainActivity:ComponentActivity(){
    Spacer(Modifier.height(16.dp));Button({restoreRetry++}){Text("Повторить")}
   }
   token==null || me==null -> Register{t,u->prefs.edit().putString("token",t).apply();token=t;me=u}
-  peer==null&&activeGroup==null&&!viewingGroups&&!viewingCalls -> Home(token!!,me!!,{peer=it},{viewingGroups=true},{viewingCalls=true},{me=it},privacy){PushLifecycle.forgetOnLogout(context);prefs.edit().clear().apply();token=null;me=null;peer=null;activeGroup=null;viewingGroups=false;viewingCalls=false;logoutNonce++}
+  peer==null&&activeGroup==null&&!viewingGroups&&!viewingCalls&&!viewingAi -> Home(token!!,me!!,{peer=it},{viewingGroups=true},{viewingCalls=true},{aiDraft="";viewingAi=true},{me=it},privacy){PushLifecycle.forgetOnLogout(context);prefs.edit().clear().apply();token=null;me=null;peer=null;activeGroup=null;viewingGroups=false;viewingCalls=false;viewingAi=false;logoutNonce++}
   activeGroup!=null -> GroupRoom(token!!,me!!,activeGroup!!){activeGroup=null}
   viewingGroups -> LumoBackdrop(Modifier.fillMaxSize()){
    Column(Modifier.fillMaxSize().statusBarsPadding()){
@@ -97,7 +99,8 @@ class MainActivity:ComponentActivity(){
    }
   }
   viewingCalls -> LumoCallsLab(token!!,me!!){viewingCalls=false}
-  else -> Chat(token!!,me!!,peer!!){peer=null}
+  viewingAi -> LumoAiScreen(token!!,initialDraft=aiDraft){aiDraft="";viewingAi=false}
+  else -> Chat(token!!,me!!,peer!!,askAi={text->aiDraft=("Помоги понять это сообщение:\n“"+text.take(1200)+"”");viewingAi=true}){peer=null}
  }
 }
 
@@ -209,7 +212,7 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Home(token:String,me:User,open:(User)->Unit,openGroups:()->Unit,openCalls:()->Unit,profileChanged:(User)->Unit,privacy:LumoPrivacy,logout:()->Unit){
+@Composable fun Home(token:String,me:User,open:(User)->Unit,openGroups:()->Unit,openCalls:()->Unit,openAi:()->Unit,profileChanged:(User)->Unit,privacy:LumoPrivacy,logout:()->Unit){
  var tab by remember{mutableIntStateOf(0)}
  LumoBackdrop(Modifier.fillMaxSize()){
   Scaffold(
@@ -232,7 +235,7 @@ class MainActivity:ComponentActivity(){
     when(tab){
      0->Chats(token,me,{tab=1},open,openGroups,privacy)
      1->People(token,open)
-     else->Profile(token,me,profileChanged,privacy,openCalls,logout)
+     else->Profile(token,me,profileChanged,privacy,openCalls,openAi,logout)
     }
    }
   }
@@ -440,7 +443,7 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Profile(token:String,me:User,profileChanged:(User)->Unit,privacy:LumoPrivacy,openCalls:()->Unit,logout:()->Unit){
+@Composable fun Profile(token:String,me:User,profileChanged:(User)->Unit,privacy:LumoPrivacy,openCalls:()->Unit,openAi:()->Unit,logout:()->Unit){
  val context=LocalContext.current
  val scope=rememberCoroutineScope()
  val profilePrefs=remember{context.getSharedPreferences("lumo_local_profile",Context.MODE_PRIVATE)}
@@ -550,6 +553,20 @@ class MainActivity:ComponentActivity(){
   LumoOfflineCacheControls(me.id)
   Spacer(Modifier.height(16.dp))
   PushSettings(token,me)
+  Spacer(Modifier.height(16.dp))
+  Column(Modifier.fillMaxWidth().lumoGlass(25).padding(17.dp)){
+   Row(verticalAlignment=Alignment.CenterVertically){
+    LumoPlanetIcon(48.dp)
+    Spacer(Modifier.width(10.dp))
+    Column(Modifier.weight(1f)){
+     Text("Lumo AI",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=Color.White)
+     Text("Отдельный ИИ-диалог без автоматического доступа к твоим чатам",
+      style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+   }
+   Spacer(Modifier.height(12.dp))
+   LumoNeonButton("Открыть Lumo AI",openAi,Modifier.fillMaxWidth())
+  }
   Spacer(Modifier.height(16.dp))
   Column(Modifier.fillMaxWidth().lumoGlass(25).padding(17.dp)){
    Text("Звонки",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=Color.White)
@@ -679,12 +696,13 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  return merged.values.sortedBy{it.createdAt}
 }
 
-@Composable fun Chat(token:String,me:User,peer:User,back:()->Unit){
+@Composable fun Chat(token:String,me:User,peer:User,askAi:(String)->Unit,back:()->Unit){
  val context=LocalContext.current;val scope=rememberCoroutineScope();val queuePrefs=remember{context.getSharedPreferences("lumo_pending",Context.MODE_PRIVATE)};val queueKey="pending_"+me.id+"_"+peer.id
  var activeMessage by remember(peer.id){mutableStateOf<Msg?>(null)}
  var forwardingMessage by remember(peer.id){mutableStateOf<Msg?>(null)}
  var replyTarget by remember(peer.id){mutableStateOf<Msg?>(null)}
  var reactionsEnabled by remember(token,peer.id){mutableStateOf(false)}
+ var aiEnabled by remember(token,peer.id){mutableStateOf(false)}
  var reactions by remember(peer.id){mutableStateOf<List<LumoReaction>>(emptyList())}
  var reactionRefresh by remember{mutableIntStateOf(0)}
  var reactionBusy by remember{mutableStateOf(false)}
@@ -694,6 +712,9 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  LaunchedEffect(token,peer.id) {
   reactionsEnabled=runCatching {
    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){LumoReactionApi.enabled(token)}
+  }.getOrDefault(false)
+  aiEnabled=runCatching {
+   kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){LumoAiApi.enabled(token)}
   }.getOrDefault(false)
  }
  LaunchedEffect(token,peer.id,reactionsEnabled,reactionRefresh) {
@@ -778,9 +799,11 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
   LumoMessageOptions(
    message=selected,
    reactionsEnabled=reactionsEnabled && !reactionBusy,
+   aiEnabled=aiEnabled,
    onDismiss={activeMessage=null},
    onReply={replyTarget=selected;activeMessage=null},
    onForward={forwardingMessage=selected;activeMessage=null},
+   onAskAi={askAi(selected.text);activeMessage=null},
    onReact={emoji->
     if(!reactionBusy) {
      val add=reactions.none {
