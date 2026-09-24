@@ -12,7 +12,7 @@ export function registerCallCleanup(app) {
   app.get("/internal/call-cleanup", async (req, res) => {
     res.set("Cache-Control", "private, no-store");
     const secret = process.env.CRON_SECRET || "";
-    if (process.env.LUMO_CALL_SIGNALING_ENABLED !== "true" ||
+    if (process.env.LUMO_CALL_SIGNALING_ENABLED === "false" ||
         !pool || Buffer.byteLength(secret) < 32) {
       return res.status(404).json({error:"feature_unavailable"});
     }

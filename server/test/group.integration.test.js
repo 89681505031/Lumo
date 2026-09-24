@@ -22,7 +22,7 @@ test("private groups: durable membership, roles, history privacy and idempotent 
   const port=await unusedPort(),secondPort=await unusedPort();
   const children=[port,secondPort].map(p=>spawn(process.execPath,["src/index.js"],{
     cwd:process.cwd(),
-    env:{...process.env,PORT:String(p),DATABASE_URL:databaseUrl,DATABASE_SSL:"false",LUMO_REACTIONS_ENABLED:"true"},
+    env:{...process.env,PORT:String(p),DATABASE_URL:databaseUrl,DATABASE_SSL:"false"},
     stdio:"ignore"
   }));
   const base=`http://127.0.0.1:${port}`,replica=`http://127.0.0.1:${secondPort}`;

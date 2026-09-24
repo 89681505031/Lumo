@@ -80,7 +80,6 @@ test("private document attachments are allowlisted, signed, participant-only and
       DATABASE_SSL:"false",
       NODE_ENV:"test",
       MEDIA_TEST_ALLOW_HTTP_LOCAL:"true",
-      MEDIA_ENABLE_UPLOADS:"true",
       MEDIA_BUCKET:"private-test",
       MEDIA_REGION:"us-east-1",
       MEDIA_ACCESS_KEY_ID:"test-key",

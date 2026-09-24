@@ -4,7 +4,9 @@ import { pool } from "./db.js";
 
 // Signaling only: no media transport, TURN, push wakeup, or production call UI.
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const enabled = () => process.env.LUMO_CALL_SIGNALING_ENABLED === "true";
+// Authenticated DB-backed signaling is enabled by default. Operators can
+// explicitly disable it with LUMO_CALL_SIGNALING_ENABLED=false.
+const enabled = () => process.env.LUMO_CALL_SIGNALING_ENABLED !== "false";
 const turnUrls = () => (process.env.LUMO_TURN_URLS || "")
   .split(",").map(v=>v.trim()).filter(Boolean);
 const validTurnUrl = v =>

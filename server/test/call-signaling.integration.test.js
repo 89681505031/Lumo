@@ -27,7 +27,6 @@ function spawnServer(port){
       PORT:String(port),
       DATABASE_URL:databaseUrl,
       DATABASE_SSL:"false",
-      LUMO_CALL_SIGNALING_ENABLED:"true",
       LUMO_TURN_URLS:"turn:127.0.0.1:3478?transport=udp",
       LUMO_TURN_SECRET:turnSecret,
       CRON_SECRET:cronSecret
