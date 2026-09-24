@@ -563,6 +563,14 @@ export const mediaStore={
     return {enabled:true,retentionDays:days,scanned:candidates.rowCount,deleted,failed};
   },
 
+  async groupAssetCount(groupId){
+    const r=await dbQuery(
+      "select count(*)::integer as count from media_assets where group_id=$1",
+      [groupId]
+    );
+    return Number(r.rows[0]?.count||0);
+  },
+
   async cleanupGroupAssets(groupId){
     if(!mediaReady)return {error:"media_unavailable"};
     const items=await dbQuery(
