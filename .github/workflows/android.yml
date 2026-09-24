@@ -60,10 +60,10 @@ jobs:
             echo "::notice::Persistent release-signing secrets are not configured; CI will build an unsigned release APK and will not publish it as an update."
           fi
 
-      - name: Build Lumo 1.0.6 release APK
+      - name: Build Lumo 1.0.7 release APK
         env:
-          LUMO_VERSION_CODE: "1006"
-          LUMO_VERSION_NAME: "1.0.6"
+          LUMO_VERSION_CODE: "1007"
+          LUMO_VERSION_NAME: "1.0.7"
           LUMO_KEYSTORE_PASSWORD: ${{ secrets.LUMO_KEYSTORE_PASSWORD }}
           LUMO_KEY_ALIAS: ${{ secrets.LUMO_KEY_ALIAS }}
           LUMO_KEY_PASSWORD: ${{ secrets.LUMO_KEY_PASSWORD }}
@@ -119,15 +119,15 @@ jobs:
           if gh release view lumo-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit lumo-latest \
               --repo "$GITHUB_REPOSITORY" \
-              --title "Lumo 1.0.6" \
-              --notes "versionCode=1006" \
+              --title "Lumo 1.0.7" \
+              --notes "versionCode=1007" \
               --latest
           else
             gh release create lumo-latest "$APK#Lumo.apk" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "Lumo 1.0.6" \
-              --notes "versionCode=1006" \
+              --title "Lumo 1.0.7" \
+              --notes "versionCode=1007" \
               --latest
             exit 0
           fi
