@@ -109,8 +109,8 @@ class LumoCallApi {
         )))
     }
 
-    // Kept for the reviewed staging WebRTC chain. This screen itself never
-    // opens a microphone or camera and never sends SDP/ICE automatically.
+    // Media controls call these only after explicit user action. The call list
+    // itself never opens a microphone/camera or starts SDP/ICE automatically.
     fun sendSignal(
         token:String,id:String,clientSignalId:String,type:String,payload:JSONObject
     ):Int{
@@ -183,9 +183,8 @@ private fun callErrorText(error:Throwable)=when(error){
 }
 
 /**
- * Staging call invitation surface. It intentionally handles only authenticated
- * call state. Camera/microphone media must remain in the separate reviewed
- * WebRTC staging chain.
+ * Staging call surface. Signaling is authenticated; microphone/camera capture
+ * remains opt-in inside the separate audio/video controls after acceptance.
  */
 @Composable
 fun LumoCallsLab(token:String,me:User,back:()->Unit){
@@ -197,7 +196,7 @@ fun LumoCallsLab(token:String,me:User,back:()->Unit){
     var busy by remember{mutableStateOf<String?>(null)}
     var query by remember{mutableStateOf("")}
     var refresh by remember{mutableIntStateOf(0)}
-    var activeAudioId by remember(token){mutableStateOf<String?>(null)}
+    var activeMediaId by remember(token){mutableStateOf<String?>(null)}
 
     LaunchedEffect(token,refresh){
         while(true){
@@ -268,9 +267,9 @@ fun LumoCallsLab(token:String,me:User,back:()->Unit){
                 Modifier.fillMaxWidth().padding(12.dp).lumoGlass(22).padding(14.dp)
             ){
                 Text(
-                    "Аудио WebRTC доступно только для принятого аудиовызова и включается отдельно. " +
-                        "Оба участника должны сами нажать включение микрофона и выдать Android-разрешение. " +
-                        "Соединение использует только приватный TURN; видео пока не передаётся.",
+                    "Аудио и видео WebRTC включаются только после принятия вызова и отдельного действия каждого участника. " +
+                        "Микрофон и камера никогда не запускаются автоматически. Соединение использует только приватный TURN; " +
+                        "при сворачивании Lumo захват останавливается.",
                     color=Color.White,style=MaterialTheme.typography.bodySmall
                 )
             }
@@ -377,16 +376,19 @@ fun LumoCallsLab(token:String,me:User,back:()->Unit){
                                         token=token,
                                         me=me,
                                         call=call,
-                                        activeAudioId=activeAudioId,
-                                        onStart={id->activeAudioId=id},
-                                        onStop={id->if(activeAudioId==id)activeAudioId=null}
+                                        activeAudioId=activeMediaId,
+                                        onStart={id->activeMediaId=id},
+                                        onStop={id->if(activeMediaId==id)activeMediaId=null}
                                     )
                                 }else if(call.kind=="video" && call.status=="accepted"){
-                                    Spacer(Modifier.height(8.dp))
-                                    Text(
-                                        "Видеопередача пока не реализована. Этот вызов можно завершить без включения камеры.",
-                                        color=MaterialTheme.colorScheme.onSurfaceVariant,
-                                        style=MaterialTheme.typography.bodySmall
+                                    Spacer(Modifier.height(10.dp))
+                                    VideoPrototypeControls(
+                                        token=token,
+                                        me=me,
+                                        call=call,
+                                        activeMediaId=activeMediaId,
+                                        onStart={id->activeMediaId=id},
+                                        onStop={id->if(activeMediaId==id)activeMediaId=null}
                                     )
                                 }
                             }
