@@ -272,7 +272,7 @@ fun LumoCallsLab(token:String,me:User,back:()->Unit){
                 Column(Modifier.weight(1f)){
                     Text("Звонки Lumo",color=Color.White,
                         style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
-                    Text("Приватные аудио- и видеозвонки · staging",
+                    Text("Приватные аудио- и видеозвонки",
                         color=MaterialTheme.colorScheme.onSurfaceVariant,
                         style=MaterialTheme.typography.labelMedium)
                 }
@@ -411,7 +411,7 @@ fun LumoCallsLab(token:String,me:User,back:()->Unit){
 
                         item{
                             Spacer(Modifier.height(5.dp))
-                            Text("Новый тестовый вызов",color=Color.White,
+                            Text("Новый вызов",color=Color.White,
                                 style=MaterialTheme.typography.titleMedium,
                                 fontWeight=FontWeight.Bold)
                             Spacer(Modifier.height(7.dp))
