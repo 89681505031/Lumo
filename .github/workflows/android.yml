@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-debug:
@@ -33,23 +33,94 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
+
       - name: Run tests and build debug APK
         env:
           LUMO_VERSION_CODE: ${{ github.run_number }}
         run: gradle testDebugUnitTest testReleaseUnitTest assembleDebug
+
+      - name: Prepare persistent release signing
+        shell: bash
+        env:
+          LUMO_KEYSTORE_B64: ${{ secrets.LUMO_KEYSTORE_B64 }}
+          LUMO_KEYSTORE_PASSWORD_SECRET: ${{ secrets.LUMO_KEYSTORE_PASSWORD }}
+          LUMO_KEY_ALIAS_SECRET: ${{ secrets.LUMO_KEY_ALIAS }}
+          LUMO_KEY_PASSWORD_SECRET: ${{ secrets.LUMO_KEY_PASSWORD }}
+        run: |
+          if [ -n "$LUMO_KEYSTORE_B64" ] \
+            && [ -n "$LUMO_KEYSTORE_PASSWORD_SECRET" ] \
+            && [ -n "$LUMO_KEY_ALIAS_SECRET" ] \
+            && [ -n "$LUMO_KEY_PASSWORD_SECRET" ]; then
+            printf '%s' "$LUMO_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/lumo-release.jks"
+            test -s "$RUNNER_TEMP/lumo-release.jks"
+            echo "LUMO_KEYSTORE_PATH=$RUNNER_TEMP/lumo-release.jks" >> "$GITHUB_ENV"
+            echo "LUMO_SIGNED_RELEASE=true" >> "$GITHUB_ENV"
+          else
+            echo "LUMO_SIGNED_RELEASE=false" >> "$GITHUB_ENV"
+            echo "::notice::Persistent release-signing secrets are not configured; CI will build an unsigned release APK and will not publish it as an update."
+          fi
+
       - name: Build Lumo 1.0.4 release APK
         env:
           LUMO_VERSION_CODE: "1004"
           LUMO_VERSION_NAME: "1.0.4"
+          LUMO_KEYSTORE_PASSWORD: ${{ secrets.LUMO_KEYSTORE_PASSWORD }}
+          LUMO_KEY_ALIAS: ${{ secrets.LUMO_KEY_ALIAS }}
+          LUMO_KEY_PASSWORD: ${{ secrets.LUMO_KEY_PASSWORD }}
         run: gradle assembleRelease
+
+      - name: Verify persistent release signature
+        if: env.LUMO_SIGNED_RELEASE == 'true'
+        shell: bash
+        run: |
+          TOOLS_DIR="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -f app/build/outputs/apk/release/app-release.apk
+          "$TOOLS_DIR/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
+
       - uses: actions/upload-artifact@v4
         with:
           name: lumo-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+
       - uses: actions/upload-artifact@v4
+        if: env.LUMO_SIGNED_RELEASE == 'true'
+        with:
+          name: lumo-release-signed-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+
+      - uses: actions/upload-artifact@v4
+        if: env.LUMO_SIGNED_RELEASE != 'true'
         with:
           name: lumo-release-unsigned-apk
           path: android/app/build/outputs/apk/release/app-release-unsigned.apk
+
+      - name: Publish signed APK to lumo-latest
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && env.LUMO_SIGNED_RELEASE == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK"
+          if gh release view lumo-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit lumo-latest \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Lumo 1.0.4" \
+              --notes "versionCode=1004" \
+              --latest
+          else
+            gh release create lumo-latest "$APK#Lumo.apk" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Lumo 1.0.4" \
+              --notes "versionCode=1004" \
+              --latest
+            exit 0
+          fi
+          gh release upload lumo-latest "$APK#Lumo.apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
       - name: Package official Android apksigner
         shell: bash
         run: |
@@ -59,6 +130,7 @@ jobs:
           mkdir -p /tmp/lumo-apksigner/lib
           cp "$TOOLS_DIR/apksigner" /tmp/lumo-apksigner/
           cp "$TOOLS_DIR/lib/apksigner.jar" /tmp/lumo-apksigner/lib/
+
       - uses: actions/upload-artifact@v4
         with:
           name: lumo-apksigner-tool
