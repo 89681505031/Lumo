@@ -1577,9 +1577,9 @@ object Api{
    val a=o.getJSONArray("assets")
    val assets=(0 until a.length()).map{a.getJSONObject(it)}
    val asset=
+    assets.firstOrNull{it.optString("name")=="Lumo.apk"} ?:
     assets.firstOrNull{it.optString("name")=="app-release.apk"} ?:
-    assets.firstOrNull{it.optString("label")=="Lumo.apk" && it.optString("name")!="app-debug.apk"} ?:
-    assets.firstOrNull{it.optString("name")=="app-debug.apk"}
+    assets.firstOrNull{it.optString("label")=="Lumo.apk" && !it.optString("name").contains("debug",ignoreCase=true)}
    if(asset!=null)return UpdateInfo(code,asset.getString("browser_download_url"))
    error("APK не найден")
   }
