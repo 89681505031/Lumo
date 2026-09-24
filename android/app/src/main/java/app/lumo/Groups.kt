@@ -539,7 +539,9 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
   AlertDialog(
    onDismissRequest={if(!actionBusy)deleteTarget=null},
    title={Text("Удалить сообщение?")},
-   text={Text("Текст станет пометкой «Сообщение удалено», а реакции будут очищены.")},
+   text={Text(if(target.attachmentId.isBlank())
+    "Текст станет пометкой «Сообщение удалено», а реакции будут очищены."
+    else "Вложение перестанет открываться участникам через это сообщение; останется пометка об удалении.")},
    confirmButton={TextButton(
     enabled=!actionBusy,
     onClick={
@@ -715,6 +717,10 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
          }
          Spacer(Modifier.height(7.dp))
         }
+        if(m.attachmentId.isNotBlank()&&m.deletedAt.isBlank()){
+         MediaAttachmentButton(token,m.attachmentId)
+         Spacer(Modifier.height(7.dp))
+        }
         Text(
          m.text,
          color=if(m.deletedAt.isNotBlank())Color.White.copy(alpha=.58f) else Color.White
@@ -750,6 +756,16 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
      }
     }
    }
+   GroupMediaComposer(
+    token=token,
+    me=me,
+    groupId=initial.id,
+    allowSend=!sending&&pending==null&&replyTarget==null&&!loading,
+    onSent={m->
+     history=(history.filterNot{it.id==m.id}+m).sortedBy{it.createdAt}
+     error=""
+    }
+   )
    Surface(color=Color.Transparent){
     val replyPreview=pending?.takeIf{it.replyToMessageId.isNotBlank()}?.let{
      Triple(it.replyToMessageId,it.replyPreviewText,it.replyPreviewFrom)
