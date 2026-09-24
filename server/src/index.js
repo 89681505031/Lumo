@@ -29,7 +29,14 @@ function rateLimit({windowMs,max}){return (req,res,next)=>{const key=`${windowMs
 setInterval(()=>{const cutoff=Date.now()-10*60_000;for(const [key,b] of rateBuckets)if(b.start<cutoff)rateBuckets.delete(key);},10*60_000).unref?.();
 
 function publicUser(user) {
-  return { id: user.id, username: user.username, displayName: user.displayName, bio:String(user.bio || "").slice(0,160) };
+  return {
+    id:user.id,
+    username:user.username,
+    displayName:user.displayName,
+    bio:String(user.bio || "").slice(0,160),
+    hasAvatar:Boolean(user.hasAvatar),
+    avatarVersion:String(user.avatarVersion || "")
+  };
 }
 
 async function auth(req, res, next) {
@@ -87,7 +94,7 @@ app.post("/api/login", requireDatabase, rateLimit({windowMs:15*60_000,max:10}), 
       return res.status(401).json({error:"invalid_credentials"});
     const token=randomUUID();
     await postgresStore.createSession(account.id,token);
-    return res.json({token,user:publicUser({id:account.id,username:account.username,displayName:account.display_name,bio:account.bio||""})});
+    return res.json({token,user:publicUser({id:account.id,username:account.username,displayName:account.display_name,bio:account.bio||"",hasAvatar:Boolean(account.has_avatar),avatarVersion:account.avatar_updated_at?.toISOString?.()||account.avatar_updated_at||""})});
   }catch(error){
     console.error("Login database error",error);
     return res.status(503).json({error:"service_unavailable"});
@@ -128,6 +135,97 @@ app.patch("/api/me", auth, async (req, res) => {
   } catch(error) {
     console.error("Profile update failed",error);
     res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+const avatarBodyParser=express.raw({type:"image/jpeg",limit:"384kb"});
+function parseAvatarBody(req,res,next){
+  avatarBodyParser(req,res,error=>{
+    if(error?.type==="entity.too.large")
+      return res.status(413).json({error:"avatar_too_large"});
+    if(error)return res.status(400).json({error:"invalid_avatar"});
+    next();
+  });
+}
+function jpegDimensions(bytes){
+  if(!Buffer.isBuffer(bytes)||bytes.length<16)return null;
+  if(bytes[0]!==0xff||bytes[1]!==0xd8)return null;
+  if(bytes[bytes.length-2]!==0xff||bytes[bytes.length-1]!==0xd9)return null;
+  const sof=new Set([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf]);
+  let i=2;
+  while(i+4<=bytes.length){
+    while(i<bytes.length&&bytes[i]===0xff)i++;
+    if(i>=bytes.length)break;
+    const marker=bytes[i++];
+    if(marker===0xd9||marker===0xda)break;
+    if(marker===0x01||(marker>=0xd0&&marker<=0xd7))continue;
+    if(i+2>bytes.length)return null;
+    const length=bytes.readUInt16BE(i);
+    if(length<2||i+length>bytes.length)return null;
+    if(sof.has(marker)){
+      if(length<7)return null;
+      return {
+        height:bytes.readUInt16BE(i+3),
+        width:bytes.readUInt16BE(i+5)
+      };
+    }
+    i+=length;
+  }
+  return null;
+}
+
+app.put(
+  "/api/me/avatar",
+  auth,
+  requireDatabase,
+  rateLimit({windowMs:10*60_000,max:12}),
+  parseAvatarBody,
+  async(req,res)=>{
+    try{
+      if(String(req.headers["content-type"]||"").split(";")[0].trim().toLowerCase()!=="image/jpeg")
+        return res.status(415).json({error:"avatar_must_be_jpeg"});
+      const bytes=req.body;
+      const dimensions=jpegDimensions(bytes);
+      if(!dimensions || dimensions.width<32 || dimensions.height<32 ||
+         dimensions.width>1024 || dimensions.height>1024 ||
+         dimensions.width*dimensions.height>1_048_576)
+        return res.status(400).json({error:"invalid_avatar"});
+      const user=await postgresStore.setAvatar(req.user.id,"image/jpeg",bytes);
+      if(!user)return res.status(404).json({error:"user_not_found"});
+      return res.json(publicUser(user));
+    }catch(error){
+      console.error("Avatar upload failed",error);
+      return res.status(503).json({error:"service_unavailable"});
+    }
+  }
+);
+
+app.delete("/api/me/avatar",auth,requireDatabase,rateLimit({windowMs:10*60_000,max:20}),async(req,res)=>{
+  try{
+    const user=await postgresStore.removeAvatar(req.user.id);
+    if(!user)return res.status(404).json({error:"user_not_found"});
+    return res.json(publicUser(user));
+  }catch(error){
+    console.error("Avatar delete failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/users/:id/avatar",auth,requireDatabase,rateLimit({windowMs:60_000,max:240}),async(req,res)=>{
+  const userId=req.params.id;
+  if(!sessionTokenPattern.test(userId))
+    return res.status(400).json({error:"invalid_user_id"});
+  try{
+    const avatar=await postgresStore.avatar(userId);
+    if(!avatar)return res.status(404).json({error:"avatar_not_found"});
+    res.set("Content-Type",avatar.mime);
+    res.set("Cache-Control","private, max-age=300");
+    res.set("X-Content-Type-Options","nosniff");
+    if(avatar.updatedAt)res.set("ETag",`"avatar-${Buffer.from(avatar.updatedAt).toString("base64url")}"`);
+    return res.send(avatar.bytes);
+  }catch(error){
+    console.error("Avatar fetch failed",error);
+    return res.status(503).json({error:"service_unavailable"});
   }
 });
 
