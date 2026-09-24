@@ -3,7 +3,6 @@ package app.lumo
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import android.media.AudioManager
 import org.json.JSONObject
 import org.webrtc.*
 import kotlin.coroutines.resume
@@ -35,9 +34,7 @@ class WebRtcAudioSession(
     private var localDescriptionPublished = false
     private var remoteDescriptionReady = false
     private var activeMediaSessionId: String? = if (caller) UUID.randomUUID().toString() else null
-    private val audioManager = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    private val originalMode = audioManager.mode
-    private val originalSpeaker = audioManager.isSpeakerphoneOn
+    private val audioRouter = CallAudioRouter(app, preferSpeaker = false)
 
     companion object {
         @Volatile private var initialized = false
@@ -139,9 +136,7 @@ class WebRtcAudioSession(
 
     init {
         pc.addTrack(audioTrack, listOf("lumoAudioStream"))
-        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        // Start with the phone's earpiece. Future UI will provide route selection.
-        audioManager.isSpeakerphoneOn = false
+        audioRouter.start()
         onState("WebRTC готов. Обмен ключами соединения…")
     }
 
@@ -293,10 +288,14 @@ class WebRtcAudioSession(
         runCatching { audioTrack.setEnabled(!muted) }
     }
 
-    fun setSpeakerphone(enabled:Boolean) {
-        if (closed) return
-        runCatching { audioManager.isSpeakerphoneOn = enabled }
-    }
+    fun availableAudioRoutes():List<CallAudioRoute> =
+        if (closed) emptyList() else audioRouter.availableRoutes()
+
+    fun selectedAudioRouteId():String? =
+        if (closed) null else audioRouter.selectedRouteId()
+
+    fun selectAudioRoute(routeId:String):Boolean =
+        !closed && audioRouter.select(routeId)
 
     fun stop() {
         synchronized(gate) {
@@ -313,9 +312,6 @@ class WebRtcAudioSession(
         runCatching { audioTrack.dispose() }
         runCatching { audioSource.dispose() }
         runCatching { factory.dispose() }
-        runCatching {
-            audioManager.isSpeakerphoneOn = originalSpeaker
-            audioManager.mode = originalMode
-        }
+        audioRouter.stop()
     }
 }

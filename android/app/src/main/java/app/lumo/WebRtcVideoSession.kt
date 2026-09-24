@@ -3,7 +3,6 @@ package app.lumo
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import android.media.AudioManager
 import org.json.JSONObject
 import org.webrtc.*
 import kotlin.coroutines.resume
@@ -36,9 +35,7 @@ class WebRtcVideoSession(
     private var localDescriptionPublished=false
     private var remoteDescriptionReady=false
     private var activeMediaSessionId:String?=if(caller)UUID.randomUUID().toString() else null
-    private val audioManager=app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    private val originalMode=audioManager.mode
-    private val originalSpeaker=audioManager.isSpeakerphoneOn
+    private val audioRouter=CallAudioRouter(app,preferSpeaker=true)
 
     companion object {
         @Volatile private var initialized=false
@@ -193,8 +190,7 @@ class WebRtcVideoSession(
         pc.addTrack(audioTrack,listOf("lumoVideoAudioStream"))
         pc.addTrack(localVideoTrack,listOf("lumoVideoStream"))
 
-        audioManager.mode=AudioManager.MODE_IN_COMMUNICATION
-        audioManager.isSpeakerphoneOn=true
+        audioRouter.start()
         onState("Камера включена. Создаём приватное видеосоединение…")
     }
 
@@ -361,9 +357,14 @@ class WebRtcVideoSession(
         }
     }
 
-    fun setSpeakerphone(enabled:Boolean){
-        if(!closed)runCatching{audioManager.isSpeakerphoneOn=enabled}
-    }
+    fun availableAudioRoutes():List<CallAudioRoute> =
+        if(closed)emptyList() else audioRouter.availableRoutes()
+
+    fun selectedAudioRouteId():String? =
+        if(closed)null else audioRouter.selectedRouteId()
+
+    fun selectAudioRoute(routeId:String):Boolean =
+        !closed&&audioRouter.select(routeId)
 
     fun switchCamera(){
         if(closed)return
@@ -396,9 +397,6 @@ class WebRtcVideoSession(
         runCatching{remoteRenderer.release()}
         runCatching{factory.dispose()}
         runCatching{eglBase.release()}
-        runCatching{
-            audioManager.isSpeakerphoneOn=originalSpeaker
-            audioManager.mode=originalMode
-        }
+        audioRouter.stop()
     }
 }

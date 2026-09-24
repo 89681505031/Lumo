@@ -3,6 +3,7 @@ package app.lumo
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.SystemClock
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -48,7 +49,10 @@ fun VideoPrototypeControls(
     var startupJob by remember(call.id){mutableStateOf<Job?>(null)}
     var muted by remember(call.id){mutableStateOf(false)}
     var cameraEnabled by remember(call.id){mutableStateOf(true)}
-    var speaker by remember(call.id){mutableStateOf(true)}
+    var routeMenuOpen by remember(call.id){mutableStateOf(false)}
+    var routes by remember(call.id){mutableStateOf<List<CallAudioRoute>>(emptyList())}
+    var selectedRouteId by remember(call.id){mutableStateOf<String?>(null)}
+    var pendingBluetoothRouteId by remember(call.id){mutableStateOf<String?>(null)}
     var connected by remember(call.id){mutableStateOf(false)}
     var connectedSince by remember(call.id){mutableStateOf<Long?>(null)}
     var elapsedSeconds by remember(call.id){mutableLongStateOf(0L)}
@@ -77,7 +81,10 @@ fun VideoPrototypeControls(
         engine=null
         muted=false
         cameraEnabled=true
-        speaker=true
+        routeMenuOpen=false
+        routes=emptyList()
+        selectedRouteId=null
+        pendingBluetoothRouteId=null
         connected=false
         connectedSince=null
         elapsedSeconds=0L
@@ -185,6 +192,8 @@ fun VideoPrototypeControls(
                     return@launch
                 }
                 engine=created
+                routes=created.availableAudioRoutes()
+                selectedRouteId=created.selectedAudioRouteId()
                 status="Создаём приватное видеосоединение…"
                 created.start()
             }catch(cancel:CancellationException){
@@ -208,6 +217,37 @@ fun VideoPrototypeControls(
                 }
             }
         }
+    }
+
+    val bluetoothPermission=rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ){granted->
+        val routeId=pendingBluetoothRouteId
+        pendingBluetoothRouteId=null
+        if(granted&&routeId!=null){
+            val current=engine
+            if(current!=null&&current.selectAudioRoute(routeId)){
+                selectedRouteId=current.selectedAudioRouteId()
+                routes=current.availableAudioRoutes()
+                status="Аудиовыход переключён"
+            }else status="Не удалось переключить Bluetooth-аудио"
+        }else if(!granted)status="Bluetooth-аудио не выбрано: доступ не предоставлен"
+    }
+
+    fun selectRoute(route:CallAudioRoute){
+        val current=engine?:return
+        if(route.kind==CallAudioRouteKind.BLUETOOTH&&Build.VERSION.SDK_INT>=31&&
+            context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED
+        ){
+            pendingBluetoothRouteId=route.id
+            bluetoothPermission.launch(Manifest.permission.BLUETOOTH_CONNECT)
+            return
+        }
+        if(current.selectAudioRoute(route.id)){
+            selectedRouteId=current.selectedAudioRouteId()
+            routes=current.availableAudioRoutes()
+            status="Аудиовыход переключён"
+        }else status="Не удалось переключить аудиовыход"
     }
 
     val permission=rememberLauncherForActivityResult(
@@ -357,7 +397,7 @@ fun VideoPrototypeControls(
             }
             if(engine!=null){
                 Text(
-                    if(speaker)"Динамик" else "Телефон",
+                    routes.firstOrNull{it.id==selectedRouteId}?.label ?: "Аудиовыход",
                     style=MaterialTheme.typography.labelMedium
                 )
             }
@@ -391,13 +431,30 @@ fun VideoPrototypeControls(
                     onClick={engine?.switchCamera()},
                     modifier=Modifier.weight(1f)
                 ){Text("Сменить камеру")}
-                OutlinedButton(
-                    onClick={
-                        speaker=!speaker
-                        engine?.setSpeakerphone(speaker)
-                    },
-                    modifier=Modifier.weight(1f)
-                ){Text(if(speaker)"К телефону" else "На динамик")}
+                Box(Modifier.weight(1f)){
+                    OutlinedButton(
+                        onClick={
+                            routes=engine?.availableAudioRoutes().orEmpty()
+                            selectedRouteId=engine?.selectedAudioRouteId()
+                            routeMenuOpen=true
+                        },
+                        modifier=Modifier.fillMaxWidth()
+                    ){Text("Аудиовыход")}
+                    DropdownMenu(
+                        expanded=routeMenuOpen,
+                        onDismissRequest={routeMenuOpen=false}
+                    ){
+                        routes.forEach{route->
+                            DropdownMenuItem(
+                                text={Text((if(route.id==selectedRouteId)"✓ " else "")+route.label)},
+                                onClick={
+                                    routeMenuOpen=false
+                                    selectRoute(route)
+                                }
+                            )
+                        }
+                    }
+                }
             }
             TextButton(onClick={stop("Видеосоединение отключено")}){
                 Text("Отключить видео")
