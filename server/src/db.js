@@ -206,6 +206,26 @@ export async function initDatabase() {
     constraint push_outbox_scope_ck
       check ((direct_message_id is null) <> (group_message_id is null))
   )`);
+  await pool.query(`alter table push_outbox add column if not exists direct_message_id uuid references messages(id) on delete cascade`);
+  await pool.query(`alter table push_outbox add column if not exists group_message_id uuid references chat_group_messages(id) on delete cascade`);
+  const legacyPushMessageColumn=await pool.query(
+    `select is_nullable from information_schema.columns
+     where table_schema=current_schema() and table_name='push_outbox' and column_name='message_id'`
+  );
+  if(legacyPushMessageColumn.rowCount){
+    await pool.query(`alter table push_outbox alter column message_id drop not null`);
+    await pool.query(`update push_outbox
+      set direct_message_id=message_id
+      where direct_message_id is null and group_message_id is null and message_id is not null`);
+  }
+  const pushScopeCheck=await pool.query(
+    "select 1 from pg_constraint where conname=$1 and conrelid='push_outbox'::regclass",
+    ["push_outbox_scope_ck"]
+  );
+  if(!pushScopeCheck.rowCount){
+    await pool.query(`alter table push_outbox add constraint push_outbox_scope_ck
+      check ((direct_message_id is null) <> (group_message_id is null))`);
+  }
   await pool.query(`create unique index if not exists push_outbox_direct_session_uidx
     on push_outbox(direct_message_id,session_token)
     where direct_message_id is not null`);
@@ -229,10 +249,14 @@ export async function initDatabase() {
     end;
     $ language plpgsql`);
   const directPushTrigger=await pool.query(
-    "select 1 from pg_trigger where tgname=$1 and tgrelid='messages'::regclass and not tgisinternal",
+    `select p.proname
+     from pg_trigger t join pg_proc p on p.oid=t.tgfoid
+     where t.tgname=$1 and t.tgrelid='messages'::regclass and not t.tgisinternal`,
     ["lumo_message_push_outbox"]
   );
-  if(!directPushTrigger.rowCount){
+  if(directPushTrigger.rows[0]?.proname!=="lumo_enqueue_direct_push"){
+    if(directPushTrigger.rowCount)
+      await pool.query(`drop trigger lumo_message_push_outbox on messages`);
     await pool.query(`create trigger lumo_message_push_outbox
       after insert on messages
       for each row execute function lumo_enqueue_direct_push()`);
