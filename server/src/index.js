@@ -857,9 +857,9 @@ app.get("/api/messages/:peerId", auth, async (req, res) => {
 
 // HTTP transport is a durable fallback when WebSocket peers connect to different instances.
 const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-// Opt-in experimental reactions; the production chat API is unchanged unless
-// a staging operator explicitly enables the feature after DB/security checks.
-const reactionsEnabled=hasDatabase && process.env.LUMO_REACTIONS_ENABLED==="true";
+// Reactions are production-ready when PostgreSQL is available. Operators can
+// explicitly disable them with LUMO_REACTIONS_ENABLED=false as a kill switch.
+const reactionsEnabled=hasDatabase && process.env.LUMO_REACTIONS_ENABLED!=="false";
 const reactionEmojis=new Set(["👍","❤️","😂","😮","👏","🚀"]);
 function requireReactions(_req,res,next){
   if(!reactionsEnabled)return res.status(404).json({error:"reactions_unavailable"});
