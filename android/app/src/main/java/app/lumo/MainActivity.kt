@@ -43,7 +43,7 @@ import org.json.JSONObject
 import kotlinx.coroutines.launch
 
 data class User(val id:String,val username:String,val displayName:String,val bio:String="",val bioSupported:Boolean=false,val hasAvatar:Boolean=false,val avatarVersion:String="")
-data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="",val attachmentId:String="",val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="")
+data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="",val attachmentId:String="",val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="",val editedAt:String="",val deletedAt:String="")
 data class Conversation(val peer:User,val lastMessage:String,val lastAt:String="")
 data class UpdateInfo(val versionCode:Int,val downloadUrl:String)
 data class Receipt(val messageId:String,val deliveredAt:String,val readAt:String)
@@ -702,14 +702,26 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  val merged=LinkedHashMap<String,Msg>()
  for(m in current+incoming){
   val old=merged[m.id]
-  merged[m.id]=if(old==null)m else m.copy(
-   deliveredAt=old.deliveredAt.ifBlank{m.deliveredAt},
-   readAt=old.readAt.ifBlank{m.readAt},
-   clientMessageId=m.clientMessageId.ifBlank{old.clientMessageId},
-   attachmentId=m.attachmentId.ifBlank{old.attachmentId},
-   replyToMessageId=m.replyToMessageId.ifBlank{old.replyToMessageId},
-   replyPreviewText=m.replyPreviewText.ifBlank{old.replyPreviewText},
-   replyPreviewFrom=m.replyPreviewFrom.ifBlank{old.replyPreviewFrom}
+  if(old==null){merged[m.id]=m;continue}
+  // A delayed socket/history response must never resurrect text that was
+  // already edited or deleted on this device.
+  val oldWins=when{
+   old.deletedAt.isNotBlank() && m.deletedAt.isBlank()->true
+   old.deletedAt.isNotBlank() && m.deletedAt.isNotBlank()->old.deletedAt>m.deletedAt
+   old.editedAt.isNotBlank() && m.deletedAt.isBlank() &&
+    (m.editedAt.isBlank() || old.editedAt>m.editedAt)->true
+   else->false
+  }
+  val preferred=if(oldWins)old else m
+  val other=if(oldWins)m else old
+  merged[m.id]=preferred.copy(
+   deliveredAt=preferred.deliveredAt.ifBlank{other.deliveredAt},
+   readAt=preferred.readAt.ifBlank{other.readAt},
+   clientMessageId=preferred.clientMessageId.ifBlank{other.clientMessageId},
+   attachmentId=preferred.attachmentId.ifBlank{other.attachmentId},
+   replyToMessageId=preferred.replyToMessageId.ifBlank{other.replyToMessageId},
+   replyPreviewText=preferred.replyPreviewText.ifBlank{other.replyPreviewText},
+   replyPreviewFrom=preferred.replyPreviewFrom.ifBlank{other.replyPreviewFrom}
   )
  }
  return merged.values.sortedBy{it.createdAt}
@@ -1174,6 +1186,53 @@ object Api{
    }.getOrDefault(false)
   }
  }
+ fun messageMutationCapabilities(t:String):Triple<Boolean,Boolean,Boolean>{
+  val request=Request.Builder().url(HTTP+"/api/messages/capabilities")
+   .header("Authorization","Bearer "+t).get().build()
+  c.newCall(request).execute().use{response->
+   if(response.code==401)throw SessionExpiredException()
+   if(!response.isSuccessful)return Triple(false,false,false)
+   return runCatching{
+    val o=JSONObject(response.body?.string().orEmpty())
+    Triple(
+     o.optBoolean("messageEdit",false),
+     o.optBoolean("messageDelete",false),
+     o.optBoolean("messageSearch",false)
+    )
+   }.getOrDefault(Triple(false,false,false))
+  }
+ }
+ fun searchMessages(t:String,peerId:String,q:String):List<Msg>{
+  val url=(HTTP+"/api/messages/search/"+peerId).toHttpUrl().newBuilder()
+   .addQueryParameter("q",q.trim()).build()
+  val request=Request.Builder().url(url).header("Authorization","Bearer "+t).get().build()
+  c.newCall(request).execute().use{x->
+   if(x.code==401)throw SessionExpiredException()
+   if(!x.isSuccessful)error("Поиск: "+x.code)
+   val a=JSONArray(x.body?.string().orEmpty())
+   return (0 until a.length()).map{msg(a.getJSONObject(it))}
+  }
+ }
+ fun editMessage(t:String,messageId:String,text:String):Msg{
+  val body=JSONObject().put("text",text.trim())
+  val request=Request.Builder().url(HTTP+"/api/messages/"+messageId)
+   .header("Authorization","Bearer "+t)
+   .patch(body.toString().toRequestBody("application/json".toMediaType())).build()
+  c.newCall(request).execute().use{x->
+   if(x.code==401)throw SessionExpiredException()
+   if(!x.isSuccessful)error("Изменение: "+x.code)
+   return msg(JSONObject(x.body?.string().orEmpty()))
+  }
+ }
+ fun deleteMessage(t:String,messageId:String):Msg{
+  val request=Request.Builder().url(HTTP+"/api/messages/"+messageId)
+   .header("Authorization","Bearer "+t).delete().build()
+  c.newCall(request).execute().use{x->
+   if(x.code==401)throw SessionExpiredException()
+   if(!x.isSuccessful)error("Удаление: "+x.code)
+   return msg(JSONObject(x.body?.string().orEmpty()))
+  }
+ }
  fun sendMessage(t:String,to:String,p:PendingMessage):Msg{
   fun perform(body:JSONObject):Pair<Int,String>{
    val request=Request.Builder().url(HTTP+"/api/messages")
@@ -1213,5 +1272,5 @@ object Api{
  fun latestRelease():UpdateInfo{val r=Request.Builder().url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest").header("Accept","application/vnd.github+json").build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Обновление: "+x.code);val o=JSONObject(x.body!!.string());val code=Regex("versionCode=(\\d+)").find(o.optString("body"))?.groupValues?.get(1)?.toIntOrNull()?:0;val a=o.getJSONArray("assets");for(i in 0 until a.length()){val asset=a.getJSONObject(i);if(asset.optString("name")=="app-debug.apk" || asset.optString("name")=="app-release.apk" || asset.optString("label")=="Lumo.apk")return UpdateInfo(code,asset.getString("browser_download_url"))};error("APK не найден")}}
  fun socket(t:String,onMessage:(Msg)->Unit,onReceipt:(Receipt)->Unit,onError:(String)->Unit,onReady:()->Unit,onDisconnected:()->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS).header("Authorization","Bearer "+t).build(),object:WebSocketListener(){override fun onOpen(w:WebSocket,response:Response){};override fun onMessage(w:WebSocket,s:String){runCatching{val o=JSONObject(s);when(o.optString("type")){"ready"->onReady();"message"->onMessage(msg(o.getJSONObject("message")));"receipt"->onReceipt(Receipt(o.getString("messageId"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt")));"error"->onError(o.optString("error"));else->Unit}}.onFailure{onError("invalid_server_message")}};override fun onClosed(w:WebSocket,code:Int,reason:String)=onDisconnected();override fun onFailure(w:WebSocket,t:Throwable,response:Response?)=onDisconnected()})}
  private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"),nullableJsonText(o,"bio"),o.has("bio"),o.optBoolean("hasAvatar",false),nullableJsonText(o,"avatarVersion"))
- private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"),nullableJsonText(o,"attachmentId"),nullableJsonText(o,"replyToMessageId"),nullableJsonText(o,"replyPreviewText"),nullableJsonText(o,"replyPreviewFrom"))
+ private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"),nullableJsonText(o,"attachmentId"),nullableJsonText(o,"replyToMessageId"),nullableJsonText(o,"replyPreviewText"),nullableJsonText(o,"replyPreviewFrom"),nullableJsonText(o,"editedAt"),nullableJsonText(o,"deletedAt"))
 }
