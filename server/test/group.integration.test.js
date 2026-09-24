@@ -62,6 +62,11 @@ test("private groups: durable membership, roles, history privacy and idempotent 
     }
     const owner=await register("ow"),admin=await register("ad"),
       member=await register("mb"),outsider=await register("ou"),blocked=await register("bl");
+    const caps=await request("/api/capabilities");
+    assert.equal(caps.status,200);
+    assert.equal(caps.json.groupsReady,true);
+    assert.equal(caps.json.groupLinkedReplies,true);
+    assert.equal(caps.json.groupSearch,true);
     assert.deepEqual((await request("/api/groups","GET",owner.token)).json,[]);
     assert.equal((await request("/api/groups","POST",owner.token,{title:" "})).status,400);
     assert.equal((await request("/api/groups","POST",null,{title:"Private group"})).status,401);
@@ -182,6 +187,99 @@ test("private groups: durable membership, roles, history privacy and idempotent 
     const ownerHistory=await request(prefix+"/messages","GET",owner.token,null,replica);
     assert.equal(ownerHistory.json.length,2);
     assert.equal(ownerHistory.json[0].id,initial.json.id);
+
+    // Linked replies cannot reveal messages from before the recipient's current
+    // membership window.
+    const oldReplyDenied=await request(prefix+"/messages","POST",admin.token,{
+      text:"I cannot see that old message",
+      clientMessageId:randomUUID(),
+      replyToMessageId:initial.json.id
+    });
+    assert.equal(oldReplyDenied.status,404);
+    assert.equal(oldReplyDenied.json.error,"reply_message_not_found");
+
+    assert.equal((await request(prefix+"/messages","POST",owner.token,{
+      text:"bad reply id",clientMessageId:randomUUID(),replyToMessageId:"not-a-uuid"
+    })).status,400);
+
+    const replyNotice=new Promise((resolve,reject)=>{
+      const t=setTimeout(()=>reject(new Error("Missing group reply push")),4000);
+      const handler=raw=>{
+        const event=JSON.parse(raw.toString());
+        if(event.type==="group_message" && event.message?.replyToMessageId===initial.json.id){
+          clearTimeout(t);socket.off("message",handler);resolve(event);
+        }
+      };
+      socket.on("message",handler);
+    });
+    const privateReply=await request(prefix+"/messages","POST",owner.token,{
+      text:"Replying to old owner history",
+      clientMessageId:randomUUID(),
+      replyToMessageId:initial.json.id
+    });
+    assert.equal(privateReply.status,201);
+    assert.equal(privateReply.json.replyPreviewText,"Before anyone joined");
+    const pushedReply=await replyNotice;
+    assert.equal(pushedReply.message.replyToMessageId,initial.json.id);
+    assert.equal(pushedReply.message.replyPreviewText,null,
+      "late-joining admin must not receive old reply preview via WebSocket");
+
+    const ownerAfterReply=await request(prefix+"/messages","GET",owner.token);
+    const ownerReply=ownerAfterReply.json.find(m=>m.id===privateReply.json.id);
+    assert.equal(ownerReply.replyPreviewText,"Before anyone joined");
+
+    const adminAfterReply=await request(prefix+"/messages","GET",admin.token);
+    const adminReply=adminAfterReply.json.find(m=>m.id===privateReply.json.id);
+    assert.ok(adminReply,"reply itself is new and visible to current member");
+    assert.equal(adminReply.replyPreviewText,null,
+      "history also redacts reply preview that predates current membership");
+
+    const memberReplyId=randomUUID();
+    const memberReply=await request(prefix+"/messages","POST",member.token,{
+      text:"Reply everyone can see",
+      clientMessageId:memberReplyId,
+      replyToMessageId:sent.json.id
+    });
+    assert.equal(memberReply.status,201);
+    assert.equal(memberReply.json.replyPreviewText,"Everyone online now");
+
+    const sameReply=await request(prefix+"/messages","POST",member.token,{
+      text:"Reply everyone can see",
+      clientMessageId:memberReplyId,
+      replyToMessageId:sent.json.id
+    });
+    assert.equal(sameReply.status,200);
+    assert.equal(sameReply.json.id,memberReply.json.id);
+
+    const changedTarget=await request(prefix+"/messages","POST",member.token,{
+      text:"Reply everyone can see",
+      clientMessageId:memberReplyId,
+      replyToMessageId:privateReply.json.id
+    });
+    assert.equal(changedTarget.status,409);
+    assert.equal(changedTarget.json.error,"client_message_id_conflict");
+
+    const searchMember=await request(
+      prefix+"/messages/search?q="+encodeURIComponent("online"),
+      "GET",member.token
+    );
+    assert.equal(searchMember.status,200);
+    assert.ok(searchMember.json.some(m=>m.id===sent.json.id));
+
+    const searchOld=await request(
+      prefix+"/messages/search?q="+encodeURIComponent("Before anyone"),
+      "GET",member.token
+    );
+    assert.equal(searchOld.status,200);
+    assert.deepEqual(searchOld.json,[],
+      "group search cannot reopen text from before current membership");
+
+    assert.equal((await request(
+      prefix+"/messages/search?q="+encodeURIComponent("online"),
+      "GET",outsider.token
+    )).status,404);
+    assert.equal((await request(prefix+"/messages/search?q=x","GET",member.token)).status,400);
+
     const memberCannotInvite=await request(prefix+"/members","POST",member.token,{
       userId:outsider.user.id
     });
