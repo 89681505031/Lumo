@@ -34,6 +34,9 @@ export async function initDatabase() {
   await pool.query(`create index if not exists sessions_expiry_idx on sessions(expires_at)`);
   await pool.query(`create table if not exists messages (id uuid primary key, sender_id uuid not null references users(id) on delete cascade, recipient_id uuid not null references users(id) on delete cascade, text varchar(4000) not null, created_at timestamptz not null default now(), delivered_at timestamptz, read_at timestamptz)`);
   await pool.query(`alter table messages add column if not exists client_message_id uuid`);
+  await pool.query(`alter table messages add column if not exists reply_to_message_id uuid`);
+  await pool.query(`do $ begin alter table messages add constraint messages_reply_to_fk foreign key (reply_to_message_id) references messages(id) on delete set null; exception when duplicate_object then null; end $`);
+  await pool.query(`create index if not exists messages_reply_to_idx on messages(reply_to_message_id) where reply_to_message_id is not null`);
   await pool.query(`create unique index if not exists messages_sender_client_id_uidx on messages(sender_id, client_message_id) where client_message_id is not null`);
   await pool.query(`create index if not exists messages_sender_idx on messages(sender_id, created_at desc)`);
   await pool.query(`create index if not exists messages_recipient_idx on messages(recipient_id, created_at desc)`);
