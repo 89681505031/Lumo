@@ -17,6 +17,7 @@ export async function initDatabase() {
   if (!pool) return false;
   await pool.query(`create table if not exists users (id uuid primary key, username varchar(24) unique not null, display_name varchar(50) not null, created_at timestamptz not null default now())`);
   await pool.query(`alter table users add column if not exists password_hash text`);
+  await pool.query(`alter table users add column if not exists bio varchar(160) not null default ''`);
   await pool.query(`create table if not exists sessions (
     token uuid primary key,
     user_id uuid not null references users(id) on delete cascade,
