@@ -24,7 +24,8 @@ class WebRtcAudioSession(
     iceServers: List<LumoIceServer>,
     private val caller: Boolean,
     private val onLocalSignal: (String, JSONObject) -> Unit,
-    private val onState: (String) -> Unit
+    private val onState: (String) -> Unit,
+    private val onConnectionState: (Boolean) -> Unit
 ) {
     private val app = context.applicationContext
     private val gate = Any()
@@ -86,11 +87,26 @@ class WebRtcAudioSession(
                 if (closed) return
                 when (state) {
                     PeerConnection.IceConnectionState.CONNECTED,
-                    PeerConnection.IceConnectionState.COMPLETED -> onState("Аудиоканал подключён (тест)")
-                    PeerConnection.IceConnectionState.CHECKING -> onState("Проверяем соединение через TURN…")
-                    PeerConnection.IceConnectionState.DISCONNECTED -> onState("Связь потеряна")
-                    PeerConnection.IceConnectionState.FAILED -> onState("Соединение не установлено")
-                    PeerConnection.IceConnectionState.CLOSED -> onState("Соединение завершено")
+                    PeerConnection.IceConnectionState.COMPLETED -> {
+                        onConnectionState(true)
+                        onState("Аудиоканал подключён через TURN")
+                    }
+                    PeerConnection.IceConnectionState.CHECKING -> {
+                        onConnectionState(false)
+                        onState("Проверяем соединение через TURN…")
+                    }
+                    PeerConnection.IceConnectionState.DISCONNECTED -> {
+                        onConnectionState(false)
+                        onState("Связь потеряна. Пытаемся восстановить…")
+                    }
+                    PeerConnection.IceConnectionState.FAILED -> {
+                        onConnectionState(false)
+                        onState("Соединение не установлено")
+                    }
+                    PeerConnection.IceConnectionState.CLOSED -> {
+                        onConnectionState(false)
+                        onState("Соединение завершено")
+                    }
                     else -> Unit
                 }
             }
@@ -289,6 +305,7 @@ class WebRtcAudioSession(
             pendingLocalIce.clear()
             pendingRemoteIce.clear()
         }
+        onConnectionState(false)
         // Disable microphone capture before tearing down native resources.
         runCatching { audioTrack.setEnabled(false) }
         runCatching { pc.close() }
