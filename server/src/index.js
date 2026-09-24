@@ -367,6 +367,10 @@ app.delete("/api/reactions/:messageId",auth,requireReactions,rateLimit({windowMs
   }
 });
 
+app.get("/api/messages/capabilities",auth,(_req,res)=>{
+  res.json({linkedReplies:true});
+});
+
 app.post("/api/messages", auth, requireDatabase, async (req,res)=>{
   const to=req.body?.to;
   const clientMessageId=req.body?.clientMessageId;
