@@ -23,6 +23,7 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     stdio:"ignore"
   });
   let socket;
+  let recipientSocket;
   let replica;
   try{
     const base=`http://127.0.0.1:${port}`;
@@ -111,11 +112,38 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     });
     assert.equal(ready.type,"ready");
     assert.equal(ready.userId,a.user.id);
+
+    recipientSocket=new WebSocket(`ws://127.0.0.1:${port}/ws`,{
+      headers:{Authorization:"Bearer "+b.token}
+    });
+    const recipientReady=await new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>reject(new Error("Recipient WebSocket not ready")),3000);
+      recipientSocket.once("message",data=>{
+        clearTimeout(timer);
+        resolve(JSON.parse(data.toString()));
+      });
+      recipientSocket.once("error",error=>{clearTimeout(timer);reject(error);});
+    });
+    assert.equal(recipientReady.type,"ready");
+    assert.equal(recipientReady.userId,b.user.id);
+
     const clientMessageId=randomUUID();
     const payload={to:b.user.id,text:"hello over HTTP",clientMessageId};
+    const recipientDelivery=new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>reject(new Error("Online recipient did not receive WebSocket message")),3000);
+      recipientSocket.once("message",data=>{
+        clearTimeout(timer);
+        resolve(JSON.parse(data.toString()));
+      });
+      recipientSocket.once("error",error=>{clearTimeout(timer);reject(error);});
+    });
     const sent=await request("/api/messages","POST",a.token,payload);
     assert.equal(sent.status,201);
     assert.equal(sent.json.clientMessageId,clientMessageId);
+    const deliveredLive=await recipientDelivery;
+    assert.equal(deliveredLive.type,"message");
+    assert.equal(deliveredLive.message.id,sent.json.id);
+    assert.equal(deliveredLive.message.text,payload.text);
     const retried=await request("/api/messages","POST",a.token,payload);
     assert.equal(retried.status,200);
     assert.equal(retried.json.id,sent.json.id);
@@ -144,7 +172,11 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     const unopened=await request("/api/messages/"+b.user.id,"GET",c.token);
     assert.equal(unopened.status,200);
     assert.equal(unopened.json.length,1);
-    assert.equal(unopened.json[0].deliveredAt,null,"Fetching Alice must not mark Charlie delivered");
+    assert.equal(
+      unopened.json[0].deliveredAt,
+      fromCharlie.json.deliveredAt,
+      "Fetching Alice must not change Charlie conversation delivery state"
+    );
     const read=await request("/api/messages/read","POST",b.token,{ids:[sent.json.id]},otherBase);
     assert.equal(read.status,200);
     assert.equal(read.json.receipts.length,1);
@@ -202,6 +234,7 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     assert.equal(await expiredSocketClose,1008);
   }finally{
     socket?.terminate();
+    recipientSocket?.terminate();
     replica?.kill();
     child.kill();
   }
