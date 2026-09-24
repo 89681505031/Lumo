@@ -295,6 +295,10 @@ app.get("/api/conversations", auth, async (req, res) => {
   res.json(result); } catch(error){console.error("Conversation list failed",error);res.status(503).json({error:"service_unavailable"});}
 });
 
+app.get("/api/messages/capabilities",auth,(_req,res)=>{
+  res.json({linkedReplies:true});
+});
+
 app.get("/api/messages/:peerId", auth, async (req, res) => {
   try {
     const peerId = req.params.peerId;
@@ -365,10 +369,6 @@ app.delete("/api/reactions/:messageId",auth,requireReactions,rateLimit({windowMs
     console.error("Reaction removal failed",error);
     return res.status(503).json({error:"service_unavailable"});
   }
-});
-
-app.get("/api/messages/capabilities",auth,(_req,res)=>{
-  res.json({linkedReplies:true});
 });
 
 app.post("/api/messages", auth, requireDatabase, async (req,res)=>{
