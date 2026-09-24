@@ -1392,6 +1392,8 @@ fun formatMessageTime(iso:String):String=runCatching{java.time.format.DateTimeFo
 
 object Api{
  internal val HTTP=BuildConfig.LUMO_HTTP_BASE;internal val WS=BuildConfig.LUMO_WS_BASE;val httpClient=OkHttpClient.Builder().connectTimeout(15,java.util.concurrent.TimeUnit.SECONDS).readTimeout(30,java.util.concurrent.TimeUnit.SECONDS).writeTimeout(30,java.util.concurrent.TimeUnit.SECONDS).pingInterval(25,java.util.concurrent.TimeUnit.SECONDS).retryOnConnectionFailure(true).build();private val c=httpClient
+ @Volatile private var conversationsFallbackUntilMs=0L
+ private const val CONVERSATIONS_FALLBACK_MS=5*60*1000L
  fun register(login:String,name:String,password:String):Pair<String,User>{val j=JSONObject().put("username",login).put("displayName",name).put("password",password);val r=Request.Builder().url(HTTP+"/api/register").post(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->val body=x.body?.string().orEmpty();if(!x.isSuccessful){val code=runCatching{JSONObject(body).optString("error")}.getOrDefault("");error(when(code){"database_unavailable"->"Сервис временно недоступен: база данных не подключена";"username_taken"->"Этот логин уже занят";"invalid_profile"->"Проверь имя и логин";"invalid_password"->"Пароль должен содержать от 10 до 128 символов";else->"Ошибка регистрации ("+x.code+")"})};val o=JSONObject(body);return o.getString("token") to user(o.getJSONObject("user"))}}
  fun login(login:String,password:String):Pair<String,User>{
   val body=JSONObject().put("username",login).put("password",password)
@@ -1418,17 +1420,23 @@ object Api{
  fun me(t:String):User{val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful)error("Сессия: "+x.code);return user(JSONObject(x.body!!.string()))}}
  fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
  fun conversations(t:String):List<Conversation>{
+  val now=android.os.SystemClock.elapsedRealtime()
+  if(now<conversationsFallbackUntilMs)return conversationsCompatibilityFallback(t)
   val request=Request.Builder().url(HTTP+"/api/conversations")
    .header("Authorization","Bearer "+t).build()
   c.newCall(request).execute().use{response->
    if(response.code==401)throw SessionExpiredException()
    if(response.isSuccessful){
+    conversationsFallbackUntilMs=0L
     val a=JSONArray(response.body?.string().orEmpty())
     return (0 until a.length()).map{val o=a.getJSONObject(it)
      Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"),o.optString("lastAt"))
     }
    }
-   if(response.code==503)return conversationsCompatibilityFallback(t)
+   if(response.code==503){
+    conversationsFallbackUntilMs=android.os.SystemClock.elapsedRealtime()+CONVERSATIONS_FALLBACK_MS
+    return conversationsCompatibilityFallback(t)
+   }
    val reason=when(response.code){
     429->"Слишком много запросов. Подожди немного."
     else->"Ошибка сервера HTTP "+response.code
