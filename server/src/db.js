@@ -46,6 +46,22 @@ export async function initDatabase() {
   await pool.query(`create unique index if not exists messages_sender_client_id_uidx on messages(sender_id, client_message_id) where client_message_id is not null`);
   await pool.query(`create index if not exists messages_sender_idx on messages(sender_id, created_at desc)`);
   await pool.query(`create index if not exists messages_recipient_idx on messages(recipient_id, created_at desc)`);
+  await pool.query(`create table if not exists media_assets (
+    id uuid primary key,
+    owner_id uuid not null references users(id) on delete cascade,
+    recipient_id uuid not null references users(id) on delete cascade,
+    object_key text not null unique,
+    mime varchar(120) not null,
+    file_name varchar(80) not null,
+    byte_length integer not null check(byte_length>0 and byte_length<=26214400),
+    expires_at timestamptz not null default (now() + interval '1 day'),
+    created_at timestamptz not null default now(),
+    uploaded_at timestamptz,
+    claimed_message_id uuid unique
+  )`);
+  await pool.query(`create index if not exists media_assets_owner_idx on media_assets(owner_id,created_at desc)`);
+  await pool.query(`alter table messages add column if not exists media_id uuid references media_assets(id)`);
+  await pool.query(`create index if not exists messages_media_idx on messages(media_id) where media_id is not null`);
   // Safe to repeat on old databases. Reaction ownership is enforced by the API
   // and by the foreign keys: deleting a message/account removes its reactions.
   await pool.query(`create table if not exists message_reactions (
@@ -64,6 +80,7 @@ export async function dbHealth() {
     to_regclass('users') as users_table,
     to_regclass('sessions') as sessions_table,
     to_regclass('messages') as messages_table,
+    to_regclass('media_assets') as media_assets_table,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column,
     exists(select 1 from information_schema.columns
@@ -75,7 +92,9 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='messages' and column_name='reply_to_message_id') as reply_column,
     exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='messages' and column_name='media_id') as media_column,
+    exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.session_expiry_column), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.media_column && row.session_expiry_column), now:row.now };
 }

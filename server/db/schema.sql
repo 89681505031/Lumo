@@ -38,6 +38,22 @@ create index if not exists messages_reply_to_idx on messages(reply_to_message_id
 create unique index if not exists messages_sender_client_id_uidx on messages(sender_id, client_message_id) where client_message_id is not null;
 create index if not exists messages_sender_idx on messages(sender_id, created_at desc);
 create index if not exists messages_recipient_idx on messages(recipient_id, created_at desc);
+create table if not exists media_assets (
+  id uuid primary key,
+  owner_id uuid not null references users(id) on delete cascade,
+  recipient_id uuid not null references users(id) on delete cascade,
+  object_key text not null unique,
+  mime varchar(120) not null,
+  file_name varchar(80) not null,
+  byte_length integer not null check(byte_length>0 and byte_length<=26214400),
+  expires_at timestamptz not null default (now() + interval '1 day'),
+  created_at timestamptz not null default now(),
+  uploaded_at timestamptz,
+  claimed_message_id uuid unique
+);
+create index if not exists media_assets_owner_idx on media_assets(owner_id,created_at desc);
+alter table messages add column if not exists media_id uuid references media_assets(id);
+create index if not exists messages_media_idx on messages(media_id) where media_id is not null;
 -- Authenticated, idempotent direct-message reactions. Schema-only until feature flag.
 create table if not exists message_reactions (
   message_id uuid not null references messages(id) on delete cascade,
