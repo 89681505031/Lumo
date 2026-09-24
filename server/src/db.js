@@ -110,6 +110,30 @@ export async function initDatabase() {
     unique(call_id,sender_id,client_signal_id)
   )`);
   await pool.query(`create index if not exists call_signals_created_idx on call_signals(created_at)`);
+  await pool.query(`create table if not exists chat_groups (
+    id uuid primary key,
+    title varchar(80) not null,
+    owner_id uuid not null references users(id),
+    created_at timestamptz not null default now()
+  )`);
+  await pool.query(`create table if not exists chat_group_members (
+    group_id uuid not null references chat_groups(id) on delete cascade,
+    user_id uuid not null references users(id) on delete cascade,
+    role varchar(10) not null check (role in ('owner','admin','member')),
+    joined_at timestamptz not null default now(),
+    primary key(group_id,user_id)
+  )`);
+  await pool.query(`create index if not exists chat_group_members_user_idx on chat_group_members(user_id,group_id)`);
+  await pool.query(`create table if not exists chat_group_messages (
+    id uuid primary key,
+    group_id uuid not null references chat_groups(id) on delete cascade,
+    sender_id uuid not null references users(id),
+    text varchar(4000) not null,
+    client_message_id uuid not null,
+    created_at timestamptz not null default now(),
+    unique(group_id,sender_id,client_message_id)
+  )`);
+  await pool.query(`create index if not exists chat_group_messages_history_idx on chat_group_messages(group_id,created_at desc,id desc)`);
   return true;
 }
 export async function dbHealth() {
@@ -122,6 +146,9 @@ export async function dbHealth() {
     to_regclass('user_blocks') as user_blocks_table,
     to_regclass('calls') as calls_table,
     to_regclass('call_signals') as call_signals_table,
+    to_regclass('chat_groups') as groups_table,
+    to_regclass('chat_group_members') as group_members_table,
+    to_regclass('chat_group_messages') as group_messages_table,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column,
     exists(select 1 from information_schema.columns
@@ -141,5 +168,5 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.user_blocks_table && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
 }
