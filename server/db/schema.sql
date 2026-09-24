@@ -160,7 +160,7 @@ create index if not exists push_devices_user_idx on push_devices(user_id);
 create table if not exists push_outbox (
   id bigserial primary key,
   message_id uuid references messages(id) on delete cascade,
-  group_message_id uuid references chat_group_messages(id) on delete cascade,
+  group_message_id uuid,
   session_token uuid not null references sessions(token) on delete cascade,
   recipient_id uuid not null references users(id) on delete cascade,
   status varchar(16) not null default 'pending'
@@ -183,7 +183,7 @@ create unique index if not exists push_outbox_group_uidx
 create index if not exists push_outbox_claim_idx
   on push_outbox(available_at,id) where status='pending';
 
-create or replace function lumo_enqueue_private_push() returns trigger as $
+create or replace function lumo_enqueue_private_push() returns trigger as $lumo$
 begin
   insert into push_outbox(message_id,session_token,recipient_id)
   select new.id,p.session_token,new.recipient_id
@@ -194,11 +194,11 @@ begin
   on conflict do nothing;
   return new;
 end;
-$ language plpgsql;
+$lumo$ language plpgsql;
 create or replace trigger lumo_message_push_outbox after insert on messages
   for each row execute function lumo_enqueue_private_push();
 
-create or replace function lumo_enqueue_private_group_push() returns trigger as $
+create or replace function lumo_enqueue_private_group_push() returns trigger as $lumo$
 begin
   insert into push_outbox(group_message_id,session_token,recipient_id)
   select new.id,p.session_token,m.user_id
@@ -212,6 +212,6 @@ begin
   on conflict do nothing;
   return new;
 end;
-$ language plpgsql;
+$lumo$ language plpgsql;
 create or replace trigger lumo_group_message_push_outbox after insert on chat_group_messages
   for each row execute function lumo_enqueue_private_group_push();
