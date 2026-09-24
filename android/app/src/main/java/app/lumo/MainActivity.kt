@@ -302,21 +302,30 @@ class MainActivity:ComponentActivity(){
    kotlinx.coroutines.delay(12_000)
   }
  }
- if(loadError&&chats.isEmpty()){
-  Box(Modifier.fillMaxSize().padding(20.dp),contentAlignment=Alignment.Center){
-   Column(Modifier.fillMaxWidth().lumoGlass(28).padding(22.dp),horizontalAlignment=Alignment.CenterHorizontally){
-    Text("Чаты пока недоступны",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White)
-    Spacer(Modifier.height(12.dp))
-    Text(loadErrorDetail,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
-    Spacer(Modifier.height(18.dp))
-    LumoNeonButton("Повторить",onClick={retry++},modifier=Modifier.fillMaxWidth())
-    TextButton(find){Text("Найти людей",color=Color.White)}
-   }
-  }
+ if(loading&&chats.isEmpty()){
+  Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator(color=LumoCyan)}
   return
  }
- if(loading){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator(color=LumoCyan)};return}
  Column(Modifier.fillMaxSize()){
+  if(loadError&&chats.isEmpty()){
+   Column(
+    Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=8.dp)
+     .lumoGlass(22).padding(14.dp)
+   ){
+    Text("Не удалось обновить чаты",color=Color.White,fontWeight=FontWeight.Bold)
+    Spacer(Modifier.height(4.dp))
+    Text(
+     "Соединение с сервером временно недоступно. Можно открыть раздел «Люди» или повторить загрузку.",
+     style=MaterialTheme.typography.bodySmall,
+     color=MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(Modifier.height(10.dp))
+    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+     OutlinedButton(onClick={retry++}){Text("Повторить")}
+     TextButton(onClick=find){Text("Люди",color=Color.White)}
+    }
+   }
+  }
   if(groupsReady){
    Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp).lumoGlass(22).clickable{openGroups()}.padding(13.dp),verticalAlignment=Alignment.CenterVertically){
     LumoNeonAvatar("Группы",size=44.dp)
@@ -339,9 +348,15 @@ class MainActivity:ComponentActivity(){
   if(chats.isEmpty()){
    Box(Modifier.fillMaxSize().padding(20.dp),contentAlignment=Alignment.Center){
     Column(Modifier.fillMaxWidth().lumoGlass(28).padding(22.dp),horizontalAlignment=Alignment.CenterHorizontally){
-     Text("Сообщений пока нет",style=MaterialTheme.typography.titleLarge,color=Color.White,fontWeight=FontWeight.Bold)
+     Text(
+      if(loadError)"Чаты появятся после восстановления связи" else "Сообщений пока нет",
+      style=MaterialTheme.typography.titleLarge,color=Color.White,fontWeight=FontWeight.Bold
+     )
      Spacer(Modifier.height(8.dp))
-     Text("Найди человека и начни первый диалог",color=MaterialTheme.colorScheme.onSurfaceVariant)
+     Text(
+      if(loadError)"Аккаунт сохранён на этом устройстве." else "Найди человека и начни первый диалог",
+      color=MaterialTheme.colorScheme.onSurfaceVariant
+     )
      Spacer(Modifier.height(16.dp))
      LumoNeonButton("Найти людей",find,Modifier.fillMaxWidth())
     }
