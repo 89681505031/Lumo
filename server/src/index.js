@@ -1,5 +1,5 @@
 import express from "express";
-import { WebSocketServer } from "ws";
+import WebSocket, { WebSocketServer } from "ws";
 import { createServer } from "node:http";
 import { randomUUID, createHash } from "node:crypto";
 import { dbHealth, hasDatabase, initDatabase } from "./db.js";
@@ -1016,7 +1016,7 @@ const sockets = new Map();
 function sendTo(userId, payload) {
   const ws = sockets.get(userId);
   if (!ws) return false;
-  if (ws.readyState !== ws.OPEN) {
+  if (ws.readyState !== WebSocket.OPEN) {
     if (sockets.get(userId) === ws) sockets.delete(userId);
     return false;
   }
@@ -1045,11 +1045,11 @@ wss.on("connection", async (ws, req) => {
   }
   if (!userId) return ws.close(1008, "Unauthorized");
   const previousSocket=sockets.get(userId);
-  if(previousSocket && previousSocket!==ws && previousSocket.readyState===previousSocket.OPEN) previousSocket.close(1000,"Replaced by a newer connection");
+  if(previousSocket && previousSocket!==ws && previousSocket.readyState===WebSocket.OPEN) previousSocket.close(1000,"Replaced by a newer connection");
   ws.sessionToken = token;
   sockets.set(userId, ws);
   const sessionCheck = hasDatabase ? setInterval(async () => {
-    if (ws.readyState !== ws.OPEN) return;
+    if (ws.readyState !== WebSocket.OPEN) return;
     try {
       if (!(await postgresStore.userBySession(token))) ws.close(1008, "Session expired");
     } catch (error) {
@@ -1133,7 +1133,7 @@ wss.on("connection", async (ws, req) => {
         }
       }
       ws.send(JSON.stringify({ type: "message", message }));
-    } catch (error) { console.error("WebSocket message handling failed",error); if(ws.readyState===ws.OPEN) ws.send(JSON.stringify({ type: "error", error: error?.code==="CLIENT_MESSAGE_ID_CONFLICT" ? "client_message_id_conflict" : "service_unavailable" })); }
+    } catch (error) { console.error("WebSocket message handling failed",error); if(ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({ type: "error", error: error?.code==="CLIENT_MESSAGE_ID_CONFLICT" ? "client_message_id_conflict" : "service_unavailable" })); }
   });
   const clearSocket=()=>{if(sessionCheck)clearInterval(sessionCheck);if(sockets.get(userId)===ws)sockets.delete(userId);};
   ws.on("close",clearSocket);
