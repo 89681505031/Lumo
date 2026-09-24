@@ -8,7 +8,19 @@ const mapUser = r => ({
   hasAvatar:Boolean(r.has_avatar ?? r.avatar_bytes),
   avatarVersion:r.avatar_updated_at?.toISOString?.() || r.avatar_updated_at || ""
 });
-const mapMessage = r => ({ id:r.id, from:r.sender_id, to:r.recipient_id, text:r.text, createdAt:r.created_at?.toISOString?.() || r.created_at, deliveredAt:r.delivered_at?.toISOString?.() || r.delivered_at || null, readAt:r.read_at?.toISOString?.() || r.read_at || null, clientMessageId:r.client_message_id || null });
+const mapMessage = r => ({
+  id:r.id,
+  from:r.sender_id,
+  to:r.recipient_id,
+  text:r.text,
+  createdAt:r.created_at?.toISOString?.() || r.created_at,
+  deliveredAt:r.delivered_at?.toISOString?.() || r.delivered_at || null,
+  readAt:r.read_at?.toISOString?.() || r.read_at || null,
+  clientMessageId:r.client_message_id || null,
+  replyToMessageId:r.reply_to_message_id || null,
+  replyPreviewText:r.reply_preview_text || null,
+  replyPreviewFrom:r.reply_preview_from || null
+});
 
 export const postgresStore = {
   enabled: hasDatabase,
@@ -79,20 +91,63 @@ export const postgresStore = {
     };
   },
   async messages(me,peer) {
-    const r=await dbQuery("select * from messages where (sender_id=$1 and recipient_id=$2) or (sender_id=$2 and recipient_id=$1) order by created_at",[me,peer]);
+    const r=await dbQuery(
+      `select m.*, reply.text as reply_preview_text, reply.sender_id as reply_preview_from
+       from messages m
+       left join messages reply on reply.id=m.reply_to_message_id
+       where (m.sender_id=$1 and m.recipient_id=$2)
+          or (m.sender_id=$2 and m.recipient_id=$1)
+       order by m.created_at`,
+      [me,peer]
+    );
     return r.rows.map(mapMessage);
   },
+  async replyTarget(userId,peerId,messageId) {
+    const r=await dbQuery(
+      `select id,text,sender_id from messages
+       where id=$1 and (
+         (sender_id=$2 and recipient_id=$3)
+         or (sender_id=$3 and recipient_id=$2)
+       )`,
+      [messageId,userId,peerId]
+    );
+    const row=r.rows[0];
+    return row ? {id:row.id,text:row.text,from:row.sender_id} : null;
+  },
   async saveMessage(m) {
+    const replyTo=m.replyToMessageId || null;
     if(m.clientMessageId){
-      const inserted=await dbQuery(`insert into messages(id,sender_id,recipient_id,text,created_at,delivered_at,read_at,client_message_id) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict (sender_id,client_message_id) where client_message_id is not null do nothing returning *`,[m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt,m.clientMessageId]);
+      const inserted=await dbQuery(
+        `insert into messages(
+          id,sender_id,recipient_id,text,created_at,delivered_at,read_at,
+          client_message_id,reply_to_message_id
+        ) values($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        on conflict (sender_id,client_message_id)
+          where client_message_id is not null do nothing
+        returning *`,
+        [m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt,m.clientMessageId,replyTo]
+      );
       if(inserted.rows[0]) return {message:mapMessage(inserted.rows[0]),inserted:true};
-      const existing=await dbQuery("select * from messages where sender_id=$1 and client_message_id=$2",[m.from,m.clientMessageId]);
+      const existing=await dbQuery(
+        "select * from messages where sender_id=$1 and client_message_id=$2",
+        [m.from,m.clientMessageId]
+      );
       const row=existing.rows[0];
-      if(!row || row.recipient_id!==m.to || row.text!==m.text){const error=new Error("client_message_id_conflict");error.code="CLIENT_MESSAGE_ID_CONFLICT";throw error;}
+      if(!row || row.recipient_id!==m.to || row.text!==m.text ||
+         (row.reply_to_message_id || null)!==replyTo){
+        const error=new Error("client_message_id_conflict");
+        error.code="CLIENT_MESSAGE_ID_CONFLICT";
+        throw error;
+      }
       return {message:mapMessage(row),inserted:false};
     }
-    await dbQuery("insert into messages(id,sender_id,recipient_id,text,created_at,delivered_at,read_at) values($1,$2,$3,$4,$5,$6,$7)",[m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt]);
-    return {message:m,inserted:true};
+    const inserted=await dbQuery(
+      `insert into messages(
+        id,sender_id,recipient_id,text,created_at,delivered_at,read_at,reply_to_message_id
+      ) values($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
+      [m.id,m.from,m.to,m.text,m.createdAt,m.deliveredAt,m.readAt,replyTo]
+    );
+    return {message:mapMessage(inserted.rows[0]),inserted:true};
   },
   // Only direct-message participants may react. No lookup ever returns an
   // unrelated user's message, including when the caller knows its UUID.
