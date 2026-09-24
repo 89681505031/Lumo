@@ -202,7 +202,13 @@ private fun callErrorText(error:Throwable)=when(error){
  * remains opt-in inside the separate audio/video controls after acceptance.
  */
 @Composable
-fun LumoCallsLab(token:String,me:User,initialQuery:String="",back:()->Unit){
+fun LumoCallsLab(
+    token:String,
+    me:User,
+    initialQuery:String="",
+    initialAutoKind:String?=null,
+    back:()->Unit
+){
     val scope=rememberCoroutineScope()
     var supported by remember(token){mutableStateOf<Boolean?>(null)}
     var calls by remember(token){mutableStateOf<List<LumoCall>>(emptyList())}
@@ -212,6 +218,7 @@ fun LumoCallsLab(token:String,me:User,initialQuery:String="",back:()->Unit){
     var query by remember(initialQuery){mutableStateOf(initialQuery)}
     var refresh by remember{mutableIntStateOf(0)}
     var activeMediaId by remember(token){mutableStateOf<String?>(null)}
+    var autoStarted by remember(initialQuery,initialAutoKind){mutableStateOf(false)}
 
     LaunchedEffect(token,refresh){
         while(true){
@@ -243,6 +250,34 @@ fun LumoCallsLab(token:String,me:User,initialQuery:String="",back:()->Unit){
                 withContext(Dispatchers.IO){Api.users(token,query.trim())}
             }.onSuccess{people=it.filter{u->u.id!=me.id}}
              .onFailure{error=callErrorText(it)}
+        }
+    }
+
+    // A tap on the chat header's audio/video button is an explicit call action.
+    // After the user list resolves the exact peer, place that invitation once.
+    LaunchedEffect(token,supported,initialQuery,initialAutoKind,people){
+        if(
+            supported==true &&
+            !autoStarted &&
+            initialAutoKind in listOf("audio","video") &&
+            initialQuery.isNotBlank()
+        ){
+            val person=people.firstOrNull{
+                it.username.equals(initialQuery.trim(),ignoreCase=true)
+            }
+            if(person!=null){
+                autoStarted=true
+                busy="auto-"+person.id
+                error=""
+                runCatching{
+                    withContext(Dispatchers.IO){
+                        Api.callClient.invite(token,person.id,requireNotNull(initialAutoKind))
+                    }
+                }.onSuccess{updated->
+                    calls=(listOf(updated)+calls.filterNot{it.id==updated.id})
+                }.onFailure{error=callErrorText(it)}
+                busy=null
+            }
         }
     }
 

@@ -66,6 +66,7 @@ class MainActivity:ComponentActivity(){
  var viewingGroups by remember{mutableStateOf(false)}
  var viewingCalls by remember{mutableStateOf(false)}
  var callQuery by remember{mutableStateOf("")}
+ var callAutoKind by remember{mutableStateOf<String?>(null)}
  var viewingAi by remember{mutableStateOf(false)}
  var aiDraft by remember{mutableStateOf("")}
  var logoutNonce by remember{mutableIntStateOf(0)}
@@ -96,13 +97,13 @@ class MainActivity:ComponentActivity(){
    token!!,me!!,
    {peer=it},
    {viewingGroups=true},
-   {callQuery="";viewingCalls=true},
+   {callQuery="";callAutoKind=null;viewingCalls=true},
    {aiDraft="";viewingAi=true},
    {me=it},privacy
   ){
    PushLifecycle.forgetOnLogout(context);prefs.edit().clear().apply()
    token=null;me=null;peer=null;activeGroup=null
-   viewingGroups=false;viewingCalls=false;callQuery="";viewingAi=false;logoutNonce++
+   viewingGroups=false;viewingCalls=false;callQuery="";callAutoKind=null;viewingAi=false;logoutNonce++
   }
   activeGroup!=null -> GroupRoom(token!!,me!!,activeGroup!!){activeGroup=null}
   viewingGroups -> LumoBackdrop(Modifier.fillMaxSize()){
@@ -111,14 +112,18 @@ class MainActivity:ComponentActivity(){
     GroupsScreen(token!!,me!!){activeGroup=it}
    }
   }
-  viewingCalls -> LumoCallsLab(token!!,me!!,initialQuery=callQuery){
+  viewingCalls -> LumoCallsLab(
+   token!!,me!!,initialQuery=callQuery,initialAutoKind=callAutoKind
+  ){
    viewingCalls=false
    callQuery=""
+   callAutoKind=null
   }
   viewingAi -> LumoAiScreen(token!!,initialDraft=aiDraft){aiDraft="";viewingAi=false}
   else -> Chat(
    token!!,me!!,peer!!,
-   openCalls={callQuery=peer!!.username;viewingCalls=true},
+   openAudioCall={callQuery=peer!!.username;callAutoKind="audio";viewingCalls=true},
+   openVideoCall={callQuery=peer!!.username;callAutoKind="video";viewingCalls=true},
    askAi={text->aiDraft=("Помоги понять это сообщение:\n“"+text.take(1200)+"”");viewingAi=true},
    back={peer=null}
   )
@@ -764,7 +769,8 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
 
 @Composable fun Chat(
  token:String,me:User,peer:User,
- openCalls:()->Unit,
+ openAudioCall:()->Unit,
+ openVideoCall:()->Unit,
  askAi:(String)->Unit,
  back:()->Unit
 ){
@@ -1075,8 +1081,17 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       Text("@"+peer.username,style=MaterialTheme.typography.labelMedium,
        color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
      }
-     TextButton(onClick=openCalls,contentPadding=PaddingValues(horizontal=9.dp)){
-      Text("☎",color=LumoCyan,style=MaterialTheme.typography.titleLarge)
+     TextButton(
+      onClick=openAudioCall,
+      contentPadding=PaddingValues(horizontal=7.dp)
+     ){
+      Text("📞",color=LumoCyan,style=MaterialTheme.typography.titleLarge)
+     }
+     TextButton(
+      onClick=openVideoCall,
+      contentPadding=PaddingValues(horizontal=7.dp)
+     ){
+      Text("🎥",color=LumoPink,style=MaterialTheme.typography.titleLarge)
      }
      if(messageSearchEnabled){
       TextButton(onClick={
