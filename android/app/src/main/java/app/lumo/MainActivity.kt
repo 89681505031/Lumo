@@ -707,7 +707,44 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
   }
  }
  val msgs=remember{mutableStateListOf<Msg>()};var input by remember{mutableStateOf("")};var ws by remember{mutableStateOf<WebSocket?>(null)};var socketGeneration by remember{mutableIntStateOf(0)};var connected by remember{mutableStateOf(false)};var socketError by remember{mutableStateOf("")};var historyError by remember{mutableStateOf(false)};val pending=remember{mutableStateListOf<PendingMessage>().apply{val a=runCatching{JSONArray(queuePrefs.getString(queueKey,"[]"))}.getOrNull();if(a!=null)for(i in 0 until a.length()){val o=a.optJSONObject(i);if(o!=null){val id=o.optString("clientMessageId");val text=o.optString("text");if(id.isNotBlank()&&text.isNotBlank())add(PendingMessage(id,text))}else{val text=a.optString(i);if(text.isNotBlank())add(PendingMessage(java.util.UUID.randomUUID().toString(),text))}}}}
- fun savePending(){val a=JSONArray();pending.forEach{a.put(JSONObject().put("clientMessageId",it.clientMessageId).put("text",it.text))};queuePrefs.edit().putString(queueKey,a.toString()).apply()}
+ fun savePending(){
+  val snapshot=pending.toList()
+  val encrypted=runCatching{
+   LumoOfflineStore.savePending(context,me.id,peer.id,snapshot)
+  }.isSuccess
+  if(encrypted){
+   queuePrefs.edit().remove(queueKey).apply()
+  }else{
+   // Reliability fallback for a rare Keystore/storage failure. Existing app
+   // versions already understand this local legacy queue and can retry it.
+   val a=JSONArray()
+   snapshot.forEach{
+    a.put(JSONObject()
+     .put("clientMessageId",it.clientMessageId)
+     .put("text",it.text))
+   }
+   queuePrefs.edit().putString(queueKey,a.toString()).apply()
+  }
+ }
+ LaunchedEffect(me.id,peer.id){
+  val encrypted=runCatching{
+   kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+    LumoOfflineStore.loadPending(context,me.id,peer.id)
+   }
+  }.getOrDefault(emptyList())
+  if(encrypted.isNotEmpty()){
+   pending.clear();pending.addAll(encrypted)
+   queuePrefs.edit().remove(queueKey).apply()
+  }else if(pending.isNotEmpty()){
+   val legacySnapshot=pending.toList()
+   val migrated=runCatching{
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+     LumoOfflineStore.savePending(context,me.id,peer.id,legacySnapshot)
+    }
+   }.isSuccess
+   if(migrated)queuePrefs.edit().remove(queueKey).apply()
+  }
+ }
  fun persistHistory(){
   val snapshot=msgs.toList()
   scope.launch{
