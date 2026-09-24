@@ -919,6 +919,13 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
          }
         }
         msgs.clear();msgs.addAll(updated)
+        searchResults=searchResults.map{m->
+         when{
+          m.id==changed.id->changed
+          m.replyToMessageId==changed.id->m.copy(replyPreviewText=changed.text.take(240))
+          else->m
+         }
+        }
         persistHistory()
         editTarget=null
        }.onFailure{actionError="Не удалось изменить сообщение. Проверь соединение."}
@@ -958,6 +965,9 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
          }
         }
         msgs.clear();msgs.addAll(updated)
+        searchResults=searchResults.filterNot{it.id==changed.id}.map{m->
+         if(m.replyToMessageId==changed.id)m.copy(replyPreviewText="Сообщение удалено") else m
+        }
         reactions=reactions.filterNot{it.messageId==changed.id}
         if(replyTarget?.id==changed.id)replyTarget=null
         persistHistory()
