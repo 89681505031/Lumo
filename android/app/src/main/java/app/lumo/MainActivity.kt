@@ -42,11 +42,11 @@ import org.json.JSONObject
 import kotlinx.coroutines.launch
 
 data class User(val id:String,val username:String,val displayName:String,val bio:String="",val bioSupported:Boolean=false,val hasAvatar:Boolean=false,val avatarVersion:String="")
-data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="",val attachmentId:String="")
+data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="",val attachmentId:String="",val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="")
 data class Conversation(val peer:User,val lastMessage:String,val lastAt:String="")
 data class UpdateInfo(val versionCode:Int,val downloadUrl:String)
 data class Receipt(val messageId:String,val deliveredAt:String,val readAt:String)
-data class PendingMessage(val clientMessageId:String,val text:String)
+data class PendingMessage(val clientMessageId:String,val text:String,val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="")
 private fun nullableJsonText(o:JSONObject,key:String):String=if(o.isNull(key))"" else o.optString(key)
 class SessionExpiredException:Exception("Сессия недействительна")
 
@@ -705,7 +705,10 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    deliveredAt=old.deliveredAt.ifBlank{m.deliveredAt},
    readAt=old.readAt.ifBlank{m.readAt},
    clientMessageId=m.clientMessageId.ifBlank{old.clientMessageId},
-   attachmentId=m.attachmentId.ifBlank{old.attachmentId}
+   attachmentId=m.attachmentId.ifBlank{old.attachmentId},
+   replyToMessageId=m.replyToMessageId.ifBlank{old.replyToMessageId},
+   replyPreviewText=m.replyPreviewText.ifBlank{old.replyPreviewText},
+   replyPreviewFrom=m.replyPreviewFrom.ifBlank{old.replyPreviewFrom}
   )
  }
  return merged.values.sortedBy{it.createdAt}
@@ -718,6 +721,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  var replyTarget by remember(peer.id){mutableStateOf<Msg?>(null)}
  var reactionsEnabled by remember(token,peer.id){mutableStateOf(false)}
  var aiEnabled by remember(token,peer.id){mutableStateOf(false)}
+ var linkedRepliesEnabled by remember(token,peer.id){mutableStateOf(false)}
  var reactions by remember(peer.id){mutableStateOf<List<LumoReaction>>(emptyList())}
  var reactionRefresh by remember{mutableIntStateOf(0)}
  var reactionBusy by remember{mutableStateOf(false)}
@@ -731,6 +735,9 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
   aiEnabled=runCatching {
    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){LumoAiApi.enabled(token)}
   }.getOrDefault(false)
+  linkedRepliesEnabled=runCatching {
+   kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.linkedRepliesSupported(token)}
+  }.getOrDefault(false)
  }
  LaunchedEffect(token,peer.id,reactionsEnabled,reactionRefresh) {
   if(reactionsEnabled) while(true) {
@@ -742,7 +749,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    kotlinx.coroutines.delay(12_000)
   }
  }
- val msgs=remember{mutableStateListOf<Msg>()};var input by remember{mutableStateOf("")};var ws by remember{mutableStateOf<WebSocket?>(null)};var socketGeneration by remember{mutableIntStateOf(0)};var connected by remember{mutableStateOf(false)};var socketError by remember{mutableStateOf("")};var historyError by remember{mutableStateOf(false)};val pending=remember{mutableStateListOf<PendingMessage>().apply{val a=runCatching{JSONArray(queuePrefs.getString(queueKey,"[]"))}.getOrNull();if(a!=null)for(i in 0 until a.length()){val o=a.optJSONObject(i);if(o!=null){val id=o.optString("clientMessageId");val text=o.optString("text");if(id.isNotBlank()&&text.isNotBlank())add(PendingMessage(id,text))}else{val text=a.optString(i);if(text.isNotBlank())add(PendingMessage(java.util.UUID.randomUUID().toString(),text))}}}}
+ val msgs=remember{mutableStateListOf<Msg>()};var input by remember{mutableStateOf("")};var ws by remember{mutableStateOf<WebSocket?>(null)};var socketGeneration by remember{mutableIntStateOf(0)};var connected by remember{mutableStateOf(false)};var socketError by remember{mutableStateOf("")};var historyError by remember{mutableStateOf(false)};val pending=remember{mutableStateListOf<PendingMessage>().apply{val a=runCatching{JSONArray(queuePrefs.getString(queueKey,"[]"))}.getOrNull();if(a!=null)for(i in 0 until a.length()){val o=a.optJSONObject(i);if(o!=null){val id=o.optString("clientMessageId");val text=o.optString("text");if(id.isNotBlank()&&text.isNotBlank())add(PendingMessage(id,text,o.optString("replyToMessageId"),o.optString("replyPreviewText"),o.optString("replyPreviewFrom")))}else{val text=a.optString(i);if(text.isNotBlank())add(PendingMessage(java.util.UUID.randomUUID().toString(),text))}}}}
  fun savePending(){
   val snapshot=pending.toList()
   val encrypted=runCatching{
@@ -757,7 +764,10 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    snapshot.forEach{
     a.put(JSONObject()
      .put("clientMessageId",it.clientMessageId)
-     .put("text",it.text))
+     .put("text",it.text)
+     .put("replyToMessageId",it.replyToMessageId)
+     .put("replyPreviewText",it.replyPreviewText)
+     .put("replyPreviewFrom",it.replyPreviewFrom))
    }
    queuePrefs.edit().putString(queueKey,a.toString()).apply()
   }
@@ -805,7 +815,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  }
  DisposableEffect(peer.id){
   scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{fresh->historyError=false;networkHistoryLoaded=true;showingCachedHistory=false;val merged=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(merged);persistHistory();val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}}
-  fun syncHistory(){scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{fresh->historyError=false;networkHistoryLoaded=true;showingCachedHistory=false;val byId=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(byId);persistHistory();val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->scope.launch{if(m.from==peer.id||m.to==peer.id){if(m.from==me.id&&m.clientMessageId.isNotBlank()){pending.removeAll{it.clientMessageId==m.clientMessageId};savePending()};val existing=msgs.indexOfFirst{it.id==m.id};if(existing>=0){msgs[existing]=mergeChatMessages(listOf(msgs[existing]),listOf(m)).first()}else msgs.add(m);persistHistory();if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}}},{r->scope.launch{val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=old.deliveredAt.ifBlank{r.deliveredAt},readAt=old.readAt.ifBlank{r.readAt});persistHistory()}}},{e->scope.launch{socketError=when(e){"service_unavailable"->"Сервер временно недоступен. Переподключаемся…";"recipient_not_found"->"Получатель больше не найден.";"message_too_long"->"Сообщение слишком длинное.";"empty_message"->"Пустое сообщение не отправлено.";"client_message_id_conflict"->"Конфликт повторной отправки. Сообщение сохранено.";"invalid_client_message_id"->"Ошибка идентификатора сообщения.";"invalid_recipient_id"->"Некорректный получатель.";"invalid_server_message"->"Получен некорректный ответ сервера.";"cannot_message_self"->"Нельзя отправить сообщение самому себе." ;else->"Не удалось отправить сообщение"};if(e=="service_unavailable"){connected=false;ws?.close(1012,"retry")}}},{scope.launch{connected=true;socketError="";for(p in pending.toList()){val sent=ws?.send(JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId).toString())==true;if(!sent){connected=false;ws?.close(1012,"retry");break}};syncHistory()}},{scope.launch{if(generation==socketGeneration){connected=false;kotlinx.coroutines.delay(2000);if(generation==socketGeneration)connect()}}})};connect()
+  fun syncHistory(){scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{fresh->historyError=false;networkHistoryLoaded=true;showingCachedHistory=false;val byId=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(byId);persistHistory();val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->scope.launch{if(m.from==peer.id||m.to==peer.id){if(m.from==me.id&&m.clientMessageId.isNotBlank()){pending.removeAll{it.clientMessageId==m.clientMessageId};savePending()};val existing=msgs.indexOfFirst{it.id==m.id};if(existing>=0){msgs[existing]=mergeChatMessages(listOf(msgs[existing]),listOf(m)).first()}else msgs.add(m);persistHistory();if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}}},{r->scope.launch{val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=old.deliveredAt.ifBlank{r.deliveredAt},readAt=old.readAt.ifBlank{r.readAt});persistHistory()}}},{e->scope.launch{socketError=when(e){"service_unavailable"->"Сервер временно недоступен. Переподключаемся…";"recipient_not_found"->"Получатель больше не найден.";"message_too_long"->"Сообщение слишком длинное.";"empty_message"->"Пустое сообщение не отправлено.";"client_message_id_conflict"->"Конфликт повторной отправки. Сообщение сохранено.";"invalid_client_message_id"->"Ошибка идентификатора сообщения.";"invalid_recipient_id"->"Некорректный получатель.";"invalid_reply_message_id"->"Некорректный ответ на сообщение.";"reply_message_not_found"->"Исходное сообщение для ответа больше недоступно.";"invalid_server_message"->"Получен некорректный ответ сервера.";"cannot_message_self"->"Нельзя отправить сообщение самому себе." ;else->"Не удалось отправить сообщение"};if(e=="service_unavailable"){connected=false;ws?.close(1012,"retry")}}},{scope.launch{connected=true;socketError="";for(p in pending.toList()){val payload=JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId);if(p.replyToMessageId.isNotBlank())payload.put("replyToMessageId",p.replyToMessageId);val sent=ws?.send(payload.toString())==true;if(!sent){connected=false;ws?.close(1012,"retry");break}};syncHistory()}},{scope.launch{if(generation==socketGeneration){connected=false;kotlinx.coroutines.delay(2000);if(generation==socketGeneration)connect()}}})};connect()
   onDispose{socketGeneration++;ws?.close(1000,"bye")}
  }
  // A message can be replied to or explicitly copied to another contact on
@@ -940,7 +950,27 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
        Column(horizontalAlignment=if(own)Alignment.End else Alignment.Start){
         Box(Modifier.widthIn(max=290.dp).lumoBubble(own).padding(horizontal=14.dp,vertical=10.dp)){
          Column {
-          if(m.text.isNotBlank())Text(m.text,color=Color.White)
+          if(m.replyToMessageId.isNotBlank()){
+          Box(
+           Modifier.fillMaxWidth().lumoGlass(14).padding(horizontal=9.dp,vertical=7.dp)
+          ){
+           Column{
+            Text(
+             if(m.replyPreviewFrom==me.id)"Вы" else peer.displayName,
+             color=LumoCyan,style=MaterialTheme.typography.labelMedium,
+             fontWeight=FontWeight.SemiBold
+            )
+            Text(
+             m.replyPreviewText.ifBlank{"Сообщение недоступно"},
+             color=Color.White.copy(alpha=.82f),
+             style=MaterialTheme.typography.bodySmall,
+             maxLines=2
+            )
+           }
+          }
+          Spacer(Modifier.height(7.dp))
+         }
+         if(m.text.isNotBlank())Text(m.text,color=Color.White)
          if(m.attachmentId.isNotBlank())MediaAttachmentButton(token,m.attachmentId)
          Spacer(Modifier.height(5.dp))
          Row(
@@ -996,6 +1026,17 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
        Box(Modifier.widthIn(max=290.dp).lumoBubble(true).padding(horizontal=14.dp,vertical=10.dp)){
         Column{
+         if(p.replyToMessageId.isNotBlank()){
+          Box(Modifier.fillMaxWidth().lumoGlass(14).padding(8.dp)){
+           Text(
+            p.replyPreviewText.ifBlank{"Ответ на сообщение"},
+            color=Color.White.copy(alpha=.82f),
+            style=MaterialTheme.typography.bodySmall,
+            maxLines=2
+           )
+          }
+          Spacer(Modifier.height(6.dp))
+         }
          Text(p.text,color=Color.White)
          Text("Отправляется…",color=Color.White.copy(alpha=.7f),
           style=MaterialTheme.typography.labelSmall)
@@ -1039,24 +1080,30 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
      Spacer(Modifier.width(7.dp))
      LumoNeonButton(
       text="➤",
-      enabled=input.isNotBlank() && (
-       input.trim().length+if(replyTarget!=null)150 else 0
-      )<=4000,
+      enabled=input.isNotBlank() && input.trim().length<=4000,
       modifier=Modifier.width(56.dp),
       onClick={
-       val quote=replyTarget?.let{
+       val original=replyTarget
+       val useLinked=linkedRepliesEnabled && original!=null
+       val quote=if(!useLinked)original?.let{
         "↪ "+(if(it.text.isBlank())"Вложение" else it.text)
          .replace("\n"," ").take(120)+"\n"
-       }.orEmpty()
+       }.orEmpty() else ""
        val text=quote+input.trim()
        if(text.isNotBlank()&&text.length<=4000){
-        val p=PendingMessage(java.util.UUID.randomUUID().toString(),text)
+        val p=PendingMessage(
+         clientMessageId=java.util.UUID.randomUUID().toString(),
+         text=text,
+         replyToMessageId=if(useLinked)original?.id.orEmpty() else "",
+         replyPreviewText=if(useLinked)(original?.text?.ifBlank{"Вложение"}?:"").take(240) else "",
+         replyPreviewFrom=if(useLinked)original?.from.orEmpty() else ""
+        )
         pending.add(p);savePending()
         if(connected){
-         val sent=ws?.send(
-          JSONObject().put("type","message").put("to",peer.id)
-           .put("text",p.text).put("clientMessageId",p.clientMessageId).toString()
-         )==true
+         val payload=JSONObject().put("type","message").put("to",peer.id)
+          .put("text",p.text).put("clientMessageId",p.clientMessageId)
+         if(p.replyToMessageId.isNotBlank())payload.put("replyToMessageId",p.replyToMessageId)
+         val sent=ws?.send(payload.toString())==true
          if(!sent){connected=false;ws?.close(1012,"retry")}
         }
         input=""
@@ -1102,8 +1149,19 @@ object Api{
  fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
  fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful){val reason=when(x.code){401->"Сессия истекла. Выйди из аккаунта и войди снова.";429->"Слишком много запросов. Подожди немного.";503->"Сервер или база данных временно недоступны.";else->"Ошибка сервера HTTP "+x.code};error(reason)};val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"),o.optString("lastAt"))}}}
  fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/messages/"+p).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("История: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{msg(a.getJSONObject(it))}}}
+ fun linkedRepliesSupported(t:String):Boolean{
+  val request=Request.Builder().url(HTTP+"/api/messages/capabilities")
+   .header("Authorization","Bearer "+t).get().build()
+  c.newCall(request).execute().use{response->
+   if(response.code==401)throw SessionExpiredException()
+   if(!response.isSuccessful)return false
+   return runCatching{
+    JSONObject(response.body?.string().orEmpty()).optBoolean("linkedReplies",false)
+   }.getOrDefault(false)
+  }
+ }
  fun sendMessage(t:String,to:String,p:PendingMessage):Msg{
-  val body=JSONObject().put("to",to).put("text",p.text).put("clientMessageId",p.clientMessageId)
+  val body=JSONObject().put("to",to).put("text",p.text).put("clientMessageId",p.clientMessageId);if(p.replyToMessageId.isNotBlank())body.put("replyToMessageId",p.replyToMessageId)
   val request=Request.Builder().url(HTTP+"/api/messages").header("Authorization","Bearer "+t).post(body.toString().toRequestBody("application/json".toMediaType())).build()
   c.newCall(request).execute().use{response->if(!response.isSuccessful)error("Отправка: "+response.code);return msg(JSONObject(response.body!!.string()))}
  }
@@ -1116,5 +1174,5 @@ object Api{
  fun latestRelease():UpdateInfo{val r=Request.Builder().url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest").header("Accept","application/vnd.github+json").build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Обновление: "+x.code);val o=JSONObject(x.body!!.string());val code=Regex("versionCode=(\\d+)").find(o.optString("body"))?.groupValues?.get(1)?.toIntOrNull()?:0;val a=o.getJSONArray("assets");for(i in 0 until a.length()){val asset=a.getJSONObject(i);if(asset.optString("name")=="app-debug.apk" || asset.optString("name")=="app-release.apk" || asset.optString("label")=="Lumo.apk")return UpdateInfo(code,asset.getString("browser_download_url"))};error("APK не найден")}}
  fun socket(t:String,onMessage:(Msg)->Unit,onReceipt:(Receipt)->Unit,onError:(String)->Unit,onReady:()->Unit,onDisconnected:()->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS).header("Authorization","Bearer "+t).build(),object:WebSocketListener(){override fun onOpen(w:WebSocket,response:Response){};override fun onMessage(w:WebSocket,s:String){runCatching{val o=JSONObject(s);when(o.optString("type")){"ready"->onReady();"message"->onMessage(msg(o.getJSONObject("message")));"receipt"->onReceipt(Receipt(o.getString("messageId"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt")));"error"->onError(o.optString("error"));else->Unit}}.onFailure{onError("invalid_server_message")}};override fun onClosed(w:WebSocket,code:Int,reason:String)=onDisconnected();override fun onFailure(w:WebSocket,t:Throwable,response:Response?)=onDisconnected()})}
  private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"),nullableJsonText(o,"bio"),o.has("bio"),o.optBoolean("hasAvatar",false),nullableJsonText(o,"avatarVersion"))
- private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"),nullableJsonText(o,"attachmentId"))
+ private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"),nullableJsonText(o,"attachmentId"),nullableJsonText(o,"replyToMessageId"),nullableJsonText(o,"replyPreviewText"),nullableJsonText(o,"replyPreviewFrom"))
 }
