@@ -17,6 +17,7 @@ test("private document attachments are allowlisted, signed, participant-only and
   let expectedUploadKey=null;
   let expectedMime="application/pdf";
   let expectedBytes=Buffer.from("%PDF-1.4\nLumo private document test\n%%EOF");
+  const cleanupSecret="media-cleanup-test-secret-over-thirty-two-chars";
 
   storage.on("request",(req,res)=>{
     const path=new URL(req.url,"http://localhost").pathname;
@@ -54,6 +55,11 @@ test("private document attachments are allowlisted, signed, participant-only and
       });
       return res.end(item.bytes);
     }
+    if(req.method==="DELETE"){
+      uploaded.delete(key);
+      res.writeHead(204,{"x-amz-request-id":"delete-test"});
+      return res.end();
+    }
     res.writeHead(404);res.end();
   });
   await new Promise(resolve=>storage.listen(0,"127.0.0.1",resolve));
@@ -79,7 +85,8 @@ test("private document attachments are allowlisted, signed, participant-only and
       MEDIA_REGION:"us-east-1",
       MEDIA_ACCESS_KEY_ID:"test-key",
       MEDIA_SECRET_ACCESS_KEY:"test-secret",
-      MEDIA_ENDPOINT:`http://127.0.0.1:${storagePort}`
+      MEDIA_ENDPOINT:`http://127.0.0.1:${storagePort}`,
+      CRON_SECRET:cleanupSecret
     }
   });
   const db=new pg.Pool({connectionString:databaseUrl,ssl:false});
@@ -413,6 +420,63 @@ test("private document attachments are allowlisted, signed, participant-only and
     assert.equal((await request(
       "/api/media/"+groupInit.json.assetId+"/download","GET",alice.token
     )).status,200,"the uploader keeps owner access pending retention cleanup");
+
+    // Outstanding unclaimed reservations are bounded per account. This protects
+    // a private bucket from repeated presign requests that are never committed.
+    assert.equal((await request("/internal/media-cleanup")).status,401);
+    assert.equal((await request(
+      "/internal/media-cleanup","GET","wrong-secret"
+    )).status,401);
+
+    const reservedIds=[];
+    for(let i=0;i<8;i++){
+      const reservation=await request("/api/media/init","POST",stranger.token,{
+        to:alice.user.id,
+        mime:"text/plain",
+        bytes:1,
+        filename:"quota-"+i+".txt"
+      });
+      assert.equal(reservation.status,201);
+      reservedIds.push(reservation.json.assetId);
+    }
+    const overQuota=await request("/api/media/init","POST",stranger.token,{
+      to:alice.user.id,
+      mime:"text/plain",
+      bytes:1,
+      filename:"quota-overflow.txt"
+    });
+    assert.equal(overQuota.status,429);
+    assert.equal(overQuota.json.error,"media_quota_exceeded");
+
+    // Expired unclaimed reservations are safe to remove: send/complete refuse
+    // them after expiry, and DeleteObject is idempotent even if upload never ran.
+    await db.query(
+      `update media_assets set expires_at=now()-interval '2 minutes'
+       where id=any($1::uuid[])`,
+      [reservedIds]
+    );
+    const cleanup=await request(
+      "/internal/media-cleanup","GET",cleanupSecret
+    );
+    assert.equal(cleanup.status,200);
+    assert.equal(cleanup.json.deleted,8);
+    assert.equal(cleanup.json.failed,0);
+    assert.equal(
+      Number((await db.query(
+        "select count(*) from media_assets where id=any($1::uuid[])",
+        [reservedIds]
+      )).rows[0].count),
+      0
+    );
+
+    const afterCleanup=await request("/api/media/init","POST",stranger.token,{
+      to:alice.user.id,
+      mime:"text/plain",
+      bytes:1,
+      filename:"quota-reset.txt"
+    });
+    assert.equal(afterCleanup.status,201,
+      "cleanup releases outstanding-reservation capacity");
   }finally{
     server.kill("SIGTERM");
     if(server.exitCode===null)await new Promise(resolve=>{
