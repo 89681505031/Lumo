@@ -180,6 +180,99 @@ export async function initDatabase() {
     await pool.query(`alter table chat_group_messages add constraint chat_group_messages_reply_to_fk foreign key (reply_to_message_id) references chat_group_messages(id) on delete set null`);
   }
   await pool.query(`create index if not exists chat_group_messages_reply_idx on chat_group_messages(reply_to_message_id) where reply_to_message_id is not null`);
+  await pool.query(`create table if not exists push_devices (
+    session_token uuid primary key references sessions(token) on delete cascade,
+    user_id uuid not null references users(id) on delete cascade,
+    token_hash char(64) unique not null,
+    fcm_token text not null,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  )`);
+  await pool.query(`create index if not exists push_devices_user_idx on push_devices(user_id)`);
+
+  // Durable, session-scoped and content-free notification jobs. The target
+  // may be a direct message OR a private-group message, never both.
+  await pool.query(`create table if not exists push_outbox (
+    id bigserial primary key,
+    message_id uuid references messages(id) on delete cascade,
+    group_message_id uuid references chat_group_messages(id) on delete cascade,
+    session_token uuid not null references sessions(token) on delete cascade,
+    recipient_id uuid not null references users(id) on delete cascade,
+    status varchar(16) not null default 'pending'
+      check(status in ('pending','sent','dropped')),
+    attempts int not null default 0,
+    available_at timestamptz not null default now(),
+    lease_until timestamptz,
+    processed_at timestamptz,
+    created_at timestamptz not null default now(),
+    last_error_code varchar(40)
+  )`);
+  // Compatibility with the earlier direct-only staging schema.
+  await pool.query(`alter table push_outbox alter column message_id drop not null`);
+  await pool.query(`alter table push_outbox add column if not exists group_message_id uuid`);
+  const pushGroupFk=await pool.query(
+    "select 1 from pg_constraint where conname=$1 and conrelid='push_outbox'::regclass",
+    ["push_outbox_group_message_fk"]
+  );
+  if(!pushGroupFk.rowCount){
+    await pool.query(`alter table push_outbox add constraint push_outbox_group_message_fk
+      foreign key(group_message_id) references chat_group_messages(id) on delete cascade`);
+  }
+  const pushTargetCheck=await pool.query(
+    "select 1 from pg_constraint where conname=$1 and conrelid='push_outbox'::regclass",
+    ["push_outbox_target_ck"]
+  );
+  if(!pushTargetCheck.rowCount){
+    await pool.query(`alter table push_outbox add constraint push_outbox_target_ck
+      check ((message_id is null) <> (group_message_id is null))`);
+  }
+  await pool.query(`create unique index if not exists push_outbox_direct_uidx
+    on push_outbox(message_id,session_token) where message_id is not null`);
+  await pool.query(`create unique index if not exists push_outbox_group_uidx
+    on push_outbox(group_message_id,session_token) where group_message_id is not null`);
+  await pool.query(`create index if not exists push_outbox_claim_idx
+    on push_outbox(available_at,id) where status='pending'`);
+
+  await pool.query(`create or replace function lumo_enqueue_private_push()
+    returns trigger as $
+    begin
+      insert into push_outbox(message_id,session_token,recipient_id)
+      select new.id,p.session_token,new.recipient_id
+      from push_devices p
+      join sessions s
+        on s.token=p.session_token
+       and s.user_id=p.user_id
+       and s.expires_at>now()
+      where p.user_id=new.recipient_id
+      on conflict do nothing;
+      return new;
+    end;
+    $ language plpgsql`);
+  await pool.query(`create or replace trigger lumo_message_push_outbox
+    after insert on messages
+    for each row execute function lumo_enqueue_private_push()`);
+
+  await pool.query(`create or replace function lumo_enqueue_private_group_push()
+    returns trigger as $
+    begin
+      insert into push_outbox(group_message_id,session_token,recipient_id)
+      select new.id,p.session_token,m.user_id
+      from chat_group_members m
+      join push_devices p on p.user_id=m.user_id
+      join sessions s
+        on s.token=p.session_token
+       and s.user_id=p.user_id
+       and s.expires_at>now()
+      where m.group_id=new.group_id
+        and m.joined_at<=new.created_at
+        and m.user_id<>new.sender_id
+      on conflict do nothing;
+      return new;
+    end;
+    $ language plpgsql`);
+  await pool.query(`create or replace trigger lumo_group_message_push_outbox
+    after insert on chat_group_messages
+    for each row execute function lumo_enqueue_private_group_push()`);
   return true;
 }
 export async function dbHealth() {
@@ -202,6 +295,8 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='chat_group_messages' and column_name='deleted_at') as group_deleted_column,
     to_regclass('chat_group_message_reactions') as group_reactions_table,
+    to_regclass('push_devices') as push_devices_table,
+    to_regclass('push_outbox') as push_outbox_table,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='chat_group_messages' and column_name='media_id') as group_media_column,
     exists(select 1 from information_schema.columns
@@ -225,5 +320,5 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.group_reply_column && row.group_edited_column && row.group_deleted_column && row.group_reactions_table && row.group_media_column && row.media_group_column && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.group_reply_column && row.group_edited_column && row.group_deleted_column && row.group_reactions_table && row.push_devices_table && row.push_outbox_table && row.group_media_column && row.media_group_column && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
 }
