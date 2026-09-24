@@ -82,14 +82,22 @@ object LumoAiApi {
 }
 
 @Composable
-fun LumoAiScreen(token:String,back:()->Unit){
+fun LumoAiScreen(token:String,initialDraft:String="",back:()->Unit){
     val scope=rememberCoroutineScope()
     val messages=remember{mutableStateListOf<LumoAiMessage>()}
     var supported by remember(token){mutableStateOf<Boolean?>(null)}
-    var input by remember{mutableStateOf("")}
+    var input by remember(token){mutableStateOf(initialDraft.take(2000))}
+    var draftApplied by remember(token){mutableStateOf(false)}
     var sending by remember{mutableStateOf(false)}
     var errorText by remember{mutableStateOf("")}
     var retry by remember{mutableIntStateOf(0)}
+
+    LaunchedEffect(token,initialDraft){
+        if(!draftApplied && initialDraft.isNotBlank()){
+            input=initialDraft.take(2000)
+            draftApplied=true
+        }
+    }
 
     LaunchedEffect(token,retry){
         supported=runCatching{
@@ -208,6 +216,25 @@ fun LumoAiScreen(token:String,back:()->Unit){
                                         color=MaterialTheme.colorScheme.onSurfaceVariant,
                                         style=MaterialTheme.typography.bodyMedium
                                     )
+                                    Spacer(Modifier.height(14.dp))
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement=Arrangement.spacedBy(8.dp)
+                                    ){
+                                        listOf(
+                                            "Объясни проще",
+                                            "Помоги написать",
+                                            "Переведи"
+                                        ).forEach{hint->
+                                            TextButton(
+                                                onClick={input=hint+": "},
+                                                enabled=!sending
+                                            ){
+                                                Text(hint,color=LumoCyan,
+                                                    style=MaterialTheme.typography.labelMedium)
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }else{
