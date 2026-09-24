@@ -214,6 +214,39 @@ export const groupStore = {
       order by gm.created_at desc,gm.id desc limit 100`,[groupId,userId]);
     return rows.rows.reverse().map(message);
   },
+  async historyPage(userId,groupId,{beforeAt=null,beforeId=null,limit=50}={}) {
+    const membership=await this.membership(userId,groupId);
+    if(!membership)return null;
+    const take=Math.max(1,Math.min(100,Number(limit)||50));
+    const rows=await dbQuery(`
+      select gm.*,
+        case when reply.created_at>=m.joined_at then left(reply.text,240) end as reply_preview_text,
+        case when reply.created_at>=m.joined_at then reply.sender_id end as reply_preview_from
+      from chat_group_members m
+      join chat_group_messages gm on gm.group_id=m.group_id
+        and gm.created_at>=m.joined_at
+      left join chat_group_messages reply
+        on reply.id=gm.reply_to_message_id and reply.group_id=gm.group_id
+      where m.group_id=$1 and m.user_id=$2
+        and (
+          $3::timestamptz is null
+          or gm.created_at<$3::timestamptz
+          or (gm.created_at=$3::timestamptz and gm.id<$4::uuid)
+        )
+      order by gm.created_at desc,gm.id desc
+      limit $5`,
+      [groupId,userId,beforeAt,beforeId,take+1]
+    );
+    const hasMore=rows.rows.length>take;
+    const selected=rows.rows.slice(0,take);
+    const oldest=selected[selected.length-1]||null;
+    return {
+      messages:selected.slice().reverse().map(message),
+      next:hasMore&&oldest
+        ? {createdAt:iso(oldest.created_at),id:oldest.id}
+        : null
+    };
+  },
   async search(userId,groupId,query) {
     const rows=await dbQuery(`
       select gm.*,
