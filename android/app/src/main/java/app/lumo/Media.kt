@@ -120,21 +120,31 @@ private fun selectedDocument(context:Context,uri:Uri):ChosenMedia{
  name=name.take(160).ifBlank{"document"}
  return ChosenMedia(type,name,bytes,uri=uri)
 }
+private data class MediaCapabilityState(
+ val storageReady:Boolean,
+ val uploadsReady:Boolean,
+ val groupAttachmentsReady:Boolean
+)
 private object MediaApi{
  private val client=Api.httpClient
- fun enabled():Boolean{
-  val req=Request.Builder().url(Api.HTTP+"/api/capabilities").build()
+ fun capabilities():MediaCapabilityState{
+  val req=Request.Builder().url(Api.HTTP+"/api/capabilities")
+   .header("Cache-Control","no-store").build()
   client.newCall(req).execute().use{res->
-   if(!res.isSuccessful)return false
-   return JSONObject(res.body?.string().orEmpty()).optBoolean("mediaReady",false)
+   if(!res.isSuccessful)return MediaCapabilityState(false,false,false)
+   val root=JSONObject(res.body?.string().orEmpty())
+   val legacy=root.optBoolean("mediaReady",false)
+   return MediaCapabilityState(
+    storageReady=if(root.has("mediaStorageReady"))
+     root.optBoolean("mediaStorageReady",false) else legacy,
+    uploadsReady=if(root.has("mediaUploadsEnabled"))
+     root.optBoolean("mediaUploadsEnabled",false) else legacy,
+    groupAttachmentsReady=root.optBoolean("groupAttachments",false)
+   )
   }
  }
- fun groupEnabled():Boolean{
-  val req=Request.Builder().url(Api.HTTP+"/api/capabilities").build()
-  client.newCall(req).execute().use{res->
-   if(!res.isSuccessful)return false
-   return JSONObject(res.body?.string().orEmpty()).optBoolean("groupAttachments",false)
-  }
+ fun enabled()=capabilities().uploadsReady
+ fun groupEnabled()=capabilities().groupAttachmentsReady
  }
  private fun authorized(token:String,url:String,method:String,body:JSONObject?=null):JSONObject{
   val b=Request.Builder().url(Api.HTTP+url).header("Authorization","Bearer "+token)
@@ -261,6 +271,7 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
  val prefs=remember{context.getSharedPreferences("lumo_media_pending",Context.MODE_PRIVATE)}
  val key=remember(me.id,peer.id){"pending_"+me.id+"_"+peer.id}
  var available by remember(token){mutableStateOf(false)}
+ var storageReady by remember(token){mutableStateOf(false)}
  var checking by remember(token){mutableStateOf(true)}
  var capabilityRetry by remember(token){mutableIntStateOf(0)}
  var chosen by remember(peer.id){mutableStateOf<ChosenMedia?>(null)}
@@ -352,7 +363,11 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
  }
  LaunchedEffect(token,capabilityRetry){
   checking=true
-  available=runCatching{withContext(Dispatchers.IO){MediaApi.enabled()}}.getOrDefault(false)
+  val caps=runCatching{
+   withContext(Dispatchers.IO){MediaApi.capabilities()}
+  }.getOrDefault(MediaCapabilityState(false,false,false))
+  storageReady=caps.storageReady
+  available=caps.uploadsReady
   checking=false
  }
  val lifecycleHost=context as? LifecycleOwner
@@ -383,7 +398,10 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
    Text("Проверяем доступность медиа…",style=MaterialTheme.typography.bodySmall)
   }else if(!available){
    Text(
-    "Сервер медиа пока не обновлён. Кнопки останутся здесь и включатся после обновления сервера.",
+    if(storageReady)
+     "Приватное медиа-хранилище подключено, но загрузка файлов сейчас выключена на сервере."
+    else
+     "На сервере ещё не подключено приватное медиа-хранилище. Фото, видео, голосовые и документы включатся после его настройки.",
     style=MaterialTheme.typography.bodySmall,
     color=MaterialTheme.colorScheme.onSurfaceVariant
    )
@@ -491,6 +509,8 @@ fun GroupMediaComposer(
  }
  val key=remember(me.id,groupId){"group_media_"+me.id+"_"+groupId}
  var available by remember(token,groupId){mutableStateOf(false)}
+ var storageReady by remember(token,groupId){mutableStateOf(false)}
+ var uploadsReady by remember(token,groupId){mutableStateOf(false)}
  var checking by remember(token,groupId){mutableStateOf(true)}
  var capabilityRetry by remember(token,groupId){mutableIntStateOf(0)}
  var chosen by remember(groupId){mutableStateOf<ChosenMedia?>(null)}
@@ -619,9 +639,12 @@ fun GroupMediaComposer(
 
  LaunchedEffect(token,groupId,capabilityRetry){
   checking=true
-  available=runCatching{
-   withContext(Dispatchers.IO){MediaApi.groupEnabled()}
-  }.getOrDefault(false)
+  val caps=runCatching{
+   withContext(Dispatchers.IO){MediaApi.capabilities()}
+  }.getOrDefault(MediaCapabilityState(false,false,false))
+  storageReady=caps.storageReady
+  uploadsReady=caps.uploadsReady
+  available=caps.groupAttachmentsReady
   checking=false
  }
  val lifecycleHost=context as? LifecycleOwner
@@ -654,7 +677,11 @@ fun GroupMediaComposer(
    LinearProgressIndicator(Modifier.fillMaxWidth(),color=LumoCyan)
   }else if(!available){
    Text(
-    "Медиа группы пока недоступны на сервере.",
+    when{
+     !storageReady->"Для вложений группы ещё не подключено приватное медиа-хранилище."
+     !uploadsReady->"Медиа-хранилище подключено, но загрузка файлов временно выключена."
+     else->"Вложения группы пока недоступны на сервере."
+    },
     style=MaterialTheme.typography.bodySmall,
     color=MaterialTheme.colorScheme.onSurfaceVariant
    )
