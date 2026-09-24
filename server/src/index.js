@@ -64,6 +64,7 @@ async function auth(req, res, next) {
 
 app.get("/live", (_req, res) => res.json({ ok: true, service: "lumo-server" }));
 app.get("/api/capabilities",(_req,res)=>res.json({
+  backendRevision:(process.env.VERCEL_GIT_COMMIT_SHA || process.env.GITHUB_SHA || "local").slice(0,12),
   mediaReady:mediaEnabled,
   mediaStorageReady:mediaReady,
   mediaUploadsEnabled:mediaEnabled,
