@@ -50,3 +50,16 @@ jobs:
         with:
           name: lumo-release-unsigned-apk
           path: android/app/build/outputs/apk/release/app-release-unsigned.apk
+      - name: Package official Android apksigner
+        shell: bash
+        run: |
+          TOOLS_DIR="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -x "$TOOLS_DIR/apksigner"
+          test -f "$TOOLS_DIR/lib/apksigner.jar"
+          mkdir -p /tmp/lumo-apksigner/lib
+          cp "$TOOLS_DIR/apksigner" /tmp/lumo-apksigner/
+          cp "$TOOLS_DIR/lib/apksigner.jar" /tmp/lumo-apksigner/lib/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumo-apksigner-tool
+          path: /tmp/lumo-apksigner
