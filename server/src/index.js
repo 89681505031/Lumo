@@ -13,7 +13,7 @@ import { registerCallCleanup } from "./call-cleanup.js";
 import { registerPushDispatch } from "./push-outbox.js";
 
 if (hasDatabase) { try { await initDatabase(); console.log("Lumo PostgreSQL schema ready"); } catch (error) { console.error("Lumo PostgreSQL initialization failed", error); } }
-const mediaEnabled=mediaReady && process.env.MEDIA_ENABLE_UPLOADS==="true";
+const mediaEnabled=mediaReady && process.env.MEDIA_ENABLE_UPLOADS!=="false";
 
 const app = express();
 app.disable("x-powered-by");
