@@ -371,21 +371,49 @@ app.post("/api/messages", auth, requireDatabase, async (req,res)=>{
   const to=req.body?.to;
   const clientMessageId=req.body?.clientMessageId;
   const messageText=req.body?.text;
-  if(typeof to!=="string" || !uuidPattern.test(to) || to===req.user.id) return res.status(400).json({error:"invalid_recipient_id"});
-  if(typeof clientMessageId!=="string" || !uuidPattern.test(clientMessageId)) return res.status(400).json({error:"invalid_client_message_id"});
-  if(typeof messageText!=="string" || !messageText.trim()) return res.status(400).json({error:"empty_message"});
+  const replyToMessageId=req.body?.replyToMessageId ?? null;
+  if(typeof to!=="string" || !uuidPattern.test(to) || to===req.user.id)
+    return res.status(400).json({error:"invalid_recipient_id"});
+  if(typeof clientMessageId!=="string" || !uuidPattern.test(clientMessageId))
+    return res.status(400).json({error:"invalid_client_message_id"});
+  if(replyToMessageId!==null &&
+     (typeof replyToMessageId!=="string" || !uuidPattern.test(replyToMessageId)))
+    return res.status(400).json({error:"invalid_reply_message_id"});
+  if(typeof messageText!=="string" || !messageText.trim())
+    return res.status(400).json({error:"empty_message"});
   const text=messageText.trim();
-  if(text.length>4000) return res.status(400).json({error:"message_too_long"});
+  if(text.length>4000)return res.status(400).json({error:"message_too_long"});
   try{
-    if(!await postgresStore.userExists(to)) return res.status(404).json({error:"recipient_not_found"});
-    const saved=await postgresStore.saveMessage({id:randomUUID(),from:req.user.id,to,text,createdAt:new Date().toISOString(),deliveredAt:null,readAt:null,clientMessageId});
-    let message=saved.message;
+    if(!await postgresStore.userExists(to))
+      return res.status(404).json({error:"recipient_not_found"});
+    const replyTarget=replyToMessageId
+      ? await postgresStore.replyTarget(req.user.id,to,replyToMessageId)
+      : null;
+    if(replyToMessageId && !replyTarget)
+      return res.status(404).json({error:"reply_message_not_found"});
+    const saved=await postgresStore.saveMessage({
+      id:randomUUID(),from:req.user.id,to,text,
+      createdAt:new Date().toISOString(),deliveredAt:null,readAt:null,
+      clientMessageId,replyToMessageId
+    });
+    let message={
+      ...saved.message,
+      replyPreviewText:replyTarget?.text || saved.message.replyPreviewText || null,
+      replyPreviewFrom:replyTarget?.from || saved.message.replyPreviewFrom || null
+    };
     if((saved.inserted||!message.deliveredAt) && sendTo(to,{type:"message",message})){
-      message=await postgresStore.markMessageDelivered(message.id,to)||message;
+      const delivered=await postgresStore.markMessageDelivered(message.id,to);
+      if(delivered)message={
+        ...delivered,
+        replyToMessageId:message.replyToMessageId,
+        replyPreviewText:message.replyPreviewText,
+        replyPreviewFrom:message.replyPreviewFrom
+      };
     }
     return res.status(saved.inserted?201:200).json(message);
   }catch(error){
-    if(error?.code==="CLIENT_MESSAGE_ID_CONFLICT") return res.status(409).json({error:"client_message_id_conflict"});
+    if(error?.code==="CLIENT_MESSAGE_ID_CONFLICT")
+      return res.status(409).json({error:"client_message_id_conflict"});
     console.error("HTTP message send failed",error);
     return res.status(503).json({error:"service_unavailable"});
   }
@@ -465,16 +493,47 @@ wss.on("connection", async (ws, req) => {
       if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(to))return ws.send(JSON.stringify({type:"error",error:"invalid_recipient_id"}));
       if(to===userId)return ws.send(JSON.stringify({type:"error",error:"cannot_message_self"}));
       const text = String(data.text || "").trim();
-      const clientMessageId = typeof data.clientMessageId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data.clientMessageId) ? data.clientMessageId : null;
+      const clientMessageId = typeof data.clientMessageId === "string" && uuidPattern.test(data.clientMessageId) ? data.clientMessageId : null;
       if (!clientMessageId) return ws.send(JSON.stringify({type:"error",error:"invalid_client_message_id"}));
+      const replyToMessageId=data.replyToMessageId==null?null:data.replyToMessageId;
+      if(replyToMessageId!==null &&
+         (typeof replyToMessageId!=="string" || !uuidPattern.test(replyToMessageId)))
+        return ws.send(JSON.stringify({type:"error",error:"invalid_reply_message_id"}));
       const recipientExists = hasDatabase ? await postgresStore.userExists(to) : users.has(to);
       if (sockets.get(userId) !== ws) return ws.close(1008, "Connection replaced");
       if (!recipientExists) return ws.send(JSON.stringify({type:"error",error:"recipient_not_found"}));
       if (!text) return ws.send(JSON.stringify({type:"error",error:"empty_message"}));
       if (text.length > 4000) return ws.send(JSON.stringify({type:"error",error:"message_too_long"}));
-      let message = { id: randomUUID(), from: userId, to, text, createdAt: new Date().toISOString(), deliveredAt: null, readAt: null, clientMessageId };
+      const replyTarget=replyToMessageId
+        ? await postgresStore.replyTarget(userId,to,replyToMessageId)
+        : null;
+      if(replyToMessageId && !replyTarget)
+        return ws.send(JSON.stringify({type:"error",error:"reply_message_not_found"}));
+      let message = {
+        id:randomUUID(),from:userId,to,text,
+        createdAt:new Date().toISOString(),deliveredAt:null,readAt:null,
+        clientMessageId,replyToMessageId,
+        replyPreviewText:replyTarget?.text || null,
+        replyPreviewFrom:replyTarget?.from || null
+      };
       let inserted=true;
-      if(hasDatabase) { const saved=await postgresStore.saveMessage(message); message=saved.message; inserted=saved.inserted; } else { const existing=messages.find(m=>m.from===userId&&m.clientMessageId===clientMessageId); if(existing){if(existing.to!==to||existing.text!==text)return ws.send(JSON.stringify({type:"error",error:"client_message_id_conflict"}));message=existing;inserted=false;} else messages.push(message); }
+      if(hasDatabase) {
+        const saved=await postgresStore.saveMessage(message);
+        message={
+          ...saved.message,
+          replyPreviewText:replyTarget?.text || saved.message.replyPreviewText || null,
+          replyPreviewFrom:replyTarget?.from || saved.message.replyPreviewFrom || null
+        };
+        inserted=saved.inserted;
+      } else {
+        const existing=messages.find(m=>m.from===userId&&m.clientMessageId===clientMessageId);
+        if(existing){
+          if(existing.to!==to||existing.text!==text||
+             (existing.replyToMessageId||null)!==replyToMessageId)
+            return ws.send(JSON.stringify({type:"error",error:"client_message_id_conflict"}));
+          message=existing;inserted=false;
+        } else messages.push(message);
+      }
       if (sockets.get(userId) !== ws) return ws.close(1008, "Connection replaced");
       const shouldDeliver=inserted||!message.deliveredAt;
       if(shouldDeliver && sendTo(message.to, { type: "message", message })) {
