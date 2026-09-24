@@ -29,7 +29,7 @@ function rateLimit({windowMs,max}){return (req,res,next)=>{const key=`${windowMs
 setInterval(()=>{const cutoff=Date.now()-10*60_000;for(const [key,b] of rateBuckets)if(b.start<cutoff)rateBuckets.delete(key);},10*60_000).unref?.();
 
 function publicUser(user) {
-  return { id: user.id, username: user.username, displayName: user.displayName };
+  return { id: user.id, username: user.username, displayName: user.displayName, bio:String(user.bio || "").slice(0,160) };
 }
 
 async function auth(req, res, next) {
@@ -87,7 +87,7 @@ app.post("/api/login", requireDatabase, rateLimit({windowMs:15*60_000,max:10}), 
       return res.status(401).json({error:"invalid_credentials"});
     const token=randomUUID();
     await postgresStore.createSession(account.id,token);
-    return res.json({token,user:publicUser({id:account.id,username:account.username,displayName:account.display_name})});
+    return res.json({token,user:publicUser({id:account.id,username:account.username,displayName:account.display_name,bio:account.bio||""})});
   }catch(error){
     console.error("Login database error",error);
     return res.status(503).json({error:"service_unavailable"});
@@ -110,10 +110,25 @@ app.post("/api/logout", auth, async (req, res) => {
 app.patch("/api/me", auth, async (req, res) => {
   try {
     const displayName = String(req.body?.displayName || "").trim();
-    if (!displayName || displayName.length > 50) return res.status(400).json({ error: "invalid_display_name" });
-    if(hasDatabase) { const user=await postgresStore.updateUser(req.user.id,displayName); if(!user)return res.status(404).json({error:"user_not_found"}); return res.json(publicUser(user)); }
-    req.user.displayName = displayName; users.set(req.user.id, req.user); res.json(publicUser(req.user));
-  } catch(error) { console.error("Profile update failed",error); res.status(503).json({error:"service_unavailable"}); }
+    if (!displayName || displayName.length > 50)
+      return res.status(400).json({ error: "invalid_display_name" });
+    const bioProvided = Object.prototype.hasOwnProperty.call(req.body || {}, "bio");
+    const bio = bioProvided ? String(req.body.bio ?? "").trim() : null;
+    if (bio !== null && bio.length > 160)
+      return res.status(400).json({ error: "invalid_bio" });
+    if(hasDatabase) {
+      const user=await postgresStore.updateUser(req.user.id,displayName,bio);
+      if(!user)return res.status(404).json({error:"user_not_found"});
+      return res.json(publicUser(user));
+    }
+    req.user.displayName = displayName;
+    if(bio !== null) req.user.bio = bio;
+    users.set(req.user.id, req.user);
+    res.json(publicUser(req.user));
+  } catch(error) {
+    console.error("Profile update failed",error);
+    res.status(503).json({error:"service_unavailable"});
+  }
 });
 
 app.get("/api/ai/capabilities", auth, (_req,res) => {
