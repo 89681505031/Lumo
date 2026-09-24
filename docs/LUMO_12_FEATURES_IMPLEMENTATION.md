@@ -1,6 +1,6 @@
 # Lumo — 12-feature implementation tracker (September 2026)
 
-This tracker describes what exists in the stacked development branches. **None of the staging-only server capabilities should be described as production-ready until their own security/device/deployment gates pass.** The latest integration branch is `feature/lumo-current-stack-push`, continuing the stacked feature chain through group pagination and privacy-first generic direct/group push staging.
+This tracker describes what exists in the stacked development branches. **None of the staging-only server capabilities should be described as production-ready until their own security/device/deployment gates pass.** The latest integration branch is `feature/lumo-current-stack-offline`, combining stable group pagination, privacy-first generic direct/group push staging, and encrypted offline private-group history/retry state.
 
 ## Current implementation status
 
@@ -16,7 +16,7 @@ This tracker describes what exists in the stacked development branches. **None o
 | 8 | Notifications | Privacy-first FCM debug/staging client plus current-stack session-scoped registration and durable generic direct/group outbox; payloads contain no sender/message/group text; offline revoke reconciliation remains explicit. | Dedicated staging Firebase/ADC/cron credentials, physical-device permission/Doze/token/account-switch tests and operational backlog monitoring. Release remains no-op. |
 | 9 | Profiles | Display-name edit, cross-device public bio, local-first Photo Picker avatar, explicit authenticated avatar sync/removal, visual/privacy settings. | Real-device avatar sync/delete QA plus moderation/reporting, retention, backup and storage-quota policy before broad rollout. |
 | 10 | Groups | Cosmic private group UI plus PostgreSQL membership/roles, removal/rejoin privacy, idempotent sends, WebSocket + polling fallback, replies/search/actions, private photo/video/voice/document attachments, stable history pagination, and generic privacy-preserving group push staging. | Multi-device concurrency/scroll/push QA, moderation/abuse controls, object cleanup and E2E work. |
-| 11 | Offline experience | AES-256-GCM Android Keystore recent chat/history cache, cached-chat fallback, encrypted pending-message queue migration, per-account clear control. | Airplane-mode/reconnect/account-isolation/corrupt-key/performance tests; group/media offline cache remains separate work. |
+| 11 | Offline experience | AES-256-GCM Android Keystore cache for direct chats **and private groups**, cached group summaries/history, encrypted pending direct/group text state, encrypted group attachment retry metadata, per-account clear control, and confirmed-membership cache purge. | Airplane-mode/reconnect/account-isolation/corrupt-key/performance tests; raw downloaded media remains online-only unless a future opt-in encrypted cache is designed. |
 | 12 | Lumo AI | Separate cosmic assistant screen; server-only provider key; authenticated capability gate; strict prompt/history limits; no automatic private-chat sharing; selected message can be copied only as an **unsent editable AI draft**. | Pick provider/retention terms, moderation/age-safety review, cost/distributed rate limits and isolated staging before production. |
 
 ## Integration / release sequence
