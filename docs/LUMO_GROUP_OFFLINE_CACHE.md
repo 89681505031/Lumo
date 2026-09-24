@@ -1,4 +1,4 @@
-# Lumo Phase 20 — encrypted offline private groups
+# Lumo Phase 22 — encrypted offline private groups
 
 This stacked branch extends the existing Android Keystore AES-256-GCM offline cache from direct chats to private groups without caching media bytes or signed URLs.
 
