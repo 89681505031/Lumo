@@ -32,7 +32,7 @@ data class LumoGroup(
  val memberCount:Int,val lastMessage:String="",val lastAt:String=""
 )
 data class LumoGroupMember(val id:String,val username:String,val displayName:String,val role:String)
-data class LumoGroupMessage(val id:String,val from:String,val text:String,val createdAt:String,val clientMessageId:String="",val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="",val editedAt:String="",val deletedAt:String="")
+data class LumoGroupMessage(val id:String,val from:String,val text:String,val createdAt:String,val clientMessageId:String="",val attachmentId:String="",val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="",val editedAt:String="",val deletedAt:String="")
 data class LumoGroupPending(val clientId:String,val text:String,val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="")
 data class LumoGroupDetail(val group:LumoGroup,val members:List<LumoGroupMember>)
 
@@ -42,7 +42,7 @@ private fun group(o:JSONObject)=LumoGroup(
  o.getString("role"),o.optInt("memberCount",0),optional(o,"lastMessage"),optional(o,"lastAt")
 )
 private fun groupMessage(o:JSONObject)=LumoGroupMessage(
- o.getString("id"),o.getString("from"),o.getString("text"),o.getString("createdAt"),optional(o,"clientMessageId"),optional(o,"replyToMessageId"),optional(o,"replyPreviewText"),optional(o,"replyPreviewFrom"),optional(o,"editedAt"),optional(o,"deletedAt")
+ o.getString("id"),o.getString("from"),o.getString("text"),o.getString("createdAt"),optional(o,"clientMessageId"),optional(o,"attachmentId"),optional(o,"replyToMessageId"),optional(o,"replyPreviewText"),optional(o,"replyPreviewFrom"),optional(o,"editedAt"),optional(o,"deletedAt")
 )
 private fun Api.groupCall(token:String,path:String,method:String="GET",body:JSONObject?=null):String{
  val req=Request.Builder().url(Api.HTTP+path).header("Authorization","Bearer "+token)
