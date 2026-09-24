@@ -45,10 +45,26 @@ function normalizedEndpoint(raw) {
   return u.toString().replace(/\/$/,"");
 }
 
-const required=["MEDIA_BUCKET","MEDIA_REGION","MEDIA_ACCESS_KEY_ID","MEDIA_SECRET_ACCESS_KEY"];
-export const mediaReady=required.every(key=>Boolean(process.env[key]?.trim()));
+// Prefer Lumo-specific names, but also accept the standard S3-compatible
+// environment names used by Neon Object Storage integrations. Values are
+// consumed server-side only and never returned by the API.
+const storageBucket=(process.env.MEDIA_BUCKET || "lumo-media").trim();
+const storageRegion=(process.env.MEDIA_REGION || process.env.AWS_REGION || "").trim();
+const storageAccessKeyId=(
+  process.env.MEDIA_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID || ""
+).trim();
+const storageSecretAccessKey=(
+  process.env.MEDIA_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY || ""
+).trim();
+const storageEndpoint=(
+  process.env.MEDIA_ENDPOINT || process.env.AWS_ENDPOINT_URL_S3 || ""
+).trim();
+
+export const mediaReady=Boolean(
+  storageBucket && storageRegion && storageAccessKeyId && storageSecretAccessKey
+);
 let client=null;
-const bucket=mediaReady?process.env.MEDIA_BUCKET:null;
+const bucket=mediaReady?storageBucket:null;
 const MAX_UNCLAIMED_RESERVATIONS=8;
 const MAX_UNCLAIMED_RESERVED_BYTES=75*1024*1024;
 function unreferencedRetentionDays(){
@@ -61,12 +77,12 @@ function unreferencedRetentionDays(){
 }
 if(mediaReady){
   client=new S3Client({
-    region:process.env.MEDIA_REGION,
-    endpoint:normalizedEndpoint(process.env.MEDIA_ENDPOINT),
+    region:storageRegion,
+    endpoint:normalizedEndpoint(storageEndpoint),
     forcePathStyle:true,
     credentials:{
-      accessKeyId:process.env.MEDIA_ACCESS_KEY_ID,
-      secretAccessKey:process.env.MEDIA_SECRET_ACCESS_KEY
+      accessKeyId:storageAccessKeyId,
+      secretAccessKey:storageSecretAccessKey
     }
   });
 }
