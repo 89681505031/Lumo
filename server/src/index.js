@@ -62,7 +62,7 @@ async function auth(req, res, next) {
 }
 
 app.get("/live", (_req, res) => res.json({ ok: true, service: "lumo-server" }));
-app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled,documentsReady:mediaEnabled,groupsReady:hasDatabase,groupLinkedReplies:hasDatabase,groupSearch:hasDatabase}));
+app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled,documentsReady:mediaEnabled,groupsReady:hasDatabase,groupLinkedReplies:hasDatabase,groupSearch:hasDatabase,groupMessageEdit:hasDatabase,groupMessageDelete:hasDatabase,groupReactions:reactionsEnabled}));
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase,ok:false}; if(hasDatabase){try{database=await dbHealth()}catch(error){console.error("Database health check failed",error);database={configured:true,ok:false}}} const ok=database.configured===true&&database.ok===true; res.status(ok?200:503).json({ ok, service:"lumo-server", database }); });
 
@@ -432,6 +432,87 @@ app.get("/api/groups/:id/messages/search",auth,requireDatabase,rateLimit({window
     return found===null ? groupError(res,"group_not_found") : res.json(found);
   }catch(error){
     console.error("Group search failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.patch("/api/groups/:id/messages/:messageId",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  const {id,messageId}=req.params;
+  if(!uuidPattern.test(id)||!uuidPattern.test(messageId))
+    return res.status(400).json({error:"invalid_message_id"});
+  if(typeof req.body?.text!=="string"||!req.body.text.trim())
+    return res.status(400).json({error:"empty_message"});
+  const text=req.body.text.trim();
+  if(text.length>4000)return res.status(400).json({error:"message_too_long"});
+  try{
+    const message=await groupStore.editMessage(req.user.id,id,messageId,text);
+    if(!message)return res.status(404).json({error:"message_not_editable"});
+    const recipients=await groupStore.recipients(id,message.createdAt);
+    for(const userId of recipients)sendTo(userId,{type:"group_message",message});
+    return res.json(message);
+  }catch(error){
+    console.error("Group edit failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.delete("/api/groups/:id/messages/:messageId",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  const {id,messageId}=req.params;
+  if(!uuidPattern.test(id)||!uuidPattern.test(messageId))
+    return res.status(400).json({error:"invalid_message_id"});
+  try{
+    const message=await groupStore.deleteMessage(req.user.id,id,messageId);
+    if(!message)return res.status(404).json({error:"message_not_editable"});
+    const recipients=await groupStore.recipients(id,message.createdAt);
+    for(const userId of recipients)sendTo(userId,{type:"group_message",message});
+    return res.json(message);
+  }catch(error){
+    console.error("Group delete failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/groups/:id/reactions",auth,requireDatabase,requireReactions,async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  try{
+    const member=await groupStore.membership(req.user.id,req.params.id);
+    if(!member)return groupError(res,"group_not_found");
+    return res.json(await groupStore.reactions(req.user.id,req.params.id));
+  }catch(error){
+    console.error("Group reaction list failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.put("/api/groups/:id/messages/:messageId/reactions",auth,requireDatabase,requireReactions,rateLimit({windowMs:60_000,max:80}),async(req,res)=>{
+  const {id,messageId}=req.params,emoji=req.body?.emoji;
+  if(!uuidPattern.test(id)||!uuidPattern.test(messageId))
+    return res.status(400).json({error:"invalid_message_id"});
+  if(typeof emoji!=="string"||!reactionEmojis.has(emoji))
+    return res.status(400).json({error:"invalid_reaction"});
+  try{
+    const allowed=await groupStore.setReaction(req.user.id,id,messageId,emoji,true);
+    if(!allowed)return res.status(404).json({error:"message_not_found"});
+    return res.json({messageId,userId:req.user.id,emoji,active:true});
+  }catch(error){
+    console.error("Group reaction add failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.delete("/api/groups/:id/messages/:messageId/reactions",auth,requireDatabase,requireReactions,rateLimit({windowMs:60_000,max:80}),async(req,res)=>{
+  const {id,messageId}=req.params,emoji=req.body?.emoji;
+  if(!uuidPattern.test(id)||!uuidPattern.test(messageId))
+    return res.status(400).json({error:"invalid_message_id"});
+  if(typeof emoji!=="string"||!reactionEmojis.has(emoji))
+    return res.status(400).json({error:"invalid_reaction"});
+  try{
+    const allowed=await groupStore.setReaction(req.user.id,id,messageId,emoji,false);
+    if(!allowed)return res.status(404).json({error:"message_not_found"});
+    return res.status(204).end();
+  }catch(error){
+    console.error("Group reaction remove failed",error);
     return res.status(503).json({error:"service_unavailable"});
   }
 });
