@@ -262,6 +262,7 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
  val key=remember(me.id,peer.id){"pending_"+me.id+"_"+peer.id}
  var available by remember(token){mutableStateOf(false)}
  var checking by remember(token){mutableStateOf(true)}
+ var capabilityRetry by remember(token){mutableIntStateOf(0)}
  var chosen by remember(peer.id){mutableStateOf<ChosenMedia?>(null)}
  var pending by remember(key){mutableStateOf(
   runCatching{
@@ -349,7 +350,7 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
     .onFailure{status=it.message?:"Не удалось открыть документ";chosen=null}
   }
  }
- LaunchedEffect(token){
+ LaunchedEffect(token,capabilityRetry){
   checking=true
   available=runCatching{withContext(Dispatchers.IO){MediaApi.enabled()}}.getOrDefault(false)
   checking=false
@@ -374,12 +375,20 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
    chosen?.file?.delete()
   }
  }
- // Do not show fake file/voice buttons on servers without private media support.
- if(checking||(!available&&pending==null))return
  Column(Modifier.fillMaxWidth().padding(horizontal=10.dp,vertical=5.dp).lumoGlass(22).padding(12.dp)){
-  Text("Вложения Lumo",style=MaterialTheme.typography.titleMedium,color=Color.White)
+  Text("Фото, видео и голосовые",style=MaterialTheme.typography.titleMedium,color=Color.White)
   Spacer(Modifier.height(6.dp))
-  if(!available)Text("Медиа временно недоступны",style=MaterialTheme.typography.bodySmall)
+  if(checking){
+   LinearProgressIndicator(Modifier.fillMaxWidth(),color=LumoCyan)
+   Text("Проверяем доступность медиа…",style=MaterialTheme.typography.bodySmall)
+  }else if(!available){
+   Text(
+    "Сервер медиа пока не обновлён. Кнопки останутся здесь и включатся после обновления сервера.",
+    style=MaterialTheme.typography.bodySmall,
+    color=MaterialTheme.colorScheme.onSurfaceVariant
+   )
+   TextButton(onClick={capabilityRetry++}){Text("Проверить снова",color=LumoCyan)}
+  }
   if(status.isNotBlank())Text(status,style=MaterialTheme.typography.bodySmall,
    color=MaterialTheme.colorScheme.onSurfaceVariant)
   if(pending!=null){
@@ -483,6 +492,7 @@ fun GroupMediaComposer(
  val key=remember(me.id,groupId){"group_media_"+me.id+"_"+groupId}
  var available by remember(token,groupId){mutableStateOf(false)}
  var checking by remember(token,groupId){mutableStateOf(true)}
+ var capabilityRetry by remember(token,groupId){mutableIntStateOf(0)}
  var chosen by remember(groupId){mutableStateOf<ChosenMedia?>(null)}
  val encryptedPendingJson=remember(me.id,groupId){
   runCatching{LumoOfflineStore.loadGroupMediaPendingJson(context,me.id,groupId)}
@@ -607,7 +617,7 @@ fun GroupMediaComposer(
   }
  }
 
- LaunchedEffect(token,groupId){
+ LaunchedEffect(token,groupId,capabilityRetry){
   checking=true
   available=runCatching{
    withContext(Dispatchers.IO){MediaApi.groupEnabled()}
@@ -635,12 +645,21 @@ fun GroupMediaComposer(
   }
  }
 
- if(checking||(!available&&pending==null))return
  Column(
   Modifier.fillMaxWidth().padding(horizontal=10.dp,vertical=4.dp)
    .lumoGlass(20).padding(10.dp)
  ){
-  Text("Вложение группе",style=MaterialTheme.typography.titleSmall,color=Color.White)
+  Text("Фото, видео и голосовые",style=MaterialTheme.typography.titleSmall,color=Color.White)
+  if(checking){
+   LinearProgressIndicator(Modifier.fillMaxWidth(),color=LumoCyan)
+  }else if(!available){
+   Text(
+    "Медиа группы пока недоступны на сервере.",
+    style=MaterialTheme.typography.bodySmall,
+    color=MaterialTheme.colorScheme.onSurfaceVariant
+   )
+   TextButton(onClick={capabilityRetry++}){Text("Проверить снова",color=LumoCyan)}
+  }
   if(status.isNotBlank())Text(
    status,style=MaterialTheme.typography.bodySmall,
    color=MaterialTheme.colorScheme.onSurfaceVariant
