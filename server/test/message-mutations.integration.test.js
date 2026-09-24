@@ -129,7 +129,7 @@ test("message edit/delete/search stays sender-owned and conversation-scoped",{
     assert.equal(oldSearch.status,200);
     assert.equal(oldSearch.body.length,0);
     const newSearch=await request(
-      "/api/messages/search/"+bob.user.id+"?q="+encodeURIComponent("Бета"),
+      "/api/messages/search/"+alice.user.id+"?q="+encodeURIComponent("Бета"),
       {token:bob.token}
     );
     assert.equal(newSearch.status,200);
