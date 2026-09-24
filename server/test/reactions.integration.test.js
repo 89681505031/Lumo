@@ -19,7 +19,7 @@ test("feature-flagged direct-message reactions: authorization, persistence and i
   const processServer=spawn(process.execPath,["src/index.js"],{
     cwd:process.cwd(),
     env:{...process.env,PORT:String(port),DATABASE_URL:dbUrl,
-      DATABASE_SSL:"false",LUMO_REACTIONS_ENABLED:"true"},
+      DATABASE_SSL:"false"},
     stdio:"ignore"
   });
   const base=`http://127.0.0.1:${port}`;
