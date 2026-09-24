@@ -133,6 +133,7 @@ test("private document attachments are allowlisted, signed, participant-only and
     const alice=await register("doca");
     const bob=await register("docb");
     const other=await register("docc");
+    const stranger=await register("docd");
 
     const input={
       to:bob.user.id,
@@ -204,6 +205,56 @@ test("private document attachments are allowlisted, signed, participant-only and
       "/api/media/"+init.json.assetId+"/download","GET",other.token
     )).status,404,"unrelated authenticated users cannot obtain a signed URL");
 
+    const forwardClientId=randomUUID();
+    const forwarded=await request(
+      "/api/media/"+init.json.assetId+"/forward","POST",bob.token,{
+        to:other.user.id,
+        clientMessageId:forwardClientId,
+        caption:"↪ План проекта"
+      }
+    );
+    assert.equal(forwarded.status,201);
+    assert.equal(forwarded.json.from,bob.user.id);
+    assert.equal(forwarded.json.to,other.user.id);
+    assert.equal(forwarded.json.attachmentId,init.json.assetId);
+    assert.equal((await request(
+      "/api/media/"+init.json.assetId+"/download","GET",other.token
+    )).status,200,"explicit forwarding grants only the new message participant access");
+    assert.equal((await request(
+      "/api/media/"+init.json.assetId+"/download","GET",stranger.token
+    )).status,404,"forwarding never makes the private object public");
+
+    const forwardReplay=await request(
+      "/api/media/"+init.json.assetId+"/forward","POST",bob.token,{
+        to:other.user.id,
+        clientMessageId:forwardClientId,
+        caption:"↪ План проекта"
+      }
+    );
+    assert.equal(forwardReplay.status,200);
+    assert.equal(forwardReplay.json.id,forwarded.json.id);
+
+    const forwardConflict=await request(
+      "/api/media/"+init.json.assetId+"/forward","POST",bob.token,{
+        to:stranger.user.id,
+        clientMessageId:forwardClientId,
+        caption:"↪ План проекта"
+      }
+    );
+    assert.equal(forwardConflict.status,409,
+      "same forwarding idempotency key cannot silently change recipient");
+
+    const deletedForward=await request(
+      "/api/messages/"+forwarded.json.id,"DELETE",bob.token
+    );
+    assert.equal(deletedForward.status,200);
+    assert.equal((await request(
+      "/api/media/"+init.json.assetId+"/download","GET",other.token
+    )).status,404,"deleting the forwarded message revokes its recipient link");
+    assert.equal((await request(
+      "/api/media/"+init.json.assetId+"/download","GET",bob.token
+    )).status,200,"original direct-message participant still has access");
+
     const history=await request("/api/messages/"+alice.user.id,"GET",bob.token);
     assert.equal(history.status,200);
     const message=history.json.find(item=>item.id===sent.json.id);
@@ -222,7 +273,7 @@ test("private document attachments are allowlisted, signed, participant-only and
       "select count(*)::integer as n from messages where media_id=$1",
       [init.json.assetId]
     );
-    assert.equal(rows.rows[0].n,1);
+    assert.equal(rows.rows[0].n,2,"original plus tombstoned forwarded message share one private object");
 
     const deleted=await request(
       "/api/messages/"+sent.json.id,"DELETE",alice.token
