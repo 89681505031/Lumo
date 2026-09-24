@@ -144,6 +144,65 @@ export const postgresStore = {
     );
     return r.rows.map(mapMessage);
   },
+  async latestMessages(me,peer,limit=100) {
+    const take=Math.max(1,Math.min(100,Number(limit)||100));
+    const r=await dbQuery(
+      `select * from (
+         select m.*,left(reply.text,240) as reply_preview_text,
+                reply.sender_id as reply_preview_from
+         from messages m
+         left join messages reply on reply.id=m.reply_to_message_id
+         where (m.sender_id=$1 and m.recipient_id=$2)
+            or (m.sender_id=$2 and m.recipient_id=$1)
+         order by m.created_at desc,m.id desc
+         limit $3
+       ) recent
+       order by created_at,id`,
+      [me,peer,take]
+    );
+    return r.rows.map(mapMessage);
+  },
+  async messagePage(me,peer,{beforeId,limit=50}) {
+    const take=Math.max(1,Math.min(100,Number(limit)||50));
+    const cursor=await dbQuery(
+      `select 1 from messages
+       where id=$1 and (
+         (sender_id=$2 and recipient_id=$3)
+         or (sender_id=$3 and recipient_id=$2)
+       )`,
+      [beforeId,me,peer]
+    );
+    if(!cursor.rowCount)return {error:"history_cursor_not_found"};
+    const r=await dbQuery(
+      `select * from (
+         select m.*,left(reply.text,240) as reply_preview_text,
+                reply.sender_id as reply_preview_from
+         from messages m
+         left join messages reply on reply.id=m.reply_to_message_id
+         where (
+           (m.sender_id=$1 and m.recipient_id=$2)
+           or (m.sender_id=$2 and m.recipient_id=$1)
+         )
+         and (m.created_at,m.id) < (
+           select cursor.created_at,cursor.id
+           from messages cursor
+           where cursor.id=$3
+         )
+         order by m.created_at desc,m.id desc
+         limit $4
+       ) older
+       order by created_at,id`,
+      [me,peer,beforeId,take+1]
+    );
+    const hasMore=r.rows.length>take;
+    const selected=hasMore?r.rows.slice(1):r.rows;
+    // Query output is ascending. When take+1 rows are present, the first row
+    // is the extra oldest record; drop it and point next at the new oldest.
+    return {
+      messages:selected.map(mapMessage),
+      next:hasMore&&selected[0]?{id:selected[0].id}:null
+    };
+  },
   async replyTarget(userId,peerId,messageId) {
     const r=await dbQuery(
       `select id,left(text,240) as text,sender_id from messages
