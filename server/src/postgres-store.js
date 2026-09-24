@@ -1,16 +1,23 @@
 import { dbQuery, hasDatabase } from "./db.js";
 
-const mapUser = r => ({ id:r.id, username:r.username, displayName:r.display_name, bio:r.bio || "" });
+const mapUser = r => ({
+  id:r.id,
+  username:r.username,
+  displayName:r.display_name,
+  bio:r.bio || "",
+  hasAvatar:Boolean(r.has_avatar ?? r.avatar_bytes),
+  avatarVersion:r.avatar_updated_at?.toISOString?.() || r.avatar_updated_at || ""
+});
 const mapMessage = r => ({ id:r.id, from:r.sender_id, to:r.recipient_id, text:r.text, createdAt:r.created_at?.toISOString?.() || r.created_at, deliveredAt:r.delivered_at?.toISOString?.() || r.delivered_at || null, readAt:r.read_at?.toISOString?.() || r.read_at || null, clientMessageId:r.client_message_id || null });
 
 export const postgresStore = {
   enabled: hasDatabase,
   async userBySession(token) {
-    const r=await dbQuery("select u.* from sessions s join users u on u.id=s.user_id where s.token=$1 and s.expires_at>now()",[token]);
+    const r=await dbQuery("select u.id,u.username,u.display_name,u.bio,(u.avatar_bytes is not null) as has_avatar,u.avatar_updated_at from sessions s join users u on u.id=s.user_id where s.token=$1 and s.expires_at>now()",[token]);
     return r.rows[0] ? mapUser(r.rows[0]) : null;
   },
   async authUserByUsername(username) {
-    const r=await dbQuery("select id,username,display_name,bio,password_hash from users where username=$1",[username]);
+    const r=await dbQuery("select id,username,display_name,bio,password_hash,(avatar_bytes is not null) as has_avatar,avatar_updated_at from users where username=$1",[username]);
     return r.rows[0] || null;
   },
   async createSession(userId,token) {
@@ -23,7 +30,7 @@ export const postgresStore = {
     try {
       const r=await dbQuery(`with created as (
         insert into users(id,username,display_name,password_hash) values($1,$2,$3,$4)
-        returning id,username,display_name,bio
+        returning id,username,display_name,bio,false as has_avatar,null::timestamptz as avatar_updated_at
       ), session as (
         insert into sessions(token,user_id) select $5,id from created
       ) select * from created`,[id,username,displayName,passwordHash,token]);
@@ -34,16 +41,43 @@ export const postgresStore = {
     }
   },
   async updateUser(id,displayName,bio=null) {
-    const r=await dbQuery("update users set display_name=$2, bio=coalesce($3,bio) where id=$1 returning *",[id,displayName,bio]);
+    const r=await dbQuery("update users set display_name=$2, bio=coalesce($3,bio) where id=$1 returning id,username,display_name,bio,(avatar_bytes is not null) as has_avatar,avatar_updated_at",[id,displayName,bio]);
     return r.rows[0] ? mapUser(r.rows[0]) : null;
   },
   async searchUsers(me,q) {
     const term="%"+q+"%";
-    const r=await dbQuery("select * from users where id<>$1 and ($2='' or username ilike $3 or display_name ilike $3) order by display_name limit 50",[me,q,term]);
+    const r=await dbQuery("select id,username,display_name,bio,(avatar_bytes is not null) as has_avatar,avatar_updated_at from users where id<>$1 and ($2='' or username ilike $3 or display_name ilike $3) order by display_name limit 50",[me,q,term]);
     return r.rows.map(mapUser);
   },
   async userExists(id) { const r=await dbQuery("select 1 from users where id=$1",[id]); return r.rowCount>0; },
-  async conversations(me) { const r=await dbQuery(`select distinct on (x.peer_id) x.peer_id, u.username, u.display_name, u.bio, x.text, x.created_at from (select case when m.sender_id=$1 then m.recipient_id else m.sender_id end peer_id,m.text,m.created_at from messages m where m.sender_id=$1 or m.recipient_id=$1) x join users u on u.id=x.peer_id order by x.peer_id,x.created_at desc`,[me]); return r.rows.map(x=>({peer:{id:x.peer_id,username:x.username,displayName:x.display_name,bio:x.bio||""},lastMessage:x.text,lastAt:x.created_at?.toISOString?.()||x.created_at})).sort((a,b)=>String(b.lastAt).localeCompare(String(a.lastAt))); },
+  async conversations(me) { const r=await dbQuery(`select distinct on (x.peer_id) x.peer_id, u.username, u.display_name, u.bio, (u.avatar_bytes is not null) as has_avatar, u.avatar_updated_at, x.text, x.created_at from (select case when m.sender_id=$1 then m.recipient_id else m.sender_id end peer_id,m.text,m.created_at from messages m where m.sender_id=$1 or m.recipient_id=$1) x join users u on u.id=x.peer_id order by x.peer_id,x.created_at desc`,[me]); return r.rows.map(x=>({peer:{id:x.peer_id,username:x.username,displayName:x.display_name,bio:x.bio||"",hasAvatar:Boolean(x.has_avatar),avatarVersion:x.avatar_updated_at?.toISOString?.()||x.avatar_updated_at||""},lastMessage:x.text,lastAt:x.created_at?.toISOString?.()||x.created_at})).sort((a,b)=>String(b.lastAt).localeCompare(String(a.lastAt))); },
+  async setAvatar(userId,mime,bytes) {
+    const r=await dbQuery(
+      "update users set avatar_mime=$2,avatar_bytes=$3,avatar_updated_at=now() where id=$1 returning id,username,display_name,bio,true as has_avatar,avatar_updated_at",
+      [userId,mime,bytes]
+    );
+    return r.rows[0] ? mapUser(r.rows[0]) : null;
+  },
+  async removeAvatar(userId) {
+    const r=await dbQuery(
+      "update users set avatar_mime=null,avatar_bytes=null,avatar_updated_at=now() where id=$1 returning id,username,display_name,bio,false as has_avatar,avatar_updated_at",
+      [userId]
+    );
+    return r.rows[0] ? mapUser(r.rows[0]) : null;
+  },
+  async avatar(userId) {
+    const r=await dbQuery(
+      "select avatar_mime,avatar_bytes,avatar_updated_at from users where id=$1",
+      [userId]
+    );
+    const row=r.rows[0];
+    if(!row || !row.avatar_bytes)return null;
+    return {
+      mime:row.avatar_mime || "image/jpeg",
+      bytes:row.avatar_bytes,
+      updatedAt:row.avatar_updated_at?.toISOString?.() || row.avatar_updated_at || ""
+    };
+  },
   async messages(me,peer) {
     const r=await dbQuery("select * from messages where (sender_id=$1 and recipient_id=$2) or (sender_id=$2 and recipient_id=$1) order by created_at",[me,peer]);
     return r.rows.map(mapMessage);

@@ -18,6 +18,9 @@ export async function initDatabase() {
   await pool.query(`create table if not exists users (id uuid primary key, username varchar(24) unique not null, display_name varchar(50) not null, created_at timestamptz not null default now())`);
   await pool.query(`alter table users add column if not exists password_hash text`);
   await pool.query(`alter table users add column if not exists bio varchar(160) not null default ''`);
+  await pool.query(`alter table users add column if not exists avatar_mime varchar(32)`);
+  await pool.query(`alter table users add column if not exists avatar_bytes bytea`);
+  await pool.query(`alter table users add column if not exists avatar_updated_at timestamptz`);
   await pool.query(`create table if not exists sessions (
     token uuid primary key,
     user_id uuid not null references users(id) on delete cascade,
@@ -57,7 +60,11 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='bio') as bio_column,
     exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='users' and column_name='avatar_bytes') as avatar_bytes_column,
+    exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='users' and column_name='avatar_updated_at') as avatar_updated_column,
+    exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.password_column && row.bio_column && row.session_expiry_column), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.session_expiry_column), now:row.now };
 }

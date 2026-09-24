@@ -135,6 +135,8 @@ object LumoOfflineStore {
                 .put("username",chat.peer.username)
                 .put("displayName",chat.peer.displayName.take(50))
                 .put("bio",chat.peer.bio.take(160))
+                .put("hasAvatar",chat.peer.hasAvatar)
+                .put("avatarVersion",chat.peer.avatarVersion)
                 .put("lastMessage",chat.lastMessage.take(4000))
                 .put("lastAt",chat.lastAt))
         }
@@ -155,7 +157,10 @@ object LumoOfflineStore {
                         o.getString("peerId"),
                         o.getString("username"),
                         o.getString("displayName"),
-                        o.optString("bio").take(160)
+                        o.optString("bio").take(160),
+                        bioSupported=o.has("bio"),
+                        hasAvatar=o.optBoolean("hasAvatar",false),
+                        avatarVersion=o.optString("avatarVersion")
                     )
                     add(Conversation(
                         peer=peer,

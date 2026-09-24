@@ -8,6 +8,9 @@ create table if not exists users (
 );
 alter table users add column if not exists password_hash text;
 alter table users add column if not exists bio varchar(160) not null default '';
+alter table users add column if not exists avatar_mime varchar(32);
+alter table users add column if not exists avatar_bytes bytea;
+alter table users add column if not exists avatar_updated_at timestamptz;
 create table if not exists sessions (
   token uuid primary key,
   user_id uuid not null references users(id) on delete cascade,
