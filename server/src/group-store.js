@@ -9,6 +9,7 @@ const message = row => ({
   text:row.text,
   createdAt:iso(row.created_at),
   clientMessageId:row.client_message_id,
+  attachmentId:row.media_id || null,
   replyToMessageId:row.reply_to_message_id || null,
   replyPreviewText:row.reply_preview_text || null,
   replyPreviewFrom:row.reply_preview_from || null,
