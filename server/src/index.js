@@ -128,7 +128,7 @@ const lumoLandingPage = String.raw`<!doctype html>
       <h1>Общайся проще.<br><span class="grad">Оставайся ближе.</span></h1>
       <p class="lead">Lumo — современный мессенджер для личных сообщений, групповых чатов и звонков. Быстрый интерфейс, удобные диалоги и всё необходимое для общения в одном приложении.</p>
       <div class="actions">
-        <a class="cta primary" href="https://github.com/89681505031/Lumo/actions/runs/36041104190#artifacts" target="_blank" rel="noopener">⬇ Скачать Lumo для Android</a>
+        <a class="cta primary" href="/download">⬇ Скачать Lumo для Android</a>
         <a class="cta secondary" href="#features">Узнать больше</a>
       </div>
       <div class="meta">Android • версия 1.0.6 • APK-сборка</div>
@@ -160,7 +160,7 @@ const lumoLandingPage = String.raw`<!doctype html>
   <section id="download">
     <div class="download">
       <div><h2>Скачай Lumo</h2><p>Актуальная Android-сборка Lumo 1.0.6.</p></div>
-      <a class="cta primary" href="https://github.com/89681505031/Lumo/actions/runs/36041104190#artifacts" target="_blank" rel="noopener">⬇ Скачать приложение</a>
+      <a class="cta primary" href="/download">⬇ Скачать приложение</a>
     </div>
   </section>
 </main>
@@ -170,6 +170,33 @@ const lumoLandingPage = String.raw`<!doctype html>
 
 app.get("/", (_req, res) => {
   res.type("html").set("Cache-Control", "public, max-age=300").send(lumoLandingPage);
+});
+
+app.get("/download", async (_req, res) => {
+  try {
+    const response = await fetch("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest", {
+      headers: {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "Lumo-download"
+      }
+    });
+    if (!response.ok) throw new Error(`release_lookup_${response.status}`);
+    const release = await response.json();
+    const assets = Array.isArray(release?.assets) ? release.assets : [];
+    const asset =
+      assets.find((item) => item?.name === "Lumo.apk") ||
+      assets.find((item) => item?.name === "app-release.apk") ||
+      assets.find((item) => item?.label === "Lumo.apk" && !String(item?.name || "").toLowerCase().includes("debug"));
+
+    if (!asset?.browser_download_url) {
+      return res.status(503).type("html").send(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Lumo — загрузка</title><body style="margin:0;background:#070b14;color:#f5f7ff;font-family:system-ui;display:grid;place-items:center;min-height:100vh"><main style="max-width:560px;padding:32px;text-align:center"><h1>Подписанная версия готовится</h1><p style="color:#aab6cc;line-height:1.6">Мы не предлагаем debug-сборку вместо релиза. Как только подписанный Lumo.apk будет опубликован, эта же кнопка начнёт скачивать его автоматически.</p><a href="/" style="display:inline-block;margin-top:16px;padding:13px 18px;border-radius:14px;background:#6d5dfc;color:white;text-decoration:none;font-weight:700">Вернуться на сайт</a></main></body></html>`);
+    }
+
+    return res.redirect(302, asset.browser_download_url);
+  } catch (error) {
+    console.error("Lumo download lookup failed", error);
+    return res.status(503).json({ error: "download_temporarily_unavailable" });
+  }
 });
 
 app.get("/api/capabilities",(_req,res)=>res.json({
