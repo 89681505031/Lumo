@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
-  S3Client, HeadObjectCommand, GetObjectCommand
+  S3Client, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand
 } from "@aws-sdk/client-s3";
 import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -49,6 +49,8 @@ const required=["MEDIA_BUCKET","MEDIA_REGION","MEDIA_ACCESS_KEY_ID","MEDIA_SECRE
 export const mediaReady=required.every(key=>Boolean(process.env[key]?.trim()));
 let client=null;
 const bucket=mediaReady?process.env.MEDIA_BUCKET:null;
+const MAX_UNCLAIMED_RESERVATIONS=12;
+const MAX_UNCLAIMED_RESERVED_BYTES=100*1024*1024;
 if(mediaReady){
   client=new S3Client({
     region:process.env.MEDIA_REGION,
@@ -129,6 +131,43 @@ export function validateMedia({mime,bytes,filename}){
   return {mime,bytes,filename:safeFilename(filename,mime)};
 }
 
+async function reserveAsset({
+  id,ownerId,recipientId=null,groupId=null,key,mime,filename,bytes
+}) {
+  const conn=await pool.connect();
+  let committed=false;
+  try{
+    await conn.query("begin");
+    // Serialize only this owner's outstanding reservations so concurrent
+    // initiation requests cannot race past quota checks.
+    await conn.query("select pg_advisory_xact_lock(hashtext($1))",[ownerId]);
+    const usage=await conn.query(`
+      select count(*)::integer as count,
+             coalesce(sum(byte_length),0)::bigint as bytes
+      from media_assets
+      where owner_id=$1
+        and claimed_message_id is null
+        and claimed_group_message_id is null
+        and expires_at>now()`,[ownerId]);
+    const count=Number(usage.rows[0]?.count||0);
+    const reserved=Number(usage.rows[0]?.bytes||0);
+    if(count>=MAX_UNCLAIMED_RESERVATIONS ||
+       reserved+bytes>MAX_UNCLAIMED_RESERVED_BYTES)
+      return {error:"media_quota_exceeded"};
+    await conn.query(`
+      insert into media_assets(
+        id,owner_id,recipient_id,group_id,object_key,mime,file_name,byte_length
+      ) values($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [id,ownerId,recipientId,groupId,key,mime,filename,bytes]);
+    await conn.query("commit");
+    committed=true;
+    return {ok:true};
+  }finally{
+    if(!committed)await conn.query("rollback").catch(()=>{});
+    conn.release();
+  }
+}
+
 function placeholder(mime,filename) {
   if(mime.startsWith("image/"))return "📷 Фото";
   if(mime.startsWith("video/"))return "🎬 Видео";
@@ -143,10 +182,6 @@ export const mediaStore={
     if(!mediaReady)return {error:"media_unavailable"};
     const id=randomUUID();
     const key=`private/${ownerId}/${id}`;
-    await dbQuery(`insert into media_assets(
-      id,owner_id,recipient_id,object_key,mime,file_name,byte_length
-    ) values($1,$2,$3,$4,$5,$6,$7)`,
-    [id,ownerId,recipientId,key,checked.mime,checked.filename,checked.bytes]);
     const upload=await createPresignedPost(client,{
       Bucket:bucket,
       Key:key,
@@ -157,6 +192,11 @@ export const mediaStore={
         ["content-length-range",1,allowedMimeSizes[checked.mime]]
       ]
     });
+    const reserved=await reserveAsset({
+      id,ownerId,recipientId,key,mime:checked.mime,
+      filename:checked.filename,bytes:checked.bytes
+    });
+    if(reserved.error)return reserved;
     return {
       assetId:id,
       uploadUrl:upload.url,
@@ -174,10 +214,6 @@ export const mediaStore={
     if(!mediaReady)return {error:"media_unavailable"};
     const id=randomUUID();
     const key=`private/${ownerId}/groups/${groupId}/${id}`;
-    await dbQuery(`insert into media_assets(
-      id,owner_id,group_id,object_key,mime,file_name,byte_length
-    ) values($1,$2,$3,$4,$5,$6,$7)`,
-    [id,ownerId,groupId,key,checked.mime,checked.filename,checked.bytes]);
     const upload=await createPresignedPost(client,{
       Bucket:bucket,
       Key:key,
@@ -188,6 +224,11 @@ export const mediaStore={
         ["content-length-range",1,allowedMimeSizes[checked.mime]]
       ]
     });
+    const reserved=await reserveAsset({
+      id,ownerId,groupId,key,mime:checked.mime,
+      filename:checked.filename,bytes:checked.bytes
+    });
+    if(reserved.error)return reserved;
     return {
       assetId:id,
       uploadUrl:upload.url,
@@ -407,6 +448,37 @@ export const mediaStore={
     }
   },
 
+  async cleanupAbandoned(limit=100){
+    if(!mediaReady)return {error:"media_unavailable"};
+    const bounded=Math.max(1,Math.min(250,Math.floor(limit)));
+    const candidates=await dbQuery(`
+      select id,object_key
+      from media_assets
+      where expires_at<=now()
+        and claimed_message_id is null
+        and claimed_group_message_id is null
+      order by expires_at asc,id asc
+      limit $1`,[bounded]);
+    let deleted=0,failed=0;
+    for(const item of candidates.rows){
+      try{
+        await client.send(new DeleteObjectCommand({
+          Bucket:bucket,Key:item.object_key
+        }));
+        const removed=await dbQuery(`
+          delete from media_assets
+          where id=$1 and expires_at<=now()
+            and claimed_message_id is null
+            and claimed_group_message_id is null
+          returning id`,[item.id]);
+        deleted+=removed.rowCount;
+      }catch(error){
+        failed++;
+      }
+    }
+    return {scanned:candidates.rowCount,deleted,failed};
+  },
+
   async signedDownload(userId,id){
     if(!mediaReady)return {error:"media_unavailable"};
     const r=await dbQuery(`
@@ -443,3 +515,32 @@ export const mediaStore={
     };
   }
 };
+
+export function registerMediaCleanup(app){
+  app.get("/internal/media-cleanup",async(req,res)=>{
+    res.set("Cache-Control","private, no-store");
+    const secret=process.env.CRON_SECRET || "";
+    if(process.env.MEDIA_ENABLE_UPLOADS!=="true" || !mediaReady ||
+       Buffer.byteLength(secret)<32)
+      return res.status(404).json({error:"feature_unavailable"});
+    const provided=typeof req.headers.authorization==="string" &&
+      req.headers.authorization.startsWith("Bearer ")
+      ? req.headers.authorization.slice(7) : "";
+    const a=Buffer.from(provided,"utf8");
+    const b=Buffer.from(secret,"utf8");
+    if(a.length!==b.length || !timingSafeEqual(a,b))
+      return res.status(401).json({error:"unauthorized"});
+    try{
+      const result=await mediaStore.cleanupAbandoned(100);
+      return result.error
+        ? res.status(503).json({error:result.error})
+        : res.json({ok:true,...result});
+    }catch(error){
+      console.error(
+        "Media cleanup failed",
+        typeof error?.name==="string"?error.name:"unknown"
+      );
+      return res.status(503).json({error:"service_unavailable"});
+    }
+  });
+}
