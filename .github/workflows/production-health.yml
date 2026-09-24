@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/production-health.yml"
+      - "server/test/production-smoke.test.js"
   workflow_dispatch:
   schedule:
     - cron: "11 */6 * * *"

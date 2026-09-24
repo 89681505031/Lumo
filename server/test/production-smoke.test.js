@@ -31,6 +31,18 @@ test("deployed Lumo API and PostgreSQL are available without test accounts",{
   assert.equal(health.body?.database?.configured,true);
   assert.equal(health.body?.database?.ok,true);
 
+  const capabilities=await request("/api/capabilities");
+  assert.equal(
+    capabilities.status,200,
+    "Production backend is stale: /api/capabilities must exist"
+  );
+  assert.equal(
+    capabilities.body?.groupsReady,true,
+    "Production backend must expose current private-group support"
+  );
+  assert.equal(typeof capabilities.body?.mediaReady,"boolean");
+  assert.equal(typeof capabilities.body?.groupAttachments,"boolean");
+
   const anonymous=await request("/api/me");
   assert.equal(anonymous.status,401,"Private profile must reject anonymous requests");
   assert.equal(anonymous.body?.error,"unauthorized");
