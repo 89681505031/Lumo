@@ -5,6 +5,18 @@ import { pool } from "./db.js";
 // Signaling only: no media transport, TURN, push wakeup, or production call UI.
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const enabled = () => process.env.LUMO_CALL_SIGNALING_ENABLED === "true";
+const turnUrls = () => (process.env.LUMO_TURN_URLS || "")
+  .split(",").map(v=>v.trim()).filter(Boolean);
+const validTurnUrl = v =>
+  /^turns?:[a-zA-Z0-9.-]+(?::[0-9]{1,5})?(?:[?]transport=(?:udp|tcp))?$/.test(v);
+
+export const callSignalingReady = () => enabled() && Boolean(pool);
+export const turnReady = () => {
+  const secret = process.env.LUMO_TURN_SECRET || "";
+  const urls = turnUrls();
+  return callSignalingReady() && secret.length >= 32 &&
+    urls.length >= 1 && urls.length <= 3 && urls.every(validTurnUrl);
+};
 const publicCall = r => ({
   id:r.id, callerId:r.caller_id, calleeId:r.callee_id, kind:r.kind,
   status:r.status, createdAt:r.created_at, updatedAt:r.updated_at, expiresAt:r.expires_at
@@ -180,11 +192,9 @@ export function callRouter(auth) {
     if (await blocked(pool,call.caller_id,call.callee_id))
       return res.status(403).json({error:"user_blocked"});
     const secret = process.env.LUMO_TURN_SECRET || "";
-    const raw = process.env.LUMO_TURN_URLS || "";
-    const urls = raw.split(",").map(v=>v.trim()).filter(Boolean);
+    const urls = turnUrls();
     // Fail closed: never hand out unusable or arbitrary ICE URLs.
-    if (secret.length < 32 || urls.length < 1 || urls.length > 3 ||
-        urls.some(v=>!/^turns?:[a-zA-Z0-9.-]+(?::[0-9]{1,5})?(?:[?]transport=(?:udp|tcp))?$/.test(v)))
+    if (!turnReady())
       return res.status(503).json({error:"turn_unavailable"});
     // 35-minute upper bound covers an accepted 30-minute lab call.
     const remaining = Math.max(1,Math.ceil((new Date(call.expires_at).getTime()-Date.now())/1000));

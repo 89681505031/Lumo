@@ -8,7 +8,7 @@ import { groupStore } from "./group-store.js";
 import { hashPassword, verifyPassword, validPassword } from "./password.js";
 import { aiReady, completeLumoAi } from "./ai-provider.js";
 import { mediaReady, mediaStore, registerMediaCleanup } from "./media-store.js";
-import { callRouter } from "./call-signaling.js";
+import { callRouter, callSignalingReady, turnReady } from "./call-signaling.js";
 import { registerCallCleanup } from "./call-cleanup.js";
 import { registerPushDispatch } from "./push-outbox.js";
 
@@ -63,7 +63,21 @@ async function auth(req, res, next) {
 }
 
 app.get("/live", (_req, res) => res.json({ ok: true, service: "lumo-server" }));
-app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled,documentsReady:mediaEnabled,groupsReady:hasDatabase,groupLinkedReplies:hasDatabase,groupSearch:hasDatabase,groupPagination:hasDatabase,groupMessageEdit:hasDatabase,groupMessageDelete:hasDatabase,groupReactions:reactionsEnabled,groupAttachments:mediaEnabled&&hasDatabase,pushRegistration:hasDatabase}));
+app.get("/api/capabilities",(_req,res)=>res.json({
+  mediaReady:mediaEnabled,
+  documentsReady:mediaEnabled,
+  groupsReady:hasDatabase,
+  groupLinkedReplies:hasDatabase,
+  groupSearch:hasDatabase,
+  groupPagination:hasDatabase,
+  groupMessageEdit:hasDatabase,
+  groupMessageDelete:hasDatabase,
+  groupReactions:reactionsEnabled,
+  groupAttachments:mediaEnabled&&hasDatabase,
+  callsReady:callSignalingReady(),
+  turnReady:turnReady(),
+  pushRegistration:hasDatabase
+}));
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase,ok:false}; if(hasDatabase){try{database=await dbHealth()}catch(error){console.error("Database health check failed",error);database={configured:true,ok:false}}} const ok=database.configured===true&&database.ok===true; res.status(ok?200:503).json({ ok, service:"lumo-server", database }); });
 
