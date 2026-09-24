@@ -84,6 +84,7 @@ class WebRtcVideoSession(
         setEnabled(true)
     }
     private var remoteVideoTrack:VideoTrack?=null
+    @Volatile private var cameraCapturing=true
 
     private fun createCameraCapturer(context:Context):VideoCapturer{
         val enumerator:CameraEnumerator=if(Camera2Enumerator.isSupported(context))
@@ -291,7 +292,20 @@ class WebRtcVideoSession(
     }
 
     fun setCameraEnabled(enabled:Boolean){
-        if(!closed)runCatching{localVideoTrack.setEnabled(enabled)}
+        if(closed)return
+        if(enabled){
+            if(!cameraCapturing){
+                runCatching{
+                    capturer.startCapture(640,480,24)
+                    cameraCapturing=true
+                    localVideoTrack.setEnabled(true)
+                }
+            }
+        }else if(cameraCapturing){
+            runCatching{localVideoTrack.setEnabled(false)}
+            runCatching{capturer.stopCapture()}
+            cameraCapturing=false
+        }
     }
 
     fun setSpeakerphone(enabled:Boolean){
@@ -312,7 +326,8 @@ class WebRtcVideoSession(
         }
         runCatching{audioTrack.setEnabled(false)}
         runCatching{localVideoTrack.setEnabled(false)}
-        runCatching{capturer.stopCapture()}
+        if(cameraCapturing)runCatching{capturer.stopCapture()}
+        cameraCapturing=false
         runCatching{remoteVideoTrack?.removeSink(remoteRenderer)}
         runCatching{localVideoTrack.removeSink(localRenderer)}
         runCatching{pc.close()}
