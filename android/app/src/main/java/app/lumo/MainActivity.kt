@@ -687,6 +687,8 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  var reactionRefresh by remember{mutableIntStateOf(0)}
  var reactionBusy by remember{mutableStateOf(false)}
  var actionError by remember{mutableStateOf("")}
+ var showingCachedHistory by remember(me.id,peer.id){mutableStateOf(false)}
+ var networkHistoryLoaded by remember(me.id,peer.id){mutableStateOf(false)}
  LaunchedEffect(token,peer.id) {
   reactionsEnabled=runCatching {
    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){LumoReactionApi.enabled(token)}
@@ -704,9 +706,31 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  }
  val msgs=remember{mutableStateListOf<Msg>()};var input by remember{mutableStateOf("")};var ws by remember{mutableStateOf<WebSocket?>(null)};var socketGeneration by remember{mutableIntStateOf(0)};var connected by remember{mutableStateOf(false)};var socketError by remember{mutableStateOf("")};var historyError by remember{mutableStateOf(false)};val pending=remember{mutableStateListOf<PendingMessage>().apply{val a=runCatching{JSONArray(queuePrefs.getString(queueKey,"[]"))}.getOrNull();if(a!=null)for(i in 0 until a.length()){val o=a.optJSONObject(i);if(o!=null){val id=o.optString("clientMessageId");val text=o.optString("text");if(id.isNotBlank()&&text.isNotBlank())add(PendingMessage(id,text))}else{val text=a.optString(i);if(text.isNotBlank())add(PendingMessage(java.util.UUID.randomUUID().toString(),text))}}}}
  fun savePending(){val a=JSONArray();pending.forEach{a.put(JSONObject().put("clientMessageId",it.clientMessageId).put("text",it.text))};queuePrefs.edit().putString(queueKey,a.toString()).apply()}
+ fun persistHistory(){
+  val snapshot=msgs.toList()
+  scope.launch{
+   runCatching{
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+     LumoOfflineStore.saveHistory(context,me.id,peer.id,snapshot)
+    }
+   }
+  }
+ }
+ LaunchedEffect(me.id,peer.id){
+  val cached=runCatching{
+   kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+    LumoOfflineStore.loadHistory(context,me.id,peer.id)
+   }
+  }.getOrDefault(emptyList())
+  if(!networkHistoryLoaded&&cached.isNotEmpty()){
+   val merged=mergeChatMessages(msgs,cached)
+   msgs.clear();msgs.addAll(merged)
+   showingCachedHistory=true
+  }
+ }
  DisposableEffect(peer.id){
-  scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{historyError=false;val merged=mergeChatMessages(msgs,it);msgs.clear();msgs.addAll(merged);val unread=it.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true}}
-  fun syncHistory(){scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{fresh->historyError=false;val byId=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(byId);val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->scope.launch{if(m.from==peer.id||m.to==peer.id){if(m.from==me.id&&m.clientMessageId.isNotBlank()){pending.removeAll{it.clientMessageId==m.clientMessageId};savePending()};val existing=msgs.indexOfFirst{it.id==m.id};if(existing>=0){msgs[existing]=mergeChatMessages(listOf(msgs[existing]),listOf(m)).first()}else msgs.add(m);if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}}},{r->scope.launch{val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=old.deliveredAt.ifBlank{r.deliveredAt},readAt=old.readAt.ifBlank{r.readAt})}}},{e->scope.launch{socketError=when(e){"service_unavailable"->"Сервер временно недоступен. Переподключаемся…";"recipient_not_found"->"Получатель больше не найден.";"message_too_long"->"Сообщение слишком длинное.";"empty_message"->"Пустое сообщение не отправлено.";"client_message_id_conflict"->"Конфликт повторной отправки. Сообщение сохранено.";"invalid_client_message_id"->"Ошибка идентификатора сообщения.";"invalid_recipient_id"->"Некорректный получатель.";"invalid_server_message"->"Получен некорректный ответ сервера.";"cannot_message_self"->"Нельзя отправить сообщение самому себе." ;else->"Не удалось отправить сообщение"};if(e=="service_unavailable"){connected=false;ws?.close(1012,"retry")}}},{scope.launch{connected=true;socketError="";for(p in pending.toList()){val sent=ws?.send(JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId).toString())==true;if(!sent){connected=false;ws?.close(1012,"retry");break}};syncHistory()}},{scope.launch{if(generation==socketGeneration){connected=false;kotlinx.coroutines.delay(2000);if(generation==socketGeneration)connect()}}})};connect()
+  scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{fresh->historyError=false;networkHistoryLoaded=true;showingCachedHistory=false;val merged=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(merged);persistHistory();val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}}
+  fun syncHistory(){scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{fresh->historyError=false;networkHistoryLoaded=true;showingCachedHistory=false;val byId=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(byId);persistHistory();val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->scope.launch{if(m.from==peer.id||m.to==peer.id){if(m.from==me.id&&m.clientMessageId.isNotBlank()){pending.removeAll{it.clientMessageId==m.clientMessageId};savePending()};val existing=msgs.indexOfFirst{it.id==m.id};if(existing>=0){msgs[existing]=mergeChatMessages(listOf(msgs[existing]),listOf(m)).first()}else msgs.add(m);persistHistory();if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}}},{r->scope.launch{val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=old.deliveredAt.ifBlank{r.deliveredAt},readAt=old.readAt.ifBlank{r.readAt});persistHistory()}}},{e->scope.launch{socketError=when(e){"service_unavailable"->"Сервер временно недоступен. Переподключаемся…";"recipient_not_found"->"Получатель больше не найден.";"message_too_long"->"Сообщение слишком длинное.";"empty_message"->"Пустое сообщение не отправлено.";"client_message_id_conflict"->"Конфликт повторной отправки. Сообщение сохранено.";"invalid_client_message_id"->"Ошибка идентификатора сообщения.";"invalid_recipient_id"->"Некорректный получатель.";"invalid_server_message"->"Получен некорректный ответ сервера.";"cannot_message_self"->"Нельзя отправить сообщение самому себе." ;else->"Не удалось отправить сообщение"};if(e=="service_unavailable"){connected=false;ws?.close(1012,"retry")}}},{scope.launch{connected=true;socketError="";for(p in pending.toList()){val sent=ws?.send(JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId).toString())==true;if(!sent){connected=false;ws?.close(1012,"retry");break}};syncHistory()}},{scope.launch{if(generation==socketGeneration){connected=false;kotlinx.coroutines.delay(2000);if(generation==socketGeneration)connect()}}})};connect()
   onDispose{socketGeneration++;ws?.close(1000,"bye")}
  }
  // A message can be replied to or explicitly copied to another contact on
@@ -756,7 +780,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
     if(saved.isFailure)break
     val m=saved.getOrThrow()
     pending.removeAll{it.clientMessageId==p.clientMessageId};savePending()
-    val merged=mergeChatMessages(msgs,listOf(m));msgs.clear();msgs.addAll(merged)
+    val merged=mergeChatMessages(msgs,listOf(m));msgs.clear();msgs.addAll(merged);persistHistory()
    }
    val refreshed=runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
     val fresh=Api.history(token,peer.id)
@@ -766,10 +790,12 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    }}
    refreshed.onSuccess{fresh->
     historyError=false
+    networkHistoryLoaded=true
+    showingCachedHistory=false
     val acknowledged=fresh.filter{it.from==me.id&&it.clientMessageId.isNotBlank()}.map{it.clientMessageId}.toSet()
     if(pending.removeAll{it.clientMessageId in acknowledged})savePending()
-    val merged=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(merged)
-   }.onFailure{historyError=true}
+    val merged=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(merged);persistHistory()
+   }.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}
   }
  }
  LumoBackdrop(Modifier.fillMaxSize()){
@@ -805,9 +831,9 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
        color=MaterialTheme.colorScheme.onSurfaceVariant,style=MaterialTheme.typography.bodySmall)
      }
     }
-    if(historyError){
+    if(historyError||showingCachedHistory){
      Box(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(16).padding(10.dp)){
-      Text("История пока недоступна. Повторим загрузку после подключения.",
+      Text(if(showingCachedHistory)"Офлайн: показываем зашифрованную копию последних сообщений с этого телефона." else "История пока недоступна. Повторим загрузку после подключения.",
        color=Color(0xFFFFD5E4),style=MaterialTheme.typography.bodySmall)
      }
     }
@@ -903,7 +929,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
     }
     MediaComposer(token,me,peer,allowSend=true){attached->
      val merged=mergeChatMessages(msgs,listOf(attached))
-     msgs.clear();msgs.addAll(merged)
+     msgs.clear();msgs.addAll(merged);persistHistory()
     }
     replyTarget?.let { original ->
      Row(
