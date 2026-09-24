@@ -196,6 +196,23 @@ private object MediaApi{
    attachmentId=json.optString("attachmentId")
   )
  }
+ fun forward(token:String,assetId:String,to:String,clientMessageId:String,caption:String):Msg{
+  val json=authorized(
+   token,"/api/media/"+assetId+"/forward","POST",
+   JSONObject().put("to",to).put("clientMessageId",clientMessageId)
+    .put("caption",caption.take(1000))
+  )
+  return Msg(
+   id=json.getString("id"),from=json.getString("from"),to=json.getString("to"),
+   text=json.getString("text"),createdAt=json.optString("createdAt"),
+   deliveredAt=if(json.isNull("deliveredAt"))"" else json.optString("deliveredAt"),
+   readAt=if(json.isNull("readAt"))"" else json.optString("readAt"),
+   clientMessageId=json.optString("clientMessageId"),
+   attachmentId=json.optString("attachmentId"),
+   editedAt=if(json.isNull("editedAt"))"" else json.optString("editedAt"),
+   deletedAt=if(json.isNull("deletedAt"))"" else json.optString("deletedAt")
+  )
+ }
  fun link(token:String,id:String):MediaLink{
   val json=authorized(token,"/api/media/"+id+"/download","GET")
   val url=json.getString("url")
@@ -203,6 +220,10 @@ private object MediaApi{
   return MediaLink(url,json.getString("mime"),json.optString("filename","attachment"),json.optLong("bytes",0L))
  }
 }
+
+fun forwardExistingAttachment(
+ token:String,assetId:String,to:String,clientMessageId:String,caption:String
+):Msg = MediaApi.forward(token,assetId,to,clientMessageId,caption)
 
 @Composable
 fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)->Unit){
