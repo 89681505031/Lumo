@@ -1,0 +1,59 @@
+name: Vercel Production
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - ".github/workflows/vercel-production.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: lumo-vercel-production
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: team_tw15Bc9UJwCXpN8thgLHLRAz
+      VERCEL_PROJECT_ID: prj_bsdBu7s9U7aJb1oqDqzCWRlHlAwV
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check Vercel deployment credential
+        id: credential
+        shell: bash
+        run: |
+          if [ -n "$VERCEL_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::VERCEL_TOKEN is not configured; production deployment was not attempted."
+          fi
+      - name: Deploy current server to Vercel production
+        if: steps.credential.outputs.available == 'true'
+        working-directory: server
+        shell: bash
+        run: npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN"
+      - name: Verify production health and capabilities
+        if: steps.credential.outputs.available == 'true'
+        shell: bash
+        run: |
+          for attempt in $(seq 1 18); do
+            HEALTH=$(curl -fsS --max-time 10 https://lumo-gamma-seven.vercel.app/health || true)
+            CAPS=$(curl -fsS --max-time 10 https://lumo-gamma-seven.vercel.app/api/capabilities || true)
+            if echo "$HEALTH" | grep -q '"ok":true' && echo "$CAPS" | grep -q '"groupsReady"'; then
+              echo "Production Lumo backend is current and healthy."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Production alias did not expose the current Lumo backend in time."
+          exit 1
