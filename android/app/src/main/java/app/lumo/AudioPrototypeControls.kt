@@ -2,6 +2,7 @@ package app.lumo
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -42,7 +43,15 @@ fun AudioPrototypeControls(
     var startupJob by remember(call.id) { mutableStateOf<Job?>(null) }
     var muted by remember(call.id) { mutableStateOf(false) }
     var speaker by remember(call.id) { mutableStateOf(false) }
+    var connected by remember(call.id) { mutableStateOf(false) }
+    var connectedSince by remember(call.id) { mutableStateOf<Long?>(null) }
+    var elapsedSeconds by remember(call.id) { mutableLongStateOf(0L) }
     val gate = remember(call.id) { AudioStartGate() }
+
+    fun updateConnected(next:Boolean) {
+        connected = next
+        if (next && connectedSince == null) connectedSince = SystemClock.elapsedRealtime()
+    }
 
     fun stop(message: String = "Микрофон выключен") {
         // Cancel in-flight TURN requests before disposing native audio resources.
@@ -57,6 +66,9 @@ fun AudioPrototypeControls(
         engine = null
         muted = false
         speaker = false
+        connected = false
+        connectedSince = null
+        elapsedSeconds = 0L
         busy = false
         status = message
         onStop(call.id)
@@ -136,6 +148,11 @@ fun AudioPrototypeControls(
                         scope.launch {
                             if (gate.isCurrent(ticket) && engine != null) status = next
                         }
+                    },
+                    onConnectionState = { next ->
+                        scope.launch {
+                            if (gate.isCurrent(ticket) && engine != null) updateConnected(next)
+                        }
                     }
                 )
                 // Constructor can return after a concurrent hangup. Never keep a
@@ -174,6 +191,14 @@ fun AudioPrototypeControls(
         if (!gate.isDisposed()) {
             if (granted && call.status == "accepted") start()
             else status = "Микрофон не используется: доступ не предоставлен"
+        }
+    }
+
+    LaunchedEffect(engine, connectedSince) {
+        while (engine != null && connectedSince != null && isActive) {
+            elapsedSeconds = ((SystemClock.elapsedRealtime() - connectedSince!!) / 1000L)
+                .coerceAtLeast(0L)
+            delay(1_000)
         }
     }
 
@@ -257,7 +282,30 @@ fun AudioPrototypeControls(
     }
 
     Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
-        Text(status, style = MaterialTheme.typography.bodySmall)
+        Row(
+            Modifier.fillMaxWidth().lumoGlass(18).padding(horizontal=12.dp,vertical=9.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    when {
+                        connected -> "Соединено · " + formatCallElapsed(elapsedSeconds)
+                        connectedSince != null -> "Связь прервана · " + formatCallElapsed(elapsedSeconds)
+                        busy -> "Подключение…"
+                        else -> "Аудиоканал выключен"
+                    },
+                    style = MaterialTheme.typography.labelLarge
+                )
+                Text(status, style = MaterialTheme.typography.bodySmall)
+            }
+            if (engine != null) {
+                Text(
+                    if (speaker) "Динамик" else "Телефон",
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
         if (engine != null) {
             Row(
                 Modifier.fillMaxWidth(),
@@ -276,7 +324,7 @@ fun AudioPrototypeControls(
                         engine?.setSpeakerphone(speaker)
                     },
                     modifier = Modifier.weight(1f)
-                ) { Text(if (speaker) "Динамик ✓" else "Динамик") }
+                ) { Text(if (speaker) "К телефону" else "На динамик") }
             }
             TextButton(onClick = { stop("Аудиосоединение отключено") }) {
                 Text("Отключить аудио")
@@ -300,8 +348,8 @@ fun AudioPrototypeControls(
             Text("Сначала завершите другое тестовое аудиосоединение.")
         }
         Text(
-            "Эксперимент: оба участника должны отдельно включить аудио. " +
-                "Нет фоновых вызовов, гарантированной связи и видеопередачи.",
+            "Аудио включается только вручную после принятия вызова. " +
+                "При сворачивании Lumo микрофон и WebRTC-сессия останавливаются.",
             style = MaterialTheme.typography.bodySmall
         )
     }
