@@ -86,6 +86,7 @@ test("private document attachments are allowlisted, signed, participant-only and
       MEDIA_ACCESS_KEY_ID:"test-key",
       MEDIA_SECRET_ACCESS_KEY:"test-secret",
       MEDIA_ENDPOINT:`http://127.0.0.1:${storagePort}`,
+      MEDIA_UNREFERENCED_RETENTION_DAYS:"30",
       CRON_SECRET:cleanupSecret
     }
   });
@@ -421,6 +422,35 @@ test("private document attachments are allowlisted, signed, participant-only and
       "/api/media/"+groupInit.json.assetId+"/download","GET",alice.token
     )).status,200,"the uploader keeps owner access pending retention cleanup");
 
+    // Deleting an owned group must remove its private objects before the group
+    // row cascades away, otherwise an S3 object would become unreachable from DB.
+    const groupObjectKey=(await db.query(
+      "select object_key from media_assets where id=$1",
+      [groupInit.json.assetId]
+    )).rows[0].object_key;
+    assert.equal(uploaded.has(groupObjectKey),true);
+    const removeGroup=await request(
+      "/api/groups/"+groupId,"DELETE",alice.token
+    );
+    assert.equal(removeGroup.status,204);
+    assert.equal(uploaded.has(groupObjectKey),false);
+    assert.equal(
+      Number((await db.query(
+        "select count(*) from media_assets where id=$1",
+        [groupInit.json.assetId]
+      )).rows[0].count),
+      0
+    );
+
+    // Claimed direct media whose every message reference is now deleted is
+    // retained until the explicit policy window elapses.
+    await db.query(
+      `update media_assets
+       set uploaded_at=now()-interval '31 days'
+       where id=$1`,
+      [init.json.assetId]
+    );
+
     // Outstanding unclaimed reservations are bounded per account. This protects
     // a private bucket from repeated presign requests that are never committed.
     assert.equal((await request("/internal/media-cleanup")).status,401);
@@ -459,8 +489,11 @@ test("private document attachments are allowlisted, signed, participant-only and
       "/internal/media-cleanup","GET",cleanupSecret
     );
     assert.equal(cleanup.status,200);
-    assert.equal(cleanup.json.deleted,8);
-    assert.equal(cleanup.json.failed,0);
+    assert.equal(cleanup.json.abandoned.deleted,8);
+    assert.equal(cleanup.json.abandoned.failed,0);
+    assert.equal(cleanup.json.unreferenced.enabled,true);
+    assert.equal(cleanup.json.unreferenced.retentionDays,30);
+    assert.ok(cleanup.json.unreferenced.deleted>=1);
     assert.equal(
       Number((await db.query(
         "select count(*) from media_assets where id=any($1::uuid[])",
@@ -468,6 +501,17 @@ test("private document attachments are allowlisted, signed, participant-only and
       )).rows[0].count),
       0
     );
+    assert.equal(
+      Number((await db.query(
+        "select count(*) from media_assets where id=$1",
+        [init.json.assetId]
+      )).rows[0].count),
+      0,
+      "old claimed media with no live message references is garbage-collected"
+    );
+    assert.equal((await request(
+      "/api/media/"+init.json.assetId+"/download","GET",alice.token
+    )).status,404);
 
     const afterCleanup=await request("/api/media/init","POST",stranger.token,{
       to:alice.user.id,

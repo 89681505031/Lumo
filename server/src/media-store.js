@@ -51,6 +51,14 @@ let client=null;
 const bucket=mediaReady?process.env.MEDIA_BUCKET:null;
 const MAX_UNCLAIMED_RESERVATIONS=8;
 const MAX_UNCLAIMED_RESERVED_BYTES=75*1024*1024;
+function unreferencedRetentionDays(){
+  const raw=String(process.env.MEDIA_UNREFERENCED_RETENTION_DAYS||"").trim();
+  if(!raw)return null; // Explicit opt-in: never delete claimed media by default.
+  const days=Number(raw);
+  if(!Number.isInteger(days) || days<1 || days>3650)
+    throw new Error("MEDIA_UNREFERENCED_RETENTION_DAYS must be an integer from 1 to 3650");
+  return days;
+}
 if(mediaReady){
   client=new S3Client({
     region:process.env.MEDIA_REGION,
@@ -479,6 +487,120 @@ export const mediaStore={
     return {scanned:candidates.rowCount,deleted,failed};
   },
 
+  async cleanupUnreferenced(limit=100){
+    if(!mediaReady)return {error:"media_unavailable"};
+    const days=unreferencedRetentionDays();
+    if(days===null)return {enabled:false,scanned:0,deleted:0,failed:0};
+    const bounded=Math.max(1,Math.min(250,Math.floor(limit)));
+    const candidates=await dbQuery(`
+      select a.id,a.object_key
+      from media_assets a
+      where a.uploaded_at is not null
+        and a.uploaded_at<=now()-make_interval(days=>$1)
+        and not exists(
+          select 1 from messages m
+          where m.media_id=a.id and m.deleted_at is null
+        )
+        and not exists(
+          select 1 from chat_group_messages gm
+          where gm.media_id=a.id and gm.deleted_at is null
+        )
+      order by a.uploaded_at asc,a.id asc
+      limit $2`,[days,bounded]);
+    let deleted=0,failed=0;
+    for(const item of candidates.rows){
+      try{
+        await client.send(new DeleteObjectCommand({
+          Bucket:bucket,Key:item.object_key
+        }));
+        const conn=await pool.connect();
+        let committed=false;
+        try{
+          await conn.query("begin");
+          // Re-check eligibility under row lock. Deleted message tombstones keep
+          // their text/status, but no longer retain a dead attachment UUID.
+          const locked=await conn.query(`
+            select a.id from media_assets a
+            where a.id=$1
+              and a.uploaded_at<=now()-make_interval(days=>$2)
+              and not exists(
+                select 1 from messages m
+                where m.media_id=a.id and m.deleted_at is null
+              )
+              and not exists(
+                select 1 from chat_group_messages gm
+                where gm.media_id=a.id and gm.deleted_at is null
+              )
+            for update`,[item.id,days]);
+          if(!locked.rowCount){
+            await conn.query("rollback");
+            committed=true;
+            continue;
+          }
+          await conn.query(
+            "update messages set media_id=null where media_id=$1 and deleted_at is not null",
+            [item.id]
+          );
+          await conn.query(
+            "update chat_group_messages set media_id=null where media_id=$1 and deleted_at is not null",
+            [item.id]
+          );
+          const removed=await conn.query(
+            "delete from media_assets where id=$1 returning id",
+            [item.id]
+          );
+          await conn.query("commit");
+          committed=true;
+          deleted+=removed.rowCount;
+        }finally{
+          if(!committed)await conn.query("rollback").catch(()=>{});
+          conn.release();
+        }
+      }catch(error){
+        failed++;
+      }
+    }
+    return {enabled:true,retentionDays:days,scanned:candidates.rowCount,deleted,failed};
+  },
+
+  async groupAssetCount(groupId){
+    const r=await dbQuery(
+      "select count(*)::integer as count from media_assets where group_id=$1",
+      [groupId]
+    );
+    return Number(r.rows[0]?.count||0);
+  },
+
+  async cleanupGroupAssets(groupId){
+    if(!mediaReady)return {error:"media_unavailable"};
+    const items=await dbQuery(
+      "select id,object_key from media_assets where group_id=$1 order by id",
+      [groupId]
+    );
+    let deletedObjects=0;
+    for(const item of items.rows){
+      try{
+        await client.send(new DeleteObjectCommand({
+          Bucket:bucket,Key:item.object_key
+        }));
+        deletedObjects++;
+      }catch(error){
+        return {
+          error:"media_cleanup_failed",
+          deletedObjects,
+          remaining:items.rowCount-deletedObjects
+        };
+      }
+    }
+    // Group message media_id uses ON DELETE SET NULL; deleting these rows
+    // before deleting the group prevents the DB cascade from orphaning S3 data.
+    const removed=await dbQuery(
+      "delete from media_assets where group_id=$1 returning id",
+      [groupId]
+    );
+    return {deletedObjects,deletedRows:removed.rowCount};
+  },
+
   async signedDownload(userId,id){
     if(!mediaReady)return {error:"media_unavailable"};
     const r=await dbQuery(`
@@ -531,10 +653,11 @@ export function registerMediaCleanup(app){
     if(a.length!==b.length || !timingSafeEqual(a,b))
       return res.status(401).json({error:"unauthorized"});
     try{
-      const result=await mediaStore.cleanupAbandoned(100);
-      return result.error
-        ? res.status(503).json({error:result.error})
-        : res.json({ok:true,...result});
+      const abandoned=await mediaStore.cleanupAbandoned(100);
+      if(abandoned.error)return res.status(503).json({error:abandoned.error});
+      const unreferenced=await mediaStore.cleanupUnreferenced(100);
+      if(unreferenced.error)return res.status(503).json({error:unreferenced.error});
+      return res.json({ok:true,...abandoned,abandoned,unreferenced});
     }catch(error){
       console.error(
         "Media cleanup failed",
