@@ -1161,9 +1161,34 @@ object Api{
   }
  }
  fun sendMessage(t:String,to:String,p:PendingMessage):Msg{
-  val body=JSONObject().put("to",to).put("text",p.text).put("clientMessageId",p.clientMessageId);if(p.replyToMessageId.isNotBlank())body.put("replyToMessageId",p.replyToMessageId)
-  val request=Request.Builder().url(HTTP+"/api/messages").header("Authorization","Bearer "+t).post(body.toString().toRequestBody("application/json".toMediaType())).build()
-  c.newCall(request).execute().use{response->if(!response.isSuccessful)error("Отправка: "+response.code);return msg(JSONObject(response.body!!.string()))}
+  fun perform(body:JSONObject):Pair<Int,String>{
+   val request=Request.Builder().url(HTTP+"/api/messages")
+    .header("Authorization","Bearer "+t)
+    .post(body.toString().toRequestBody("application/json".toMediaType())).build()
+   c.newCall(request).execute().use{response->
+    if(response.code==401)throw SessionExpiredException()
+    return response.code to response.body?.string().orEmpty()
+   }
+  }
+  val body=JSONObject().put("to",to).put("text",p.text)
+   .put("clientMessageId",p.clientMessageId)
+  if(p.replyToMessageId.isNotBlank())body.put("replyToMessageId",p.replyToMessageId)
+  var result=perform(body)
+  if(result.first==404 && p.replyToMessageId.isNotBlank()){
+   val code=runCatching{JSONObject(result.second).optString("error")}.getOrDefault("")
+   if(code=="reply_message_not_found"){
+    val preview=p.replyPreviewText.ifBlank{"Сообщение"}
+     .replace("\n"," ").take(120)
+    val prefix="↪ "+preview+"\n"
+    val fallback=prefix+p.text.take((4000-prefix.length).coerceAtLeast(0))
+    result=perform(
+     JSONObject().put("to",to).put("text",fallback)
+      .put("clientMessageId",p.clientMessageId)
+    )
+   }
+  }
+  if(result.first !in 200..299)error("Отправка: "+result.first)
+  return msg(JSONObject(result.second))
  }
  fun readMessages(t:String,ids:List<String>){
   if(ids.isEmpty())return
