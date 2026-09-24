@@ -3,6 +3,7 @@ package app.lumo
 import android.Manifest
 import android.graphics.BitmapFactory
 import android.content.Context
+import android.content.Intent
 import android.widget.VideoView
 import android.media.MediaPlayer
 import android.media.MediaRecorder
@@ -46,7 +47,19 @@ private val mediaLimits=mapOf(
  "image/png" to 8L*1024*1024,
  "image/webp" to 8L*1024*1024,
  "video/mp4" to 25L*1024*1024,
- "audio/mp4" to MAX_VOICE_BYTES
+ "audio/mp4" to MAX_VOICE_BYTES,
+ "application/pdf" to 15L*1024*1024,
+ "text/plain" to 2L*1024*1024,
+ "application/vnd.openxmlformats-officedocument.wordprocessingml.document" to 15L*1024*1024,
+ "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" to 15L*1024*1024,
+ "application/vnd.openxmlformats-officedocument.presentationml.presentation" to 20L*1024*1024
+)
+private val documentMimes=arrayOf(
+ "application/pdf",
+ "text/plain",
+ "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+ "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+ "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 )
 private data class ChosenMedia(
  val mime:String,val filename:String,val bytes:Long,
@@ -62,7 +75,7 @@ private data class PendingAttachment(
 private data class UploadTicket(
  val assetId:String,val uploadUrl:String,val fields:JSONObject
 )
-private data class MediaLink(val url:String,val mime:String)
+private data class MediaLink(val url:String,val mime:String,val filename:String,val bytes:Long)
 private fun verifiedType(mime:String)=when(mime.lowercase()){
  "image/jpg"->"image/jpeg"
  else->mime.lowercase()
@@ -85,6 +98,26 @@ private fun selectedVisual(context:Context,uri:Uri):ChosenMedia{
  if(bytes<=0)bytes=resolver.openAssetFileDescriptor(uri,"r")?.use{it.length}?:-1
  if(bytes<=0 || bytes>limit)error("Невозможно определить размер или файл превышает лимит")
  name=name.take(160).ifBlank{"attachment"}
+ return ChosenMedia(type,name,bytes,uri=uri)
+}
+private fun selectedDocument(context:Context,uri:Uri):ChosenMedia{
+ val resolver=context.contentResolver
+ val type=verifiedType(resolver.getType(uri)?:error("Неизвестный формат документа"))
+ if(type !in documentMimes)error("Поддерживаются PDF, TXT, DOCX, XLSX и PPTX")
+ val limit=mediaLimits[type]?:error("Этот формат не поддерживается")
+ var bytes=-1L
+ var name="document"
+ resolver.query(uri,arrayOf(OpenableColumns.DISPLAY_NAME,OpenableColumns.SIZE),null,null,null)?.use{cursor->
+  if(cursor.moveToFirst()){
+   val nameColumn=cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+   val sizeColumn=cursor.getColumnIndex(OpenableColumns.SIZE)
+   if(nameColumn>=0&&!cursor.isNull(nameColumn))name=cursor.getString(nameColumn)
+   if(sizeColumn>=0&&!cursor.isNull(sizeColumn))bytes=cursor.getLong(sizeColumn)
+  }
+ }
+ if(bytes<=0)bytes=resolver.openAssetFileDescriptor(uri,"r")?.use{it.length}?:-1
+ if(bytes<=0 || bytes>limit)error("Невозможно определить размер или документ превышает лимит")
+ name=name.take(160).ifBlank{"document"}
  return ChosenMedia(type,name,bytes,uri=uri)
 }
 private object MediaApi{
@@ -167,7 +200,7 @@ private object MediaApi{
   val json=authorized(token,"/api/media/"+id+"/download","GET")
   val url=json.getString("url")
   if(Uri.parse(url).scheme!="https")error("Небезопасная ссылка на медиа")
-  return MediaLink(url,json.getString("mime"))
+  return MediaLink(url,json.getString("mime"),json.optString("filename","attachment"),json.optLong("bytes",0L))
  }
 }
 
@@ -258,6 +291,14 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
     .onFailure{status=it.message?:"Не удалось открыть файл";chosen=null}
   }
  }
+ val chooseDocument=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri->
+  if(uri!=null){
+   chosen?.file?.delete()
+   runCatching{selectedDocument(context,uri)}
+    .onSuccess{chosen=it;status="Документ выбран. Нажмите отправить."}
+    .onFailure{status=it.message?:"Не удалось открыть документ";chosen=null}
+  }
+ }
  LaunchedEffect(token){
   checking=true
   available=runCatching{withContext(Dispatchers.IO){MediaApi.enabled()}}.getOrDefault(false)
@@ -309,14 +350,25 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
     }
    }
   }else{
-   Row(Modifier.fillMaxWidth()){
-    TextButton(onClick={
-     chooseVisual.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
-    },enabled=available&&allowSend&&!busy&&recorder==null){Text("◉ Фото / видео",color=LumoCyan)}
-    if(recorder==null){
-     TextButton(onClick={askMicrophone.launch(Manifest.permission.RECORD_AUDIO)},
-      enabled=available&&allowSend&&!busy&&chosen==null){Text("🎙 Голосовое",color=LumoCyan)}
-    }else{
+   if(recorder==null){
+    Row(Modifier.fillMaxWidth()){
+     TextButton(
+      onClick={chooseVisual.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))},
+      enabled=available&&allowSend&&!busy,
+      modifier=Modifier.weight(1f)
+     ){Text("◉ Фото / видео",color=LumoCyan,maxLines=1)}
+     TextButton(
+      onClick={chooseDocument.launch(documentMimes)},
+      enabled=available&&allowSend&&!busy,
+      modifier=Modifier.weight(1f)
+     ){Text("📎 Документ",color=LumoCyan,maxLines=1)}
+    }
+    TextButton(
+     onClick={askMicrophone.launch(Manifest.permission.RECORD_AUDIO)},
+     enabled=available&&allowSend&&!busy&&chosen==null
+    ){Text("🎙 Голосовое",color=LumoCyan)}
+   }else{
+    Row(Modifier.fillMaxWidth()){
      TextButton(onClick={
       if(SystemClock.elapsedRealtime()-startedAt>=700L)stopRecording(false)
       else status="Запишите хотя бы одну секунду"
@@ -401,6 +453,7 @@ private fun fetchImageBitmap(url:String):ImageBitmap{
 
 @Composable
 fun MediaAttachmentButton(token:String,assetId:String){
+ val context=LocalContext.current
  val scope=rememberCoroutineScope()
  var busy by remember(assetId){mutableStateOf(false)}
  var error by remember(assetId){mutableStateOf("")}
@@ -471,7 +524,22 @@ fun MediaAttachmentButton(token:String,assetId:String){
         busy=false
        }
        link.mime=="video/mp4"->{videoUrl=link.url;busy=false}
-       else->{error="Неизвестный формат медиа";busy=false}
+       link.mime in documentMimes.toSet()->{
+        val uri=Uri.parse(link.url)
+        val intent=Intent(Intent.ACTION_VIEW).apply{
+         setDataAndType(uri,link.mime)
+         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+         addCategory(Intent.CATEGORY_BROWSABLE)
+         putExtra(Intent.EXTRA_TITLE,link.filename)
+        }
+        runCatching{
+         if(intent.resolveActivity(context.packageManager)==null)
+          error("Нет приложения для открытия этого документа")
+         context.startActivity(intent)
+        }.onFailure{error="Не удалось открыть документ во внешнем приложении"}
+        busy=false
+       }
+       else->{error="Неизвестный формат вложения";busy=false}
       }
      }
      .onFailure{error="Не удалось открыть вложение";busy=false}
