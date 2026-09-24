@@ -32,6 +32,9 @@ create table if not exists messages (
   read_at timestamptz,
   client_message_id uuid
 );
+alter table messages add column if not exists reply_to_message_id uuid;
+do $ begin alter table messages add constraint messages_reply_to_fk foreign key (reply_to_message_id) references messages(id) on delete set null; exception when duplicate_object then null; end $;
+create index if not exists messages_reply_to_idx on messages(reply_to_message_id) where reply_to_message_id is not null;
 create unique index if not exists messages_sender_client_id_uidx on messages(sender_id, client_message_id) where client_message_id is not null;
 create index if not exists messages_sender_idx on messages(sender_id, created_at desc);
 create index if not exists messages_recipient_idx on messages(recipient_id, created_at desc);
