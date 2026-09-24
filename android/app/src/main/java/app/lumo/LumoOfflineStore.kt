@@ -192,7 +192,9 @@ object LumoOfflineStore {
                 .put("attachmentId",m.attachmentId)
                 .put("replyToMessageId",m.replyToMessageId)
                 .put("replyPreviewText",m.replyPreviewText.take(240))
-                .put("replyPreviewFrom",m.replyPreviewFrom))
+                .put("replyPreviewFrom",m.replyPreviewFrom)
+                .put("editedAt",m.editedAt)
+                .put("deletedAt",m.deletedAt))
         }
         root.put("items",a)
         write(
@@ -224,7 +226,9 @@ object LumoOfflineStore {
                         attachmentId=o.optString("attachmentId"),
                         replyToMessageId=o.optString("replyToMessageId"),
                         replyPreviewText=o.optString("replyPreviewText").take(240),
-                        replyPreviewFrom=o.optString("replyPreviewFrom")
+                        replyPreviewFrom=o.optString("replyPreviewFrom"),
+                        editedAt=o.optString("editedAt"),
+                        deletedAt=o.optString("deletedAt")
                     )
                     if((m.from==userId&&m.to==peerId)||(m.from==peerId&&m.to==userId))
                         add(m)
