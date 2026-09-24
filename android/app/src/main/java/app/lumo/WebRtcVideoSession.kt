@@ -9,6 +9,7 @@ import org.webrtc.*
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.UUID
 
 /**
  * Experimental one-to-one VIDEO + AUDIO transport.
@@ -33,6 +34,7 @@ class WebRtcVideoSession(
     private val pendingRemoteIce=ArrayList<IceCandidate>()
     private var localDescriptionPublished=false
     private var remoteDescriptionReady=false
+    private var activeMediaSessionId:String?=if(caller)UUID.randomUUID().toString() else null
     private val audioManager=app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val originalMode=audioManager.mode
     private val originalSpeaker=audioManager.isSpeakerphoneOn
@@ -138,7 +140,9 @@ class WebRtcVideoSession(
             override fun onIceGatheringChange(state:PeerConnection.IceGatheringState)=Unit
             override fun onIceCandidate(candidate:IceCandidate){
                 if(closed)return
+                val sessionId=synchronized(gate){activeMediaSessionId}?:return
                 val payload=JSONObject()
+                    .put("mediaSessionId",sessionId)
                     .put("candidate",candidate.sdp)
                     .put("sdpMid",candidate.sdpMid)
                     .put("sdpMLineIndex",candidate.sdpMLineIndex)
@@ -221,7 +225,13 @@ class WebRtcVideoSession(
 
     private fun publishDescription(type:String,description:SessionDescription){
         checkActive()
-        onLocalSignal(type,JSONObject().put("sdp",description.description))
+        val sessionId=synchronized(gate){activeMediaSessionId}
+            ?:throw IllegalStateException("Media session is not initialized")
+        onLocalSignal(
+            type,
+            JSONObject().put("mediaSessionId",sessionId)
+                .put("sdp",description.description)
+        )
         val queued=synchronized(gate){
             localDescriptionPublished=true
             pendingLocalIce.toList().also{pendingLocalIce.clear()}
@@ -263,25 +273,50 @@ class WebRtcVideoSession(
         buffered.forEach{if(!closed)pc.addIceCandidate(it)}
     }
 
+    fun mediaSessionId():String?=synchronized(gate){activeMediaSessionId}
+
+    private fun selectRemoteSession(sessionId:String):Boolean=synchronized(gate){
+        if(closed||caller)return@synchronized activeMediaSessionId==sessionId
+        if(activeMediaSessionId!=sessionId){
+            activeMediaSessionId=sessionId
+            localDescriptionPublished=false
+            remoteDescriptionReady=false
+            pendingLocalIce.clear()
+            pendingRemoteIce.clear()
+        }
+        true
+    }
+
+    private fun matchesSession(sessionId:String):Boolean=synchronized(gate){
+        !closed&&activeMediaSessionId==sessionId
+    }
+
     suspend fun apply(signal:LumoSignal){
         checkActive()
+        val sessionId=signal.payload.optString("mediaSessionId","")
+        if(sessionId.isBlank())return
         when(signal.type){
-            "ice"->addRemoteCandidate(signal.payload)
-            "offer"->if(!caller&&!remoteDescriptionReady){
-                setDescription(
-                    SessionDescription(
-                        SessionDescription.Type.OFFER,
-                        signal.payload.getString("sdp")
-                    ),
-                    local=false
-                )
-                markRemoteReady()
-                checkActive()
-                val answer=createSdp(false)
-                setDescription(answer,local=true)
-                publishDescription("answer",answer)
+            "ice"->if(matchesSession(sessionId))addRemoteCandidate(signal.payload)
+            "offer"->if(!caller&&selectRemoteSession(sessionId)){
+                val negotiate=synchronized(gate){
+                    activeMediaSessionId==sessionId&&!remoteDescriptionReady
+                }
+                if(negotiate){
+                    setDescription(
+                        SessionDescription(
+                            SessionDescription.Type.OFFER,
+                            signal.payload.getString("sdp")
+                        ),
+                        local=false
+                    )
+                    markRemoteReady()
+                    checkActive()
+                    val answer=createSdp(false)
+                    setDescription(answer,local=true)
+                    publishDescription("answer",answer)
+                }
             }
-            "answer"->if(caller&&!remoteDescriptionReady){
+            "answer"->if(caller&&matchesSession(sessionId)&&!remoteDescriptionReady){
                 setDescription(
                     SessionDescription(
                         SessionDescription.Type.ANSWER,

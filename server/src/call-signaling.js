@@ -12,15 +12,22 @@ const publicCall = r => ({
 
 export function validateSignal(type, payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const mediaSessionId = payload.mediaSessionId;
+  if (typeof mediaSessionId !== "string" || !uuid.test(mediaSessionId)) return null;
   if (type === "offer" || type === "answer") {
     if (typeof payload.sdp !== "string" || payload.sdp.length < 1 || payload.sdp.length > 12000) return null;
-    return { sdp:payload.sdp };
+    return { mediaSessionId, sdp:payload.sdp };
   }
   if (type === "ice") {
     if (typeof payload.candidate !== "string" || payload.candidate.length > 2048) return null;
     if (payload.sdpMid != null && (typeof payload.sdpMid !== "string" || payload.sdpMid.length > 128)) return null;
     if (payload.sdpMLineIndex != null && (!Number.isInteger(payload.sdpMLineIndex) || payload.sdpMLineIndex < 0 || payload.sdpMLineIndex > 64)) return null;
-    return { candidate:payload.candidate, sdpMid:payload.sdpMid ?? null, sdpMLineIndex:payload.sdpMLineIndex ?? null };
+    return {
+      mediaSessionId,
+      candidate:payload.candidate,
+      sdpMid:payload.sdpMid ?? null,
+      sdpMLineIndex:payload.sdpMLineIndex ?? null
+    };
   }
   return null;
 }
@@ -212,21 +219,49 @@ export function callRouter(auth) {
       );
       if (existing.rows[0]) {
         const x=existing.rows[0];
+        const sameSession = x.payload.mediaSessionId === payload.mediaSessionId;
         const matches = type === "ice"
-          ? x.payload.candidate === payload.candidate &&
+          ? sameSession && x.payload.candidate === payload.candidate &&
             (x.payload.sdpMid ?? null) === payload.sdpMid &&
             (x.payload.sdpMLineIndex ?? null) === payload.sdpMLineIndex
-          : x.payload.sdp === payload.sdp;
+          : sameSession && x.payload.sdp === payload.sdp;
         if (x.type !== type || !matches)
           return {status:409,body:{error:"client_signal_id_conflict"}};
         return {status:200,body:{seq:x.seq}};
       }
-      if (type === "offer" || type === "answer") {
+      // A mediaSessionId scopes one WebRTC negotiation attempt. Old SDP/ICE
+      // stays immutable for audit/cleanup, while a later explicit user restart can
+      // negotiate again without accidentally consuming a stale answer/candidate.
+      if (type !== "offer") {
+        const offer = await c.query(
+          `select 1 from call_signals
+             where call_id=$1 and sender_id=$2 and type='offer'
+               and payload->>'mediaSessionId'=$3 limit 1`,
+          [call.id,call.caller_id,payload.mediaSessionId]
+        );
+        if (!offer.rowCount)
+          return {status:409,body:{error:"signal_session_not_found"}};
+      }
+      if (type === "offer") {
         const prev = await c.query(
-          "select 1 from call_signals where call_id=$1 and sender_id=$2 and type=$3 limit 1",
-          [call.id,req.user.id,type]
+          `select 1 from call_signals
+             where call_id=$1 and sender_id=$2 and type='offer'
+               and payload->>'mediaSessionId'=$3 limit 1`,
+          [call.id,req.user.id,payload.mediaSessionId]
         );
         if (prev.rowCount) return {status:409,body:{error:"signal_already_submitted"}};
+      }
+      if (type === "answer") {
+        const answers = await c.query(
+          `select count(*)::int as count from call_signals
+             where call_id=$1 and sender_id=$2 and type='answer'
+               and payload->>'mediaSessionId'=$3`,
+          [call.id,req.user.id,payload.mediaSessionId]
+        );
+        // A participant may recreate its peer connection after rotation/background.
+        // Bound re-answers so this recovery path cannot become an unbounded signal sink.
+        if (answers.rows[0].count >= 6)
+          return {status:429,body:{error:"signal_session_limit"}};
       }
       if (call.last_signal_seq >= 150) return {status:429,body:{error:"signal_limit"}};
       const seq = call.last_signal_seq + 1;

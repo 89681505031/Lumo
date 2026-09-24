@@ -139,6 +139,21 @@ class LumoCallApi {
         }
     }
 
+    fun signalHistory(token:String,id:String):List<LumoSignal>{
+        require(uuid.matches(id))
+        val all=ArrayList<LumoSignal>(32)
+        var cursor=0
+        while(all.size<150){
+            val page=signals(token,id,cursor)
+            if(page.isEmpty())break
+            all.addAll(page)
+            val next=page.last().seq
+            if(next<=cursor)break
+            cursor=next
+        }
+        return all
+    }
+
     fun iceConfig(token:String,id:String):List<LumoIceServer>{
         require(uuid.matches(id))
         val root=JSONObject(request(token,"GET","/api/calls/$id/ice-config"))

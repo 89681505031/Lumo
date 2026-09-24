@@ -207,6 +207,26 @@ fun VideoPrototypeControls(
     LaunchedEffect(engine,token,call.id){
         val current=engine?:return@LaunchedEffect
         var cursor=0
+        try{
+            val history=withContext(Dispatchers.IO){
+                Api.callClient.signalHistory(token,call.id)
+            }
+            cursor=history.lastOrNull()?.seq?:0
+            val sessionId=if(call.callerId==me.id)current.mediaSessionId()
+                else history.lastOrNull{it.type=="offer"}
+                    ?.payload?.optString("mediaSessionId")?.takeIf{it.isNotBlank()}
+            if(sessionId!=null){
+                for(signal in history){
+                    if(signal.from!=me.id &&
+                        signal.payload.optString("mediaSessionId")==sessionId)
+                        current.apply(signal)
+                }
+            }
+        }catch(cancel:CancellationException){
+            throw cancel
+        }catch(error:Throwable){
+            status="Не удалось восстановить состояние видеосигнализации"
+        }
         while(isActive&&engine===current){
             if(!hasPermissions()){
                 stop("Android отозвал разрешение камеры или микрофона")
