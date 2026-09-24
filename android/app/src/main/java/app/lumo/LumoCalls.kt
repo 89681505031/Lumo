@@ -197,6 +197,7 @@ fun LumoCallsLab(token:String,me:User,back:()->Unit){
     var busy by remember{mutableStateOf<String?>(null)}
     var query by remember{mutableStateOf("")}
     var refresh by remember{mutableIntStateOf(0)}
+    var activeAudioId by remember(token){mutableStateOf<String?>(null)}
 
     LaunchedEffect(token,refresh){
         while(true){
@@ -267,9 +268,9 @@ fun LumoCallsLab(token:String,me:User,back:()->Unit){
                 Modifier.fillMaxWidth().padding(12.dp).lumoGlass(22).padding(14.dp)
             ){
                 Text(
-                    "Этот экран пока не включает микрофон или камеру. " +
-                        "Он проверяет приглашения, принятие и завершение вызова. " +
-                        "Настоящее аудио/видео будет подключено только после отдельной проверки WebRTC/TURN.",
+                    "Аудио WebRTC доступно только для принятого аудиовызова и включается отдельно. " +
+                        "Оба участника должны сами нажать включение микрофона и выдать Android-разрешение. " +
+                        "Соединение использует только приватный TURN; видео пока не передаётся.",
                     color=Color.White,style=MaterialTheme.typography.bodySmall
                 )
             }
@@ -369,6 +370,24 @@ fun LumoCallsLab(token:String,me:User,back:()->Unit){
                                             shape=RoundedCornerShape(22.dp)
                                         ){Text("Завершить")}
                                     }
+                                }
+                                if(call.kind=="audio" && call.status=="accepted"){
+                                    Spacer(Modifier.height(10.dp))
+                                    AudioPrototypeControls(
+                                        token=token,
+                                        me=me,
+                                        call=call,
+                                        activeAudioId=activeAudioId,
+                                        onStart={id->activeAudioId=id},
+                                        onStop={id->if(activeAudioId==id)activeAudioId=null}
+                                    )
+                                }else if(call.kind=="video" && call.status=="accepted"){
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        "Видеопередача пока не реализована. Этот вызов можно завершить без включения камеры.",
+                                        color=MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style=MaterialTheme.typography.bodySmall
+                                    )
                                 }
                             }
                         }
