@@ -22,7 +22,7 @@ test("private groups: durable membership, roles, history privacy and idempotent 
   const port=await unusedPort(),secondPort=await unusedPort();
   const children=[port,secondPort].map(p=>spawn(process.execPath,["src/index.js"],{
     cwd:process.cwd(),
-    env:{...process.env,PORT:String(p),DATABASE_URL:databaseUrl,DATABASE_SSL:"false"},
+    env:{...process.env,PORT:String(p),DATABASE_URL:databaseUrl,DATABASE_SSL:"false",LUMO_REACTIONS_ENABLED:"true"},
     stdio:"ignore"
   }));
   const base=`http://127.0.0.1:${port}`,replica=`http://127.0.0.1:${secondPort}`;
@@ -67,6 +67,9 @@ test("private groups: durable membership, roles, history privacy and idempotent 
     assert.equal(caps.json.groupsReady,true);
     assert.equal(caps.json.groupLinkedReplies,true);
     assert.equal(caps.json.groupSearch,true);
+    assert.equal(caps.json.groupMessageEdit,true);
+    assert.equal(caps.json.groupMessageDelete,true);
+    assert.equal(caps.json.groupReactions,true);
     assert.deepEqual((await request("/api/groups","GET",owner.token)).json,[]);
     assert.equal((await request("/api/groups","POST",owner.token,{title:" "})).status,400);
     assert.equal((await request("/api/groups","POST",null,{title:"Private group"})).status,401);
@@ -273,6 +276,76 @@ test("private groups: durable membership, roles, history privacy and idempotent 
     assert.equal(searchOld.status,200);
     assert.deepEqual(searchOld.json,[],
       "group search cannot reopen text from before current membership");
+
+    const actionMessage=await request(prefix+"/messages","POST",member.token,{
+      text:"Group action target",clientMessageId:randomUUID()
+    });
+    assert.equal(actionMessage.status,201);
+
+    const otherCannotEdit=await request(
+      prefix+"/messages/"+actionMessage.json.id,
+      "PATCH",owner.token,{text:"Owner cannot edit member text"}
+    );
+    assert.equal(otherCannotEdit.status,404);
+
+    const editedAction=await request(
+      prefix+"/messages/"+actionMessage.json.id,
+      "PATCH",member.token,{text:"Group action target edited"}
+    );
+    assert.equal(editedAction.status,200);
+    assert.ok(editedAction.json.editedAt);
+    assert.equal(editedAction.json.text,"Group action target edited");
+
+    assert.equal((await request(
+      prefix+"/messages/"+initial.json.id+"/reactions",
+      "PUT",admin.token,{emoji:"🚀"}
+    )).status,404,"late member cannot react to pre-join history");
+
+    assert.equal((await request(
+      prefix+"/messages/"+actionMessage.json.id+"/reactions",
+      "PUT",admin.token,{emoji:"🚀"}
+    )).status,200);
+    const reactionList=await request(prefix+"/reactions","GET",member.token);
+    assert.equal(reactionList.status,200);
+    assert.ok(reactionList.json.some(r=>
+      r.messageId===actionMessage.json.id &&
+      r.userId===admin.user.id && r.emoji==="🚀"
+    ));
+    assert.equal((await request(
+      prefix+"/messages/"+actionMessage.json.id+"/reactions",
+      "PUT",member.token,{emoji:"not-allowed"}
+    )).status,400);
+
+    const otherCannotDelete=await request(
+      prefix+"/messages/"+actionMessage.json.id,
+      "DELETE",owner.token
+    );
+    assert.equal(otherCannotDelete.status,404);
+
+    const deletedAction=await request(
+      prefix+"/messages/"+actionMessage.json.id,
+      "DELETE",member.token
+    );
+    assert.equal(deletedAction.status,200);
+    assert.ok(deletedAction.json.deletedAt);
+    assert.equal(deletedAction.json.text,"Сообщение удалено");
+    const afterDeleteReactions=await request(prefix+"/reactions","GET",member.token);
+    assert.equal(afterDeleteReactions.status,200);
+    assert.equal(afterDeleteReactions.json.some(r=>r.messageId===actionMessage.json.id),false);
+
+    const deletedSearch=await request(
+      prefix+"/messages/search?q="+encodeURIComponent("Group action"),
+      "GET",member.token
+    );
+    assert.equal(deletedSearch.status,200);
+    assert.equal(deletedSearch.json.some(m=>m.id===actionMessage.json.id),false);
+
+    const deletedReply=await request(prefix+"/messages","POST",member.token,{
+      text:"Cannot reply deleted",clientMessageId:randomUUID(),
+      replyToMessageId:actionMessage.json.id
+    });
+    assert.equal(deletedReply.status,404);
+    assert.equal(deletedReply.json.error,"reply_message_not_found");
 
     assert.equal((await request(
       prefix+"/messages/search?q="+encodeURIComponent("online"),
