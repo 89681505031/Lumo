@@ -207,7 +207,7 @@ fun VideoPrototypeControls(
                             "call_inactive"->"Вызов уже завершён"
                             else->"Ошибка видеоэтапа: "+error.code
                         }
-                        else->"Тестовое видео не запустилось"
+                        else->"Видеозвонок не запустился"
                     }
                 )
             }finally{
