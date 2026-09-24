@@ -735,6 +735,19 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  var reactionsEnabled by remember(token,peer.id){mutableStateOf(false)}
  var aiEnabled by remember(token,peer.id){mutableStateOf(false)}
  var linkedRepliesEnabled by remember(token,peer.id){mutableStateOf(false)}
+ var messageEditEnabled by remember(token,peer.id){mutableStateOf(false)}
+ var messageDeleteEnabled by remember(token,peer.id){mutableStateOf(false)}
+ var messageSearchEnabled by remember(token,peer.id){mutableStateOf(false)}
+ var editTarget by remember(peer.id){mutableStateOf<Msg?>(null)}
+ var editDraft by remember(peer.id){mutableStateOf("")}
+ var deleteTarget by remember(peer.id){mutableStateOf<Msg?>(null)}
+ var mutationBusy by remember{mutableStateOf(false)}
+ var showSearch by remember(peer.id){mutableStateOf(false)}
+ var searchText by remember(peer.id){mutableStateOf("")}
+ var searchResults by remember(peer.id){mutableStateOf<List<Msg>>(emptyList())}
+ var searchBusy by remember{mutableStateOf(false)}
+ var searchPerformed by remember{mutableStateOf(false)}
+ var searchError by remember{mutableStateOf("")}
  var reactions by remember(peer.id){mutableStateOf<List<LumoReaction>>(emptyList())}
  var reactionRefresh by remember{mutableIntStateOf(0)}
  var reactionBusy by remember{mutableStateOf(false)}
@@ -751,6 +764,14 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
   linkedRepliesEnabled=runCatching {
    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.linkedRepliesSupported(token)}
   }.getOrDefault(false)
+  val mutationCaps=runCatching {
+   kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+    Api.messageMutationCapabilities(token)
+   }
+  }.getOrDefault(Triple(false,false,false))
+  messageEditEnabled=mutationCaps.first
+  messageDeleteEnabled=mutationCaps.second
+  messageSearchEnabled=mutationCaps.third
  }
  LaunchedEffect(token,peer.id,reactionsEnabled,reactionRefresh) {
   if(reactionsEnabled) while(true) {
