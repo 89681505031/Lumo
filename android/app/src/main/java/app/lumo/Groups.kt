@@ -32,7 +32,7 @@ data class LumoGroup(
  val memberCount:Int,val lastMessage:String="",val lastAt:String=""
 )
 data class LumoGroupMember(val id:String,val username:String,val displayName:String,val role:String)
-data class LumoGroupMessage(val id:String,val from:String,val text:String,val createdAt:String,val clientMessageId:String="",val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="")
+data class LumoGroupMessage(val id:String,val from:String,val text:String,val createdAt:String,val clientMessageId:String="",val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="",val editedAt:String="",val deletedAt:String="")
 data class LumoGroupPending(val clientId:String,val text:String,val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="")
 data class LumoGroupDetail(val group:LumoGroup,val members:List<LumoGroupMember>)
 
@@ -42,7 +42,7 @@ private fun group(o:JSONObject)=LumoGroup(
  o.getString("role"),o.optInt("memberCount",0),optional(o,"lastMessage"),optional(o,"lastAt")
 )
 private fun groupMessage(o:JSONObject)=LumoGroupMessage(
- o.getString("id"),o.getString("from"),o.getString("text"),o.getString("createdAt"),optional(o,"clientMessageId"),optional(o,"replyToMessageId"),optional(o,"replyPreviewText"),optional(o,"replyPreviewFrom")
+ o.getString("id"),o.getString("from"),o.getString("text"),o.getString("createdAt"),optional(o,"clientMessageId"),optional(o,"replyToMessageId"),optional(o,"replyPreviewText"),optional(o,"replyPreviewFrom"),optional(o,"editedAt"),optional(o,"deletedAt")
 )
 private fun Api.groupCall(token:String,path:String,method:String="GET",body:JSONObject?=null):String{
  val req=Request.Builder().url(Api.HTTP+path).header("Authorization","Bearer "+token)
@@ -91,6 +91,47 @@ fun Api.groupCapabilities(t:String):Pair<Boolean,Boolean>{
    val o=JSONObject(r.body?.string().orEmpty())
    o.optBoolean("groupLinkedReplies",false) to o.optBoolean("groupSearch",false)
   }.getOrDefault(false to false)
+ }
+}
+data class LumoGroupActionCaps(val edit:Boolean,val delete:Boolean,val reactions:Boolean)
+fun Api.groupActionCapabilities(t:String):LumoGroupActionCaps{
+ val req=Request.Builder().url(Api.HTTP+"/api/capabilities")
+  .header("Authorization","Bearer "+t).get().build()
+ Api.httpClient.newCall(req).execute().use{r->
+  if(r.code==401)throw SessionExpiredException()
+  if(!r.isSuccessful)return LumoGroupActionCaps(false,false,false)
+  return runCatching{
+   val o=JSONObject(r.body?.string().orEmpty())
+   LumoGroupActionCaps(
+    o.optBoolean("groupMessageEdit",false),
+    o.optBoolean("groupMessageDelete",false),
+    o.optBoolean("groupReactions",false)
+   )
+  }.getOrDefault(LumoGroupActionCaps(false,false,false))
+ }
+}
+fun Api.groupEdit(t:String,groupId:String,messageId:String,text:String):LumoGroupMessage=
+ groupMessage(JSONObject(groupCall(t,"/api/groups/"+groupId+"/messages/"+messageId,"PATCH",
+  JSONObject().put("text",text.trim()))))
+fun Api.groupDeleteMessage(t:String,groupId:String,messageId:String):LumoGroupMessage=
+ groupMessage(JSONObject(groupCall(t,"/api/groups/"+groupId+"/messages/"+messageId,"DELETE")))
+fun Api.groupReactions(t:String,groupId:String):List<LumoReaction>{
+ val a=JSONArray(groupCall(t,"/api/groups/"+groupId+"/reactions"))
+ return (0 until a.length()).map{i->
+  val o=a.getJSONObject(i)
+  LumoReaction(o.getString("messageId"),o.getString("userId"),o.getString("emoji"))
+ }
+}
+fun Api.groupSetReaction(t:String,groupId:String,messageId:String,emoji:String,active:Boolean){
+ require(emoji in LumoReactionApi.choices)
+ val path="/api/groups/"+groupId+"/messages/"+messageId+"/reactions"
+ val req=Request.Builder().url(Api.HTTP+path).header("Authorization","Bearer "+t)
+ val body=JSONObject().put("emoji",emoji).toString()
+  .toRequestBody("application/json".toMediaType())
+ val request=if(active)req.put(body).build() else req.delete(body).build()
+ Api.httpClient.newCall(request).execute().use{r->
+  if(r.code==401)throw SessionExpiredException()
+  if(!r.isSuccessful)error("Не удалось изменить реакцию ("+r.code+")")
  }
 }
 fun Api.groupSearch(t:String,id:String,q:String):List<LumoGroupMessage>{
