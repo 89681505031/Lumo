@@ -1,5 +1,25 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
- <path android:fillColor="#32138C" android:pathData="M22,4H86A18,18 0,0 1,104 22V86A18,18 0,0 1,86 104H22A18,18 0,0 1,4 86V22A18,18 0,0 1,22 4Z"/>
- <path android:fillColor="#FFFFFF" android:pathData="M35,28A6,6 0,0 1,41 22A6,6 0,0 1,47 28V65H76A6,6 0,0 1,82 71A6,6 0,0 1,76 77H50L40,87L42,77H41A6,6 0,0 1,35 71Z"/>
- <path android:fillColor="#D8C8FF" android:pathData="M66,29L70,21L74,23L71,31ZM75,35L84,31L86,35L77,39ZM77,45H87V49H77Z"/>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- The same ringed planet symbol as the new welcome screen, sized for Android launchers. -->
+    <path android:fillColor="#14277F"
+        android:pathData="M25,4 L83,4 C96,4 104,12 104,25 L104,83 C104,96 96,104 83,104 L25,104 C12,104 4,96 4,83 L4,25 C4,12 12,4 25,4 Z"/>
+    <path android:fillColor="#355DEA"
+        android:pathData="M26,10 L81,10 C92,10 98,17 98,27 L98,80 C98,93 91,98 79,98 L28,98 C17,98 10,91 10,80 L10,29 C10,18 16,10 26,10 Z"/>
+    <path android:fillColor="#AD41D9" android:fillAlpha="0.72"
+        android:pathData="M101,47 L101,84 C101,98 95,101 81,101 L42,101 C72,92 90,75 101,47 Z"/>
+    <path android:fillColor="#65E8FF" android:fillAlpha="0.56"
+        android:pathData="M12,41 L12,28 C12,16 18,12 32,12 L77,12 C48,17 25,25 12,41 Z"/>
+    <path android:strokeColor="#A2F8FF" android:strokeWidth="1.5"
+        android:fillColor="#00000000"
+        android:pathData="M25,5 L83,5 C95,5 103,13 103,25 L103,83 C103,95 95,103 83,103 L25,103 C13,103 5,95 5,83 L5,25 C5,13 13,5 25,5 Z"/>
+    <path android:fillColor="#0F5FDE"
+        android:pathData="M54,29 C67.8,29 79,40.2 79,54 C79,67.8 67.8,79 54,79 C40.2,79 29,67.8 29,54 C29,40.2 40.2,29 54,29 Z"/>
+    <path android:fillColor="#4DDDFE" android:fillAlpha="0.76"
+        android:pathData="M54,30 C64,30 73,36 77,45 C67,42 57,42 47,48 C38,53 32,58 30,64 C25,46 36,30 54,30 Z"/>
+    <path android:strokeColor="#F6FEFF" android:strokeWidth="4.8"
+        android:strokeLineCap="round" android:fillColor="#00000000"
+        android:pathData="M89.6,35.8 C92.6,41.7 79.1,54.7 59.4,64.7 C39.8,74.7 21.4,78.1 18.4,72.2 C15.4,66.3 28.9,53.3 48.6,43.3 C68.2,33.3 86.6,29.9 89.6,35.8 Z"/>
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M85,27 C89.5,27 93,30.5 93,35 C93,39.5 89.5,43 85,43 C80.5,43 77,39.5 77,35 C77,30.5 80.5,27 85,27 Z"/>
 </vector>

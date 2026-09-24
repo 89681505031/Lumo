@@ -1,14 +1,22 @@
 name: Android
 on:
   push:
-    branches: [main]
+    branches: [main, design/luma-glass-ui, feature/lumo-cosmic-personalization, feature/lumo-cosmic-media, feature/lumo-cosmic-calls-push-lab]
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+  pull_request:
     paths:
       - "android/**"
       - ".github/workflows/android.yml"
   workflow_dispatch:
 
+concurrency:
+  group: android-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-debug:
@@ -25,11 +33,33 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-      - name: Build debug APK
+      - name: Run tests and build debug APK
         env:
           LUMO_VERSION_CODE: ${{ github.run_number }}
-        run: gradle assembleDebug
+        run: gradle testDebugUnitTest testReleaseUnitTest assembleDebug
+      - name: Build Lumo 1.0 release APK
+        env:
+          LUMO_VERSION_CODE: "1000"
+          LUMO_VERSION_NAME: "1.0.0"
+        run: gradle assembleRelease
       - uses: actions/upload-artifact@v4
         with:
           name: lumo-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumo-release-unsigned-apk
+          path: android/app/build/outputs/apk/release/app-release-unsigned.apk
+      - name: Package official Android apksigner
+        shell: bash
+        run: |
+          TOOLS_DIR="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -x "$TOOLS_DIR/apksigner"
+          test -f "$TOOLS_DIR/lib/apksigner.jar"
+          mkdir -p /tmp/lumo-apksigner/lib
+          cp "$TOOLS_DIR/apksigner" /tmp/lumo-apksigner/
+          cp "$TOOLS_DIR/lib/apksigner.jar" /tmp/lumo-apksigner/lib/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumo-apksigner-tool
+          path: /tmp/lumo-apksigner

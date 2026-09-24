@@ -40,4 +40,6 @@ jobs:
           node-version: "22"
       - run: npm install --ignore-scripts
       - run: npm run check
-      - run: node --test test/*.test.js
+      # Integration files share one disposable PostgreSQL service; run files serially.
+      # Individual tests still exercise multi-process/cross-instance behavior explicitly.
+      - run: node --test --test-concurrency=1 test/*.test.js

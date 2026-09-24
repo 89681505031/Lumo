@@ -1,12 +1,19 @@
 import express from "express";
 import { WebSocketServer } from "ws";
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { dbHealth, hasDatabase, initDatabase } from "./db.js";
 import { postgresStore } from "./postgres-store.js";
+import { groupStore } from "./group-store.js";
 import { hashPassword, verifyPassword, validPassword } from "./password.js";
+import { aiReady, completeLumoAi } from "./ai-provider.js";
+import { mediaReady, mediaStore, registerMediaCleanup } from "./media-store.js";
+import { callRouter } from "./call-signaling.js";
+import { registerCallCleanup } from "./call-cleanup.js";
+import { registerPushDispatch } from "./push-outbox.js";
 
 if (hasDatabase) { try { await initDatabase(); console.log("Lumo PostgreSQL schema ready"); } catch (error) { console.error("Lumo PostgreSQL initialization failed", error); } }
+const mediaEnabled=mediaReady && process.env.MEDIA_ENABLE_UPLOADS==="true";
 
 const app = express();
 app.disable("x-powered-by");
@@ -28,7 +35,14 @@ function rateLimit({windowMs,max}){return (req,res,next)=>{const key=`${windowMs
 setInterval(()=>{const cutoff=Date.now()-10*60_000;for(const [key,b] of rateBuckets)if(b.start<cutoff)rateBuckets.delete(key);},10*60_000).unref?.();
 
 function publicUser(user) {
-  return { id: user.id, username: user.username, displayName: user.displayName };
+  return {
+    id:user.id,
+    username:user.username,
+    displayName:user.displayName,
+    bio:String(user.bio || "").slice(0,160),
+    hasAvatar:Boolean(user.hasAvatar),
+    avatarVersion:String(user.avatarVersion || "")
+  };
 }
 
 async function auth(req, res, next) {
@@ -49,10 +63,16 @@ async function auth(req, res, next) {
 }
 
 app.get("/live", (_req, res) => res.json({ ok: true, service: "lumo-server" }));
+app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled,documentsReady:mediaEnabled,groupsReady:hasDatabase,groupLinkedReplies:hasDatabase,groupSearch:hasDatabase,groupPagination:hasDatabase,groupMessageEdit:hasDatabase,groupMessageDelete:hasDatabase,groupReactions:reactionsEnabled,groupAttachments:mediaEnabled&&hasDatabase,pushRegistration:hasDatabase}));
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase,ok:false}; if(hasDatabase){try{database=await dbHealth()}catch(error){console.error("Database health check failed",error);database={configured:true,ok:false}}} const ok=database.configured===true&&database.ok===true; res.status(ok?200:503).json({ ok, service:"lumo-server", database }); });
 
 function requireDatabase(_req,res,next){if(!hasDatabase)return res.status(503).json({error:"database_unavailable"});next();}
+
+registerCallCleanup(app);
+registerPushDispatch(app);
+registerMediaCleanup(app);
+app.use("/api/calls",callRouter(auth));
 
 app.post("/api/register", requireDatabase, rateLimit({windowMs:60_000,max:10}), async (req, res) => {
   try {
@@ -86,7 +106,7 @@ app.post("/api/login", requireDatabase, rateLimit({windowMs:15*60_000,max:10}), 
       return res.status(401).json({error:"invalid_credentials"});
     const token=randomUUID();
     await postgresStore.createSession(account.id,token);
-    return res.json({token,user:publicUser({id:account.id,username:account.username,displayName:account.display_name})});
+    return res.json({token,user:publicUser({id:account.id,username:account.username,displayName:account.display_name,bio:account.bio||"",hasAvatar:Boolean(account.has_avatar),avatarVersion:account.avatar_updated_at?.toISOString?.()||account.avatar_updated_at||""})});
   }catch(error){
     console.error("Login database error",error);
     return res.status(503).json({error:"service_unavailable"});
@@ -106,13 +126,201 @@ app.post("/api/logout", auth, async (req, res) => {
   }
 });
 
+// Push registration is session-scoped and optional. Registration alone never
+// causes provider delivery; the cron worker is separately feature-gated.
+app.post("/api/devices/push",auth,requireDatabase,rateLimit({windowMs:60_000,max:30}),async(req,res)=>{
+  const token=req.body?.token;
+  if(req.body?.platform!=="android" || typeof token!=="string" ||
+     token.length<20 || token.length>4096 || /\s/.test(token))
+    return res.status(400).json({error:"invalid_push_token"});
+  const tokenHash=createHash("sha256").update(token).digest("hex");
+  try{
+    await postgresStore.registerPushDevice({
+      userId:req.user.id,
+      sessionToken:req.sessionToken,
+      tokenHash,
+      token
+    });
+    return res.json({registered:true});
+  }catch(error){
+    console.error(
+      "Push device registration failed; database error code:",
+      error?.code || "unknown"
+    );
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.delete("/api/devices/push",auth,requireDatabase,async(req,res)=>{
+  try{
+    await postgresStore.removePushDevice(req.user.id,req.sessionToken);
+    return res.status(204).end();
+  }catch(error){
+    console.error(
+      "Push device revocation failed; database error code:",
+      error?.code || "unknown"
+    );
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
 app.patch("/api/me", auth, async (req, res) => {
   try {
     const displayName = String(req.body?.displayName || "").trim();
-    if (!displayName || displayName.length > 50) return res.status(400).json({ error: "invalid_display_name" });
-    if(hasDatabase) { const user=await postgresStore.updateUser(req.user.id,displayName); if(!user)return res.status(404).json({error:"user_not_found"}); return res.json(publicUser(user)); }
-    req.user.displayName = displayName; users.set(req.user.id, req.user); res.json(publicUser(req.user));
-  } catch(error) { console.error("Profile update failed",error); res.status(503).json({error:"service_unavailable"}); }
+    if (!displayName || displayName.length > 50)
+      return res.status(400).json({ error: "invalid_display_name" });
+    const bioProvided = Object.prototype.hasOwnProperty.call(req.body || {}, "bio");
+    const bio = bioProvided ? String(req.body.bio ?? "").trim() : null;
+    if (bio !== null && bio.length > 160)
+      return res.status(400).json({ error: "invalid_bio" });
+    if(hasDatabase) {
+      const user=await postgresStore.updateUser(req.user.id,displayName,bio);
+      if(!user)return res.status(404).json({error:"user_not_found"});
+      return res.json(publicUser(user));
+    }
+    req.user.displayName = displayName;
+    if(bio !== null) req.user.bio = bio;
+    users.set(req.user.id, req.user);
+    res.json(publicUser(req.user));
+  } catch(error) {
+    console.error("Profile update failed",error);
+    res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+const avatarBodyParser=express.raw({type:"image/jpeg",limit:"384kb"});
+function parseAvatarBody(req,res,next){
+  avatarBodyParser(req,res,error=>{
+    if(error?.type==="entity.too.large")
+      return res.status(413).json({error:"avatar_too_large"});
+    if(error)return res.status(400).json({error:"invalid_avatar"});
+    next();
+  });
+}
+function jpegDimensions(bytes){
+  if(!Buffer.isBuffer(bytes)||bytes.length<16)return null;
+  if(bytes[0]!==0xff||bytes[1]!==0xd8)return null;
+  if(bytes[bytes.length-2]!==0xff||bytes[bytes.length-1]!==0xd9)return null;
+  const sof=new Set([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf]);
+  let i=2;
+  while(i+4<=bytes.length){
+    while(i<bytes.length&&bytes[i]===0xff)i++;
+    if(i>=bytes.length)break;
+    const marker=bytes[i++];
+    if(marker===0xd9||marker===0xda)break;
+    if(marker===0x01||(marker>=0xd0&&marker<=0xd7))continue;
+    if(i+2>bytes.length)return null;
+    const length=bytes.readUInt16BE(i);
+    if(length<2||i+length>bytes.length)return null;
+    if(sof.has(marker)){
+      if(length<7)return null;
+      return {
+        height:bytes.readUInt16BE(i+3),
+        width:bytes.readUInt16BE(i+5)
+      };
+    }
+    i+=length;
+  }
+  return null;
+}
+
+app.put(
+  "/api/me/avatar",
+  auth,
+  requireDatabase,
+  rateLimit({windowMs:10*60_000,max:12}),
+  parseAvatarBody,
+  async(req,res)=>{
+    try{
+      if(String(req.headers["content-type"]||"").split(";")[0].trim().toLowerCase()!=="image/jpeg")
+        return res.status(415).json({error:"avatar_must_be_jpeg"});
+      const bytes=req.body;
+      const dimensions=jpegDimensions(bytes);
+      if(!dimensions || dimensions.width<32 || dimensions.height<32 ||
+         dimensions.width>1024 || dimensions.height>1024 ||
+         dimensions.width*dimensions.height>1_048_576)
+        return res.status(400).json({error:"invalid_avatar"});
+      const user=await postgresStore.setAvatar(req.user.id,"image/jpeg",bytes);
+      if(!user)return res.status(404).json({error:"user_not_found"});
+      return res.json(publicUser(user));
+    }catch(error){
+      console.error("Avatar upload failed",error);
+      return res.status(503).json({error:"service_unavailable"});
+    }
+  }
+);
+
+app.delete("/api/me/avatar",auth,requireDatabase,rateLimit({windowMs:10*60_000,max:20}),async(req,res)=>{
+  try{
+    const user=await postgresStore.removeAvatar(req.user.id);
+    if(!user)return res.status(404).json({error:"user_not_found"});
+    return res.json(publicUser(user));
+  }catch(error){
+    console.error("Avatar delete failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/users/:id/avatar",auth,requireDatabase,rateLimit({windowMs:60_000,max:240}),async(req,res)=>{
+  const userId=req.params.id;
+  if(!sessionTokenPattern.test(userId))
+    return res.status(400).json({error:"invalid_user_id"});
+  try{
+    const avatar=await postgresStore.avatar(userId);
+    if(!avatar)return res.status(404).json({error:"avatar_not_found"});
+    res.set("Content-Type",avatar.mime);
+    res.set("Cache-Control","private, max-age=300");
+    res.set("X-Content-Type-Options","nosniff");
+    if(avatar.updatedAt)res.set("ETag",`"avatar-${Buffer.from(avatar.updatedAt).toString("base64url")}"`);
+    return res.send(avatar.bytes);
+  }catch(error){
+    console.error("Avatar fetch failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/ai/capabilities", auth, (_req,res) => {
+  res.json({
+    enabled: aiReady(),
+    maxMessageChars: 2000,
+    historyItems: 8,
+    chatDataSharedAutomatically: false
+  });
+});
+
+app.post("/api/ai/chat", auth, rateLimit({windowMs:60_000,max:20}), async (req,res) => {
+  if(!aiReady()) return res.status(404).json({error:"feature_unavailable"});
+  const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+  const rawHistory = req.body?.history;
+  if(!message || message.length > 2000)
+    return res.status(400).json({error:"invalid_ai_message"});
+  if(rawHistory !== undefined && !Array.isArray(rawHistory))
+    return res.status(400).json({error:"invalid_ai_history"});
+  const input = Array.isArray(rawHistory) ? rawHistory : [];
+  if(input.length > 8)
+    return res.status(400).json({error:"invalid_ai_history"});
+  let total=0;
+  const history=[];
+  for(const item of input){
+    const role=item?.role;
+    const content=typeof item?.content==="string" ? item.content.trim() : "";
+    if(!["user","assistant"].includes(role) || !content || content.length>1500)
+      return res.status(400).json({error:"invalid_ai_history"});
+    total+=content.length;
+    if(total>6000)return res.status(400).json({error:"invalid_ai_history"});
+    history.push({role,content});
+  }
+  try{
+    const reply=await completeLumoAi(history,message);
+    return res.json({reply});
+  }catch(error){
+    if(error?.code==="AI_RATE_LIMITED")
+      return res.status(429).json({error:"ai_provider_rate_limited"});
+    if(error?.code==="AI_UNAVAILABLE")
+      return res.status(404).json({error:"feature_unavailable"});
+    console.error("Lumo AI provider request failed",error?.code||error?.name||"unknown");
+    return res.status(502).json({error:"ai_provider_unavailable"});
+  }
 });
 
 app.get("/api/users", auth, async (req, res) => {
@@ -137,6 +345,483 @@ app.get("/api/conversations", auth, async (req, res) => {
   res.json(result); } catch(error){console.error("Conversation list failed",error);res.status(503).json({error:"service_unavailable"});}
 });
 
+// Private groups. Every read and write is authorized from current
+// PostgreSQL membership; users who are not current members receive no group data.
+function groupError(res,error) {
+  const status={
+    invalid_member:400,
+    group_not_found:404,
+    user_not_found:404,
+    member_not_found:404,
+    forbidden:403,
+    user_blocked:403,
+    group_full:409,
+    already_member:409,
+    owner_role_immutable:409,
+    owner_cannot_leave:409,
+    client_message_id_conflict:409,
+    reply_message_not_found:404
+  }[error] || 503;
+  return res.status(status).json({error});
+}
+
+app.get("/api/groups",auth,requireDatabase,async(req,res)=>{
+  try{return res.json(await groupStore.list(req.user.id));}
+  catch(error){
+    console.error("Group list failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.post("/api/groups",auth,requireDatabase,rateLimit({windowMs:60_000,max:10}),async(req,res)=>{
+  if(typeof req.body?.title!=="string")
+    return res.status(400).json({error:"invalid_group_title"});
+  const title=req.body.title.trim();
+  if(title.length<2 || title.length>80)
+    return res.status(400).json({error:"invalid_group_title"});
+  try{return res.status(201).json(await groupStore.create(req.user.id,title));}
+  catch(error){
+    console.error("Group create failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/groups/:id",auth,requireDatabase,async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  try{
+    const found=await groupStore.detail(req.user.id,req.params.id);
+    return found ? res.json(found) : groupError(res,"group_not_found");
+  }catch(error){
+    console.error("Group detail failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.post("/api/groups/:id/members",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  const id=req.params.id,userId=req.body?.userId;
+  if(!uuidPattern.test(id) || typeof userId!=="string" || !uuidPattern.test(userId))
+    return res.status(400).json({error:"invalid_member"});
+  try{
+    const result=await groupStore.invite(req.user.id,id,userId);
+    return result.error ? groupError(res,result.error) : res.status(201).json({added:true});
+  }catch(error){
+    console.error("Group invite failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.patch("/api/groups/:id/members/:userId",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id) || !uuidPattern.test(req.params.userId) ||
+     !["admin","member"].includes(req.body?.role))
+    return res.status(400).json({error:"invalid_member_role"});
+  try{
+    const result=await groupStore.setRole(
+      req.user.id,req.params.id,req.params.userId,req.body.role
+    );
+    return result.error ? groupError(res,result.error) : res.json(result);
+  }catch(error){
+    console.error("Group role update failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.delete("/api/groups/:id/members/:userId",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id) || !uuidPattern.test(req.params.userId))
+    return res.status(400).json({error:"invalid_member"});
+  try{
+    const result=await groupStore.remove(req.user.id,req.params.id,req.params.userId);
+    return result.error ? groupError(res,result.error) : res.status(204).end();
+  }catch(error){
+    console.error("Group member removal failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.delete("/api/groups/:id",auth,requireDatabase,rateLimit({windowMs:60_000,max:20}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  try{
+    const detail=await groupStore.detail(req.user.id,req.params.id);
+    if(!detail || detail.role!=="owner")
+      return groupError(res,"group_not_found");
+    const assetCount=await mediaStore.groupAssetCount(req.params.id);
+    if(assetCount>0){
+      if(process.env.MEDIA_ENABLE_UPLOADS!=="true" || !mediaReady)
+        return res.status(503).json({error:"media_cleanup_unavailable"});
+      const cleanup=await mediaStore.cleanupGroupAssets(req.params.id);
+      if(cleanup.error)
+        return res.status(503).json({error:cleanup.error});
+    }
+    const deleted=await groupStore.delete(req.user.id,req.params.id);
+    return deleted ? res.status(204).end() : groupError(res,"group_not_found");
+  }catch(error){
+    console.error("Group removal failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/groups/:id/messages",auth,requireDatabase,async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  try{
+    const history=await groupStore.history(req.user.id,req.params.id);
+    return history===null ? groupError(res,"group_not_found") : res.json(history);
+  }catch(error){
+    console.error("Group history failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/groups/:id/messages/page",auth,requireDatabase,rateLimit({windowMs:60_000,max:120}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  const rawId=req.query.beforeId,rawLimit=req.query.limit;
+  const beforeId=rawId===undefined?null:rawId;
+  if(beforeId!==null &&
+     (typeof beforeId!=="string" || !uuidPattern.test(beforeId)))
+    return res.status(400).json({error:"invalid_history_cursor"});
+  const limit=rawLimit===undefined?50:Number(rawLimit);
+  if(!Number.isInteger(limit)||limit<1||limit>100)
+    return res.status(400).json({error:"invalid_history_limit"});
+  try{
+    const page=await groupStore.historyPage(req.user.id,req.params.id,{
+      beforeId,limit
+    });
+    if(page===null)return groupError(res,"group_not_found");
+    if(page.error==="history_cursor_not_found")
+      return res.status(400).json({error:page.error});
+    return res.json(page);
+  }catch(error){
+    console.error("Group history page failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/groups/:id/messages/search",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  const q=typeof req.query.q==="string" ? req.query.q.trim() : "";
+  if(q.length<2 || q.length>100)
+    return res.status(400).json({error:"invalid_search_query"});
+  try{
+    const found=await groupStore.search(req.user.id,req.params.id,q);
+    return found===null ? groupError(res,"group_not_found") : res.json(found);
+  }catch(error){
+    console.error("Group search failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.patch("/api/groups/:id/messages/:messageId",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  const {id,messageId}=req.params;
+  if(!uuidPattern.test(id)||!uuidPattern.test(messageId))
+    return res.status(400).json({error:"invalid_message_id"});
+  if(typeof req.body?.text!=="string"||!req.body.text.trim())
+    return res.status(400).json({error:"empty_message"});
+  const text=req.body.text.trim();
+  if(text.length>4000)return res.status(400).json({error:"message_too_long"});
+  try{
+    const message=await groupStore.editMessage(req.user.id,id,messageId,text);
+    if(!message)return res.status(404).json({error:"message_not_editable"});
+    const recipients=await groupStore.recipients(id,message.createdAt);
+    for(const userId of recipients)sendTo(userId,{type:"group_message",message});
+    return res.json(message);
+  }catch(error){
+    console.error("Group edit failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.delete("/api/groups/:id/messages/:messageId",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  const {id,messageId}=req.params;
+  if(!uuidPattern.test(id)||!uuidPattern.test(messageId))
+    return res.status(400).json({error:"invalid_message_id"});
+  try{
+    const message=await groupStore.deleteMessage(req.user.id,id,messageId);
+    if(!message)return res.status(404).json({error:"message_not_editable"});
+    const recipients=await groupStore.recipients(id,message.createdAt);
+    for(const userId of recipients)sendTo(userId,{type:"group_message",message});
+    return res.json(message);
+  }catch(error){
+    console.error("Group delete failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/groups/:id/reactions",auth,requireDatabase,requireReactions,async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  try{
+    const member=await groupStore.membership(req.user.id,req.params.id);
+    if(!member)return groupError(res,"group_not_found");
+    return res.json(await groupStore.reactions(req.user.id,req.params.id));
+  }catch(error){
+    console.error("Group reaction list failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.put("/api/groups/:id/messages/:messageId/reactions",auth,requireDatabase,requireReactions,rateLimit({windowMs:60_000,max:80}),async(req,res)=>{
+  const {id,messageId}=req.params,emoji=req.body?.emoji;
+  if(!uuidPattern.test(id)||!uuidPattern.test(messageId))
+    return res.status(400).json({error:"invalid_message_id"});
+  if(typeof emoji!=="string"||!reactionEmojis.has(emoji))
+    return res.status(400).json({error:"invalid_reaction"});
+  try{
+    const allowed=await groupStore.setReaction(req.user.id,id,messageId,emoji,true);
+    if(!allowed)return res.status(404).json({error:"message_not_found"});
+    return res.json({messageId,userId:req.user.id,emoji,active:true});
+  }catch(error){
+    console.error("Group reaction add failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.delete("/api/groups/:id/messages/:messageId/reactions",auth,requireDatabase,requireReactions,rateLimit({windowMs:60_000,max:80}),async(req,res)=>{
+  const {id,messageId}=req.params,emoji=req.body?.emoji;
+  if(!uuidPattern.test(id)||!uuidPattern.test(messageId))
+    return res.status(400).json({error:"invalid_message_id"});
+  if(typeof emoji!=="string"||!reactionEmojis.has(emoji))
+    return res.status(400).json({error:"invalid_reaction"});
+  try{
+    const allowed=await groupStore.setReaction(req.user.id,id,messageId,emoji,false);
+    if(!allowed)return res.status(404).json({error:"message_not_found"});
+    return res.status(204).end();
+  }catch(error){
+    console.error("Group reaction remove failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.post("/api/groups/:id/media/init",auth,requireDatabase,rateLimit({windowMs:60_000,max:20}),async(req,res)=>{
+  if(!mediaEnabled)return mediaError(res,"media_unavailable");
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  try{
+    const membership=await groupStore.membership(req.user.id,req.params.id);
+    if(!membership)return groupError(res,"group_not_found");
+    const upload=await mediaStore.initiateGroup(req.user.id,req.params.id,{
+      mime:req.body?.mime,
+      bytes:req.body?.bytes,
+      filename:req.body?.filename
+    });
+    return upload.error ? mediaError(res,upload.error) : res.status(201).json(upload);
+  }catch(error){
+    console.error("Group media init failed",error?.name||"unknown");
+    return mediaError(res,"media_unavailable");
+  }
+});
+
+app.post("/api/groups/:id/media/:assetId/send",auth,requireDatabase,rateLimit({windowMs:60_000,max:30}),async(req,res)=>{
+  const {id,assetId}=req.params;
+  if(!uuidPattern.test(id)||!uuidPattern.test(assetId))
+    return res.status(400).json({error:"invalid_media_id"});
+  if(typeof req.body?.clientMessageId!=="string"||
+     !uuidPattern.test(req.body.clientMessageId))
+    return mediaError(res,"invalid_client_message_id");
+  if(req.body?.caption!==undefined&&
+     (typeof req.body.caption!=="string"||req.body.caption.trim().length>1000))
+    return mediaError(res,"invalid_caption");
+  try{
+    const result=await mediaStore.sendGroup(
+      req.user.id,assetId,id,req.body.clientMessageId,
+      req.body.caption?.trim()||""
+    );
+    if(result.error)return mediaError(res,result.error);
+    if(result.inserted){
+      const recipients=await groupStore.recipients(id,result.message.createdAt);
+      for(const userId of recipients)
+        sendTo(userId,{type:"group_message",message:result.message});
+    }
+    return res.status(result.inserted?201:200).json(result.message);
+  }catch(error){
+    console.error("Group media send failed",error?.name||"unknown");
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.post("/api/groups/:id/messages",auth,requireDatabase,rateLimit({windowMs:60_000,max:120}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  const id=req.body?.clientMessageId,raw=req.body?.text;
+  const replyToMessageId=req.body?.replyToMessageId ?? null;
+  if(typeof id!=="string" || !uuidPattern.test(id))
+    return res.status(400).json({error:"invalid_client_message_id"});
+  if(replyToMessageId!==null &&
+     (typeof replyToMessageId!=="string" || !uuidPattern.test(replyToMessageId)))
+    return res.status(400).json({error:"invalid_reply_message_id"});
+  if(typeof raw!=="string" || !raw.trim())
+    return res.status(400).json({error:"empty_message"});
+  const text=raw.trim();
+  if(text.length>4000)
+    return res.status(400).json({error:"message_too_long"});
+  try{
+    const saved=await groupStore.send(
+      req.user.id,req.params.id,text,id,replyToMessageId
+    );
+    if(saved.error)return groupError(res,saved.error);
+    if(saved.inserted){
+      const views=await groupStore.recipientViews(
+        req.params.id,saved.message.createdAt,saved.message.replyToMessageId
+      );
+      for(const view of views){
+        const live=view.canSeeReply ? saved.message : {
+          ...saved.message,
+          replyPreviewText:null,
+          replyPreviewFrom:null
+        };
+        sendTo(view.userId,{type:"group_message",message:live});
+      }
+    }
+    return res.status(saved.inserted?201:200).json(saved.message);
+  }catch(error){
+    console.error("Group send failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+// Private attachments use a private S3-compatible bucket. Clients receive
+// short-lived signed upload/download requests only; storage credentials never
+// leave the server.
+function mediaError(res,error){
+  const status={
+    invalid_recipient_id:400,
+    invalid_file_name:400,
+    unsupported_media_type:400,
+    invalid_media_size:400,
+    invalid_client_message_id:400,
+    invalid_caption:400,
+    recipient_not_found:404,
+    media_not_found:404,
+    upload_not_found:409,
+    upload_mismatch:409,
+    upload_incomplete:409,
+    media_already_sent:409,
+    client_message_id_conflict:409,
+    upload_expired:410,
+    media_quota_exceeded:429,
+    media_unavailable:503
+  }[error] || 503;
+  return res.status(status).json({error});
+}
+
+app.post("/api/media/init",auth,requireDatabase,rateLimit({windowMs:60_000,max:20}),async(req,res)=>{
+  if(!mediaEnabled)return mediaError(res,"media_unavailable");
+  const to=req.body?.to;
+  if(typeof to!=="string" || !uuidPattern.test(to) || to===req.user.id)
+    return mediaError(res,"invalid_recipient_id");
+  try{
+    if(!await postgresStore.userExists(to))
+      return mediaError(res,"recipient_not_found");
+    const upload=await mediaStore.initiate(req.user.id,to,{
+      mime:req.body?.mime,
+      bytes:req.body?.bytes,
+      filename:req.body?.filename
+    });
+    return upload.error ? mediaError(res,upload.error) : res.status(201).json(upload);
+  }catch(error){
+    console.error("Media init failed",error?.name||"unknown");
+    return mediaError(res,"media_unavailable");
+  }
+});
+
+app.post("/api/media/:id/complete",auth,requireDatabase,rateLimit({windowMs:60_000,max:30}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_media_id"});
+  try{
+    const result=await mediaStore.confirm(req.user.id,req.params.id);
+    return result.error ? mediaError(res,result.error) : res.json(result.asset);
+  }catch(error){
+    console.error("Media completion check failed",error?.name||"unknown");
+    return mediaError(res,"media_unavailable");
+  }
+});
+
+app.post("/api/media/:id/send",auth,requireDatabase,rateLimit({windowMs:60_000,max:30}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_media_id"});
+  if(typeof req.body?.clientMessageId!=="string" ||
+     !uuidPattern.test(req.body.clientMessageId))
+    return mediaError(res,"invalid_client_message_id");
+  if(req.body?.caption!==undefined &&
+     (typeof req.body.caption!=="string" || req.body.caption.trim().length>1000))
+    return mediaError(res,"invalid_caption");
+  try{
+    const result=await mediaStore.send(
+      req.user.id,
+      req.params.id,
+      req.body.clientMessageId,
+      req.body.caption?.trim()||""
+    );
+    if(result.error)return mediaError(res,result.error);
+    let message=result.message;
+    if(result.inserted && sendTo(message.to,{type:"message",message})){
+      const delivered=await postgresStore.markMessageDelivered(message.id,message.to);
+      if(delivered)message=delivered;
+    }
+    return res.status(result.inserted?201:200).json(message);
+  }catch(error){
+    console.error("Media message commit failed",error?.name||"unknown");
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.post("/api/media/:id/forward",auth,requireDatabase,rateLimit({windowMs:60_000,max:30}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_media_id"});
+  const to=req.body?.to;
+  const clientMessageId=req.body?.clientMessageId;
+  if(typeof to!=="string" || !uuidPattern.test(to) || to===req.user.id)
+    return mediaError(res,"invalid_recipient_id");
+  if(typeof clientMessageId!=="string" || !uuidPattern.test(clientMessageId))
+    return mediaError(res,"invalid_client_message_id");
+  if(req.body?.caption!==undefined &&
+     (typeof req.body.caption!=="string" || req.body.caption.trim().length>1000))
+    return mediaError(res,"invalid_caption");
+  try{
+    if(!await postgresStore.userExists(to))
+      return mediaError(res,"recipient_not_found");
+    const result=await mediaStore.forward(
+      req.user.id,
+      req.params.id,
+      to,
+      clientMessageId,
+      req.body.caption?.trim()||""
+    );
+    if(result.error)return mediaError(res,result.error);
+    let message=result.message;
+    if(result.inserted && sendTo(message.to,{type:"message",message})){
+      const delivered=await postgresStore.markMessageDelivered(message.id,message.to);
+      if(delivered)message={
+        ...message,
+        deliveredAt:delivered.deliveredAt,
+        readAt:delivered.readAt
+      };
+    }
+    return res.status(result.inserted?201:200).json(message);
+  }catch(error){
+    console.error("Media forward failed",error?.name||"unknown");
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/media/:id/download",auth,requireDatabase,rateLimit({windowMs:60_000,max:90}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_media_id"});
+  try{
+    const result=await mediaStore.signedDownload(req.user.id,req.params.id);
+    return result.error ? mediaError(res,result.error) : res.json(result);
+  }catch(error){
+    console.error("Media download link failed",error?.name||"unknown");
+    return mediaError(res,"media_unavailable");
+  }
+});
+
+app.get("/api/messages/capabilities",auth,(_req,res)=>{
+  res.json({linkedReplies:true,messageEdit:true,messageDelete:true,messageSearch:true});
+});
+
 app.get("/api/messages/:peerId", auth, async (req, res) => {
   try {
     const peerId = req.params.peerId;
@@ -147,7 +832,7 @@ app.get("/api/messages/:peerId", auth, async (req, res) => {
       const delivered=await postgresStore.markDeliveredFromPeer(req.user.id,peerId,pendingIds);
       const changed=new Map(delivered.map(m=>[m.id,m]));
       for(const m of delivered) sendTo(m.from,{type:"receipt",messageId:m.id,deliveredAt:m.deliveredAt,readAt:m.readAt});
-      return res.json(history.map(m=>changed.get(m.id)||m));
+      return res.json(history.map(m=>{const receipt=changed.get(m.id);return receipt?{...m,deliveredAt:receipt.deliveredAt,readAt:receipt.readAt}:m;}));
     }
     res.json(messages.filter(m=>(m.from===req.user.id&&m.to===peerId)||(m.from===peerId&&m.to===req.user.id)));
   }
@@ -156,25 +841,160 @@ app.get("/api/messages/:peerId", auth, async (req, res) => {
 
 // HTTP transport is a durable fallback when WebSocket peers connect to different instances.
 const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// Opt-in experimental reactions; the production chat API is unchanged unless
+// a staging operator explicitly enables the feature after DB/security checks.
+const reactionsEnabled=hasDatabase && process.env.LUMO_REACTIONS_ENABLED==="true";
+const reactionEmojis=new Set(["👍","❤️","😂","😮","👏","🚀"]);
+function requireReactions(_req,res,next){
+  if(!reactionsEnabled)return res.status(404).json({error:"reactions_unavailable"});
+  next();
+}
+app.get("/api/reactions/capabilities",auth,(_req,res)=>{
+  res.json({enabled:reactionsEnabled,emojis:reactionsEnabled?[...reactionEmojis]:[]});
+});
+app.get("/api/reactions/with/:peerId",auth,requireReactions,async(req,res)=>{
+  const peerId=req.params.peerId;
+  if(!uuidPattern.test(peerId)||peerId===req.user.id)
+    return res.status(400).json({error:"invalid_peer_id"});
+  try{
+    return res.json(await postgresStore.reactionsWithPeer(req.user.id,peerId));
+  }catch(error){
+    console.error("Reaction list failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+app.put("/api/reactions/:messageId",auth,requireReactions,rateLimit({windowMs:60_000,max:80}),async(req,res)=>{
+  const id=req.params.messageId;
+  const emoji=req.body?.emoji;
+  if(!uuidPattern.test(id))return res.status(400).json({error:"invalid_message_id"});
+  if(typeof emoji!=="string" || !reactionEmojis.has(emoji))
+    return res.status(400).json({error:"invalid_reaction"});
+  try{
+    const allowed=await postgresStore.addReaction(id,req.user.id,emoji);
+    if(!allowed)return res.status(404).json({error:"message_not_found"});
+    return res.json({messageId:id,emoji,active:true});
+  }catch(error){
+    console.error("Reaction add failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+app.delete("/api/reactions/:messageId",auth,requireReactions,rateLimit({windowMs:60_000,max:80}),async(req,res)=>{
+  const id=req.params.messageId;
+  const emoji=req.body?.emoji;
+  if(!uuidPattern.test(id))return res.status(400).json({error:"invalid_message_id"});
+  if(typeof emoji!=="string" || !reactionEmojis.has(emoji))
+    return res.status(400).json({error:"invalid_reaction"});
+  try{
+    const allowed=await postgresStore.removeReaction(id,req.user.id,emoji);
+    if(!allowed)return res.status(404).json({error:"message_not_found"});
+    return res.status(204).end();
+  }catch(error){
+    console.error("Reaction removal failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/messages/search/:peerId",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  const peerId=req.params.peerId;
+  const q=typeof req.query.q==="string" ? req.query.q.trim() : "";
+  if(!uuidPattern.test(peerId) || peerId===req.user.id)
+    return res.status(400).json({error:"invalid_peer_id"});
+  if(q.length<2 || q.length>100)
+    return res.status(400).json({error:"invalid_search_query"});
+  try{
+    if(!await postgresStore.userExists(peerId))
+      return res.status(404).json({error:"peer_not_found"});
+    return res.json(await postgresStore.searchMessages(req.user.id,peerId,q));
+  }catch(error){
+    console.error("Search messages failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.patch("/api/messages/:id",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  const id=req.params.id;
+  if(!uuidPattern.test(id))
+    return res.status(400).json({error:"invalid_message_id"});
+  if(typeof req.body?.text!=="string" || !req.body.text.trim())
+    return res.status(400).json({error:"empty_message"});
+  const text=req.body.text.trim();
+  if(text.length>4000)
+    return res.status(400).json({error:"message_too_long"});
+  try{
+    const message=await postgresStore.editMessage(req.user.id,id,text);
+    if(!message)return res.status(404).json({error:"message_not_editable"});
+    sendTo(message.from,{type:"message",message});
+    sendTo(message.to,{type:"message",message});
+    return res.json(message);
+  }catch(error){
+    console.error("Edit message failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.delete("/api/messages/:id",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  const id=req.params.id;
+  if(!uuidPattern.test(id))
+    return res.status(400).json({error:"invalid_message_id"});
+  try{
+    const message=await postgresStore.deleteMessage(req.user.id,id);
+    if(!message)return res.status(404).json({error:"message_not_editable"});
+    sendTo(message.from,{type:"message",message});
+    sendTo(message.to,{type:"message",message});
+    return res.json(message);
+  }catch(error){
+    console.error("Delete message failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
 app.post("/api/messages", auth, requireDatabase, async (req,res)=>{
   const to=req.body?.to;
   const clientMessageId=req.body?.clientMessageId;
   const messageText=req.body?.text;
-  if(typeof to!=="string" || !uuidPattern.test(to) || to===req.user.id) return res.status(400).json({error:"invalid_recipient_id"});
-  if(typeof clientMessageId!=="string" || !uuidPattern.test(clientMessageId)) return res.status(400).json({error:"invalid_client_message_id"});
-  if(typeof messageText!=="string" || !messageText.trim()) return res.status(400).json({error:"empty_message"});
+  const replyToMessageId=req.body?.replyToMessageId ?? null;
+  if(typeof to!=="string" || !uuidPattern.test(to) || to===req.user.id)
+    return res.status(400).json({error:"invalid_recipient_id"});
+  if(typeof clientMessageId!=="string" || !uuidPattern.test(clientMessageId))
+    return res.status(400).json({error:"invalid_client_message_id"});
+  if(replyToMessageId!==null &&
+     (typeof replyToMessageId!=="string" || !uuidPattern.test(replyToMessageId)))
+    return res.status(400).json({error:"invalid_reply_message_id"});
+  if(typeof messageText!=="string" || !messageText.trim())
+    return res.status(400).json({error:"empty_message"});
   const text=messageText.trim();
-  if(text.length>4000) return res.status(400).json({error:"message_too_long"});
+  if(text.length>4000)return res.status(400).json({error:"message_too_long"});
   try{
-    if(!await postgresStore.userExists(to)) return res.status(404).json({error:"recipient_not_found"});
-    const saved=await postgresStore.saveMessage({id:randomUUID(),from:req.user.id,to,text,createdAt:new Date().toISOString(),deliveredAt:null,readAt:null,clientMessageId});
-    let message=saved.message;
+    if(!await postgresStore.userExists(to))
+      return res.status(404).json({error:"recipient_not_found"});
+    const replyTarget=replyToMessageId
+      ? await postgresStore.replyTarget(req.user.id,to,replyToMessageId)
+      : null;
+    if(replyToMessageId && !replyTarget)
+      return res.status(404).json({error:"reply_message_not_found"});
+    const saved=await postgresStore.saveMessage({
+      id:randomUUID(),from:req.user.id,to,text,
+      createdAt:new Date().toISOString(),deliveredAt:null,readAt:null,
+      clientMessageId,replyToMessageId
+    });
+    let message={
+      ...saved.message,
+      replyPreviewText:replyTarget?.text || saved.message.replyPreviewText || null,
+      replyPreviewFrom:replyTarget?.from || saved.message.replyPreviewFrom || null
+    };
     if((saved.inserted||!message.deliveredAt) && sendTo(to,{type:"message",message})){
-      message=await postgresStore.markMessageDelivered(message.id,to)||message;
+      const delivered=await postgresStore.markMessageDelivered(message.id,to);
+      if(delivered)message={
+        ...delivered,
+        replyToMessageId:message.replyToMessageId,
+        replyPreviewText:message.replyPreviewText,
+        replyPreviewFrom:message.replyPreviewFrom
+      };
     }
     return res.status(saved.inserted?201:200).json(message);
   }catch(error){
-    if(error?.code==="CLIENT_MESSAGE_ID_CONFLICT") return res.status(409).json({error:"client_message_id_conflict"});
+    if(error?.code==="CLIENT_MESSAGE_ID_CONFLICT")
+      return res.status(409).json({error:"client_message_id_conflict"});
     console.error("HTTP message send failed",error);
     return res.status(503).json({error:"service_unavailable"});
   }
@@ -254,21 +1074,63 @@ wss.on("connection", async (ws, req) => {
       if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(to))return ws.send(JSON.stringify({type:"error",error:"invalid_recipient_id"}));
       if(to===userId)return ws.send(JSON.stringify({type:"error",error:"cannot_message_self"}));
       const text = String(data.text || "").trim();
-      const clientMessageId = typeof data.clientMessageId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data.clientMessageId) ? data.clientMessageId : null;
+      const clientMessageId = typeof data.clientMessageId === "string" && uuidPattern.test(data.clientMessageId) ? data.clientMessageId : null;
       if (!clientMessageId) return ws.send(JSON.stringify({type:"error",error:"invalid_client_message_id"}));
+      const replyToMessageId=data.replyToMessageId==null?null:data.replyToMessageId;
+      if(replyToMessageId!==null &&
+         (typeof replyToMessageId!=="string" || !uuidPattern.test(replyToMessageId)))
+        return ws.send(JSON.stringify({type:"error",error:"invalid_reply_message_id"}));
       const recipientExists = hasDatabase ? await postgresStore.userExists(to) : users.has(to);
       if (sockets.get(userId) !== ws) return ws.close(1008, "Connection replaced");
       if (!recipientExists) return ws.send(JSON.stringify({type:"error",error:"recipient_not_found"}));
       if (!text) return ws.send(JSON.stringify({type:"error",error:"empty_message"}));
       if (text.length > 4000) return ws.send(JSON.stringify({type:"error",error:"message_too_long"}));
-      let message = { id: randomUUID(), from: userId, to, text, createdAt: new Date().toISOString(), deliveredAt: null, readAt: null, clientMessageId };
+      const replyTarget=replyToMessageId
+        ? await postgresStore.replyTarget(userId,to,replyToMessageId)
+        : null;
+      if(replyToMessageId && !replyTarget)
+        return ws.send(JSON.stringify({type:"error",error:"reply_message_not_found"}));
+      let message = {
+        id:randomUUID(),from:userId,to,text,
+        createdAt:new Date().toISOString(),deliveredAt:null,readAt:null,
+        clientMessageId,replyToMessageId,
+        replyPreviewText:replyTarget?.text || null,
+        replyPreviewFrom:replyTarget?.from || null
+      };
       let inserted=true;
-      if(hasDatabase) { const saved=await postgresStore.saveMessage(message); message=saved.message; inserted=saved.inserted; } else { const existing=messages.find(m=>m.from===userId&&m.clientMessageId===clientMessageId); if(existing){if(existing.to!==to||existing.text!==text)return ws.send(JSON.stringify({type:"error",error:"client_message_id_conflict"}));message=existing;inserted=false;} else messages.push(message); }
+      if(hasDatabase) {
+        const saved=await postgresStore.saveMessage(message);
+        message={
+          ...saved.message,
+          replyPreviewText:replyTarget?.text || saved.message.replyPreviewText || null,
+          replyPreviewFrom:replyTarget?.from || saved.message.replyPreviewFrom || null
+        };
+        inserted=saved.inserted;
+      } else {
+        const existing=messages.find(m=>m.from===userId&&m.clientMessageId===clientMessageId);
+        if(existing){
+          if(existing.to!==to||existing.text!==text||
+             (existing.replyToMessageId||null)!==replyToMessageId)
+            return ws.send(JSON.stringify({type:"error",error:"client_message_id_conflict"}));
+          message=existing;inserted=false;
+        } else messages.push(message);
+      }
       if (sockets.get(userId) !== ws) return ws.close(1008, "Connection replaced");
       const shouldDeliver=inserted||!message.deliveredAt;
       if(shouldDeliver && sendTo(message.to, { type: "message", message })) {
         message={...message,deliveredAt:new Date().toISOString()};
-        if(hasDatabase){message=await postgresStore.markMessageDelivered(message.id,message.to)||message;}else{const i=messages.findIndex(m=>m.id===message.id);if(i>=0)messages[i]=message;}
+        if(hasDatabase){
+          const delivered=await postgresStore.markMessageDelivered(message.id,message.to);
+          if(delivered)message={
+            ...delivered,
+            replyToMessageId:message.replyToMessageId,
+            replyPreviewText:message.replyPreviewText,
+            replyPreviewFrom:message.replyPreviewFrom
+          };
+        }else{
+          const i=messages.findIndex(m=>m.id===message.id);
+          if(i>=0)messages[i]=message;
+        }
       }
       ws.send(JSON.stringify({ type: "message", message }));
     } catch (error) { console.error("WebSocket message handling failed",error); if(ws.readyState===ws.OPEN) ws.send(JSON.stringify({ type: "error", error: error?.code==="CLIENT_MESSAGE_ID_CONFLICT" ? "client_message_id_conflict" : "service_unavailable" })); }

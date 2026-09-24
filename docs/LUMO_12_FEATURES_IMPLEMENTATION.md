@@ -1,0 +1,38 @@
+# Lumo — 12-feature implementation tracker (September 2026)
+
+This tracker describes what exists in the stacked development branches. **None of the staging-only server capabilities should be described as production-ready until their own security/device/deployment gates pass.** The latest integration branch is `feature/lumo-webrtc-video-current-stack`, adding explicit TURN-only camera+microphone WebRTC video staging on top of the current media-retention stack.
+
+## Current implementation status
+
+| # | Area | Implemented now | Still required before production |
+| --- | --- | --- | --- |
+| 1 | Living cosmic background | Native Compose starfield/planets, theme-aware glows, optional slow twinkle, low-power mode. | Physical-device battery/frame-time/accessibility checks. |
+| 2 | Animated identity | Planet/orbit vector logo, launcher icon, optional slow orbit/glow animation. | True 3D asset/rendering is still optional future work; current mark is 2D vector animation. |
+| 3 | Voice messages | Android consent-based AAC recorder + private signed media upload/viewer for direct chats and groups; group recording stops on background and is server-gated. | Private object storage configuration, security review, two-/three-device tests and production rollout. |
+| 4 | Audio/video calls | Authenticated call invitations plus explicit accepted-call WebRTC **audio and video** staging. Microphone/camera start only after separate user action and Android permissions; ICE is TURN-only with bounded/idempotent signaling, local/remote video, mute/camera/speaker/camera-switch controls and lifecycle cleanup. | Real TURN deployment, two-device/NAT/background/rotation/camera/audio-route/thermal QA and abuse/cost controls before production. |
+| 5 | Photo/video/files | Private photo/video/voice plus PDF/TXT/DOCX/XLSX/PPTX staging attachments for direct chats **and private groups**, authenticated signed downloads, outstanding-upload quota, expired-unclaimed cleanup, and opt-in retention cleanup for old claimed media that has no live message references. | Dedicated staging bucket/CORS, malware/quarantine pipeline, choose/approve the real retention period, storage monitoring and multi-device QA before broad production rollout. |
+| 6 | Message actions | Direct-message linked replies/edit-delete/search/text+attachment forwarding/reactions plus private-group linked replies/search, sender-owned edit-delete, participant reactions and private attachments. | Richer forwarded-message attribution and final multi-device authorization/offline QA. |
+| 7 | Themes/customization | Cosmos, Aurora, Violet, Minimal; animation and battery controls saved locally. | Real-device visual/accessibility checks. |
+| 8 | Notifications | Privacy-first FCM debug/staging client plus current-stack session-scoped registration and durable generic direct/group outbox; payloads contain no sender/message/group text; offline revoke reconciliation remains explicit. | Dedicated staging Firebase/ADC/cron credentials, physical-device permission/Doze/token/account-switch tests and operational backlog monitoring. Release remains no-op. |
+| 9 | Profiles | Display-name edit, cross-device public bio, local-first Photo Picker avatar, explicit authenticated avatar sync/removal, visual/privacy settings. | Real-device avatar sync/delete QA plus moderation/reporting, retention, backup and storage-quota policy before broad rollout. |
+| 10 | Groups | Cosmic private group UI plus PostgreSQL membership/roles, removal/rejoin privacy, idempotent sends, WebSocket + polling fallback, replies/search/actions, private attachments, stable pagination, generic privacy-preserving group push, shared quota/cleanup, and object-safe group deletion. | Multi-device concurrency/scroll/push QA, moderation/abuse controls, approved retention policy/monitoring and E2E work. |
+| 11 | Offline experience | AES-256-GCM Android Keystore cache for direct chats **and private groups**, cached group summaries/history, encrypted pending direct/group text state, encrypted group attachment retry metadata, per-account clear control, and confirmed-membership cache purge. | Airplane-mode/reconnect/account-isolation/corrupt-key/performance tests; raw downloaded media remains online-only unless a future opt-in encrypted cache is designed. |
+| 12 | Lumo AI | Separate cosmic assistant screen; server-only provider key; authenticated capability gate; strict prompt/history limits; no automatic private-chat sharing; selected message can be copied only as an **unsent editable AI draft**. | Pick provider/retention terms, moderation/age-safety review, cost/distributed rate limits and isolated staging before production. |
+
+## Integration / release sequence
+
+1. Keep visual and local-only changes reviewable independently from backend migrations.
+2. Review privacy/chat foundations before deploying group/media/reaction server features.
+3. Configure storage, TURN, Firebase and AI credentials only in private staging environments first.
+4. Run Android + PostgreSQL CI and then physical-device tests across two accounts/devices/networks.
+5. Do not merge the stacked development tip straight to `main`; reconcile each dependency intentionally and preserve existing production signing/data.
+6. The separate production `/api/conversations` deployment mismatch remains unrelated to these feature branches and must be resolved independently.
+
+## Non-negotiable safety/privacy gates
+
+- No hidden microphone/camera recording; recording/calls require visible user actions and Android permissions.
+- No automatic private-chat export to AI. A selected message handoff stays unsent until the user presses Send in the AI screen.
+- No message text/sender identity in push notifications.
+- No provider/API secrets in APK, GitHub, Android preferences or chat payloads.
+- No claim of E2E encryption: the offline cache is device-at-rest encryption only.
+- No fake controls for unsupported server features; capability-gated UI must remain hidden/disabled when the backend is unavailable.
