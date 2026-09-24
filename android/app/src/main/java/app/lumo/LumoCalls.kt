@@ -41,6 +41,10 @@ data class LumoIceServer(
     val username:String,
     val credential:String
 )
+data class LumoCallServiceCaps(
+    val callsReady:Boolean?,
+    val turnReady:Boolean?
+)
 
 class CallsUnavailableException:Exception("Call signaling is disabled")
 class CallsApiException(val statusCode:Int,val code:String):Exception(code)
@@ -87,6 +91,22 @@ class LumoCallApi {
         status=obj.getString("status"),
         expiresAt=obj.getString("expiresAt")
     )
+
+    fun capabilities():LumoCallServiceCaps{
+        val request=Request.Builder()
+            .url(Api.HTTP+"/api/capabilities")
+            .header("Cache-Control","no-store")
+            .get().build()
+        Api.httpClient.newCall(request).execute().use{response->
+            if(!response.isSuccessful)return LumoCallServiceCaps(null,null)
+            val obj=runCatching{JSONObject(response.body?.string().orEmpty())}.getOrNull()
+                ?:return LumoCallServiceCaps(null,null)
+            return LumoCallServiceCaps(
+                if(obj.has("callsReady"))obj.optBoolean("callsReady") else null,
+                if(obj.has("turnReady"))obj.optBoolean("turnReady") else null
+            )
+        }
+    }
 
     fun list(token:String):List<LumoCall>{
         val a=JSONArray(request(token,"GET","/api/calls"))
@@ -211,6 +231,7 @@ fun LumoCallsLab(
 ){
     val scope=rememberCoroutineScope()
     var supported by remember(token){mutableStateOf<Boolean?>(null)}
+    var serviceCaps by remember(token){mutableStateOf<LumoCallServiceCaps?>(null)}
     var calls by remember(token){mutableStateOf<List<LumoCall>>(emptyList())}
     var people by remember(token){mutableStateOf<List<User>>(emptyList())}
     var error by remember{mutableStateOf("")}
@@ -221,6 +242,14 @@ fun LumoCallsLab(
     var autoStarted by remember(initialQuery,initialAutoKind){mutableStateOf(false)}
 
     LaunchedEffect(token,refresh){
+        serviceCaps=runCatching{
+            withContext(Dispatchers.IO){Api.callClient.capabilities()}
+        }.getOrNull()
+        if(serviceCaps?.callsReady==false){
+            supported=false
+            error=""
+            return@LaunchedEffect
+        }
         while(true){
             val result=runCatching{
                 withContext(Dispatchers.IO){Api.callClient.list(token)}
@@ -322,6 +351,26 @@ fun LumoCallsLab(
                         "медиатрафик остаётся в TURN-only режиме, а при сворачивании захват останавливается.",
                     color=Color.White,style=MaterialTheme.typography.bodySmall
                 )
+            }
+
+            serviceCaps?.let{caps->
+                if(caps.callsReady==true){
+                    Box(
+                        Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp)
+                            .lumoGlass(18).padding(11.dp)
+                    ){
+                        Text(
+                            if(caps.turnReady==true)
+                                "Сервер звонков готов: signaling и приватный TURN доступны."
+                            else if(caps.turnReady==false)
+                                "Приглашения звонков доступны, но приватный TURN ещё не настроен. Аудио и видео не запустятся до настройки TURN."
+                            else
+                                "Сигнализация звонков доступна. Сервер пока не сообщает состояние TURN.",
+                            color=if(caps.turnReady==true)LumoCyan else Color.White,
+                            style=MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
             }
 
             when(supported){
