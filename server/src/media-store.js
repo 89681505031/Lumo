@@ -658,7 +658,7 @@ export function registerMediaCleanup(app){
   app.get("/internal/media-cleanup",async(req,res)=>{
     res.set("Cache-Control","private, no-store");
     const secret=process.env.CRON_SECRET || "";
-    if(process.env.MEDIA_ENABLE_UPLOADS!=="true" || !mediaReady ||
+    if(process.env.MEDIA_ENABLE_UPLOADS==="false" || !mediaReady ||
        Buffer.byteLength(secret)<32)
       return res.status(404).json({error:"feature_unavailable"});
     const provided=typeof req.headers.authorization==="string" &&
