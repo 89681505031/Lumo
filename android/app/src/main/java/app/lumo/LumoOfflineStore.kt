@@ -32,6 +32,8 @@ object LumoOfflineStore {
     private const val MAX_CHATS=100
     private const val MAX_MESSAGES_PER_CHAT=150
     private const val MAX_PENDING_MESSAGES=100
+    private const val MAX_GROUPS=100
+    private const val MAX_GROUP_MESSAGES=150
     private const val FILE_PREFIX="lumo_offline_"
     private val lock=Any()
 
@@ -72,6 +74,18 @@ object LumoOfflineStore {
 
     private fun pendingFile(context:Context,userId:String,peerId:String)=
         File(context.filesDir,FILE_PREFIX+accountHash(userId)+"_pending_"+peerHash(peerId)+".bin")
+
+    private fun groupsFile(context:Context,userId:String)=
+        File(context.filesDir,FILE_PREFIX+accountHash(userId)+"_groups.bin")
+
+    private fun groupHistoryFile(context:Context,userId:String,groupId:String)=
+        File(context.filesDir,FILE_PREFIX+accountHash(userId)+"_group_"+peerHash(groupId)+".bin")
+
+    private fun groupPendingFile(context:Context,userId:String,groupId:String)=
+        File(context.filesDir,FILE_PREFIX+accountHash(userId)+"_group_pending_"+peerHash(groupId)+".bin")
+
+    private fun groupMediaPendingFile(context:Context,userId:String,groupId:String)=
+        File(context.filesDir,FILE_PREFIX+accountHash(userId)+"_group_media_"+peerHash(groupId)+".bin")
 
     private fun encrypt(userId:String,plain:ByteArray):ByteArray {
         val cipher=Cipher.getInstance("AES/GCM/NoPadding")
@@ -285,6 +299,171 @@ object LumoOfflineStore {
                 }
             }
         }.getOrDefault(emptyList())
+    }
+
+    fun saveGroups(context:Context,userId:String,groups:List<LumoGroup>){
+        val root=JSONObject().put("savedAt",System.currentTimeMillis())
+        val a=JSONArray()
+        groups.take(MAX_GROUPS).forEach{g->
+            a.put(JSONObject()
+                .put("id",g.id)
+                .put("title",g.title.take(80))
+                .put("ownerId",g.ownerId)
+                .put("role",g.role)
+                .put("memberCount",g.memberCount)
+                .put("lastMessage",g.lastMessage.take(4000))
+                .put("lastAt",g.lastAt))
+        }
+        root.put("items",a)
+        write(context.applicationContext,userId,groupsFile(context,userId),root.toString())
+    }
+
+    fun loadGroups(context:Context,userId:String):List<LumoGroup>{
+        val raw=read(context.applicationContext,userId,groupsFile(context,userId))
+            ?:return emptyList()
+        return runCatching{
+            val a=JSONObject(raw).getJSONArray("items")
+            buildList{
+                for(i in 0 until minOf(a.length(),MAX_GROUPS)){
+                    val o=a.getJSONObject(i)
+                    add(LumoGroup(
+                        id=o.getString("id"),
+                        title=o.getString("title").take(80),
+                        ownerId=o.optString("ownerId"),
+                        role=o.optString("role"),
+                        memberCount=o.optInt("memberCount",0),
+                        lastMessage=o.optString("lastMessage").take(4000),
+                        lastAt=o.optString("lastAt")
+                    ))
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun saveGroupHistory(
+        context:Context,userId:String,groupId:String,messages:List<LumoGroupMessage>
+    ){
+        val root=JSONObject().put("savedAt",System.currentTimeMillis())
+        val a=JSONArray()
+        messages.sortedBy{it.createdAt}.takeLast(MAX_GROUP_MESSAGES).forEach{m->
+            a.put(JSONObject()
+                .put("id",m.id)
+                .put("from",m.from)
+                .put("text",m.text.take(4000))
+                .put("createdAt",m.createdAt)
+                .put("clientMessageId",m.clientMessageId)
+                .put("attachmentId",m.attachmentId)
+                .put("replyToMessageId",m.replyToMessageId)
+                .put("replyPreviewText",m.replyPreviewText.take(240))
+                .put("replyPreviewFrom",m.replyPreviewFrom)
+                .put("editedAt",m.editedAt)
+                .put("deletedAt",m.deletedAt))
+        }
+        root.put("items",a)
+        write(
+            context.applicationContext,userId,
+            groupHistoryFile(context,userId,groupId),root.toString()
+        )
+    }
+
+    fun loadGroupHistory(
+        context:Context,userId:String,groupId:String
+    ):List<LumoGroupMessage>{
+        val raw=read(
+            context.applicationContext,userId,
+            groupHistoryFile(context,userId,groupId)
+        )?:return emptyList()
+        return runCatching{
+            val a=JSONObject(raw).getJSONArray("items")
+            buildList{
+                for(i in 0 until minOf(a.length(),MAX_GROUP_MESSAGES)){
+                    val o=a.getJSONObject(i)
+                    add(LumoGroupMessage(
+                        id=o.getString("id"),
+                        from=o.getString("from"),
+                        text=o.optString("text").take(4000),
+                        createdAt=o.optString("createdAt"),
+                        clientMessageId=o.optString("clientMessageId"),
+                        attachmentId=o.optString("attachmentId"),
+                        replyToMessageId=o.optString("replyToMessageId"),
+                        replyPreviewText=o.optString("replyPreviewText").take(240),
+                        replyPreviewFrom=o.optString("replyPreviewFrom"),
+                        editedAt=o.optString("editedAt"),
+                        deletedAt=o.optString("deletedAt")
+                    ))
+                }
+            }.sortedBy{it.createdAt}
+        }.getOrDefault(emptyList())
+    }
+
+    fun saveGroupPending(
+        context:Context,userId:String,groupId:String,item:LumoGroupPending?
+    ){
+        val file=groupPendingFile(context.applicationContext,userId,groupId)
+        if(item==null){
+            synchronized(lock){runCatching{file.delete()}}
+            return
+        }
+        val json=JSONObject()
+            .put("clientId",item.clientId)
+            .put("text",item.text.take(4000))
+            .put("replyToMessageId",item.replyToMessageId)
+            .put("replyPreviewText",item.replyPreviewText.take(240))
+            .put("replyPreviewFrom",item.replyPreviewFrom)
+            .toString()
+        write(context.applicationContext,userId,file,json)
+    }
+
+    fun loadGroupPending(
+        context:Context,userId:String,groupId:String
+    ):LumoGroupPending?{
+        val raw=read(
+            context.applicationContext,userId,
+            groupPendingFile(context,userId,groupId)
+        )?:return null
+        return runCatching{
+            val o=JSONObject(raw)
+            val id=o.optString("clientId")
+            val text=o.optString("text").take(4000)
+            if(id.isBlank()||text.isBlank())null else LumoGroupPending(
+                id,text,
+                o.optString("replyToMessageId"),
+                o.optString("replyPreviewText").take(240),
+                o.optString("replyPreviewFrom")
+            )
+        }.getOrNull()
+    }
+
+    fun saveGroupMediaPendingJson(
+        context:Context,userId:String,groupId:String,json:String?
+    ){
+        val file=groupMediaPendingFile(context.applicationContext,userId,groupId)
+        if(json==null){
+            synchronized(lock){runCatching{file.delete()}}
+            return
+        }
+        write(context.applicationContext,userId,file,json.take(8192))
+    }
+
+    fun loadGroupMediaPendingJson(
+        context:Context,userId:String,groupId:String
+    ):String?=read(
+        context.applicationContext,userId,
+        groupMediaPendingFile(context,userId,groupId)
+    )
+
+    fun clearGroup(context:Context,userId:String,groupId:String):Int{
+        val app=context.applicationContext
+        val files=listOf(
+            groupHistoryFile(app,userId,groupId),
+            groupPendingFile(app,userId,groupId),
+            groupMediaPendingFile(app,userId,groupId)
+        )
+        var removed=0
+        synchronized(lock){
+            files.forEach{if(it.isFile&&it.delete())removed++}
+        }
+        return removed
     }
 
     fun cacheFileCount(context:Context,userId:String):Int {
