@@ -1564,7 +1564,25 @@ object Api{
   val request=Request.Builder().url(HTTP+"/api/messages/read").header("Authorization","Bearer "+t).post(body.toString().toRequestBody("application/json".toMediaType())).build()
   c.newCall(request).execute().use{response->if(!response.isSuccessful)error("Прочтение: "+response.code)}
  }
- fun latestRelease():UpdateInfo{val r=Request.Builder().url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest").header("Accept","application/vnd.github+json").build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Обновление: "+x.code);val o=JSONObject(x.body!!.string());val code=Regex("versionCode=(\\d+)").find(o.optString("body"))?.groupValues?.get(1)?.toIntOrNull()?:0;val a=o.getJSONArray("assets");for(i in 0 until a.length()){val asset=a.getJSONObject(i);if(asset.optString("name")=="app-debug.apk" || asset.optString("name")=="app-release.apk" || asset.optString("label")=="Lumo.apk")return UpdateInfo(code,asset.getString("browser_download_url"))};error("APK не найден")}}
+ fun latestRelease():UpdateInfo{
+  val r=Request.Builder()
+   .url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest")
+   .header("Accept","application/vnd.github+json").build()
+  c.newCall(r).execute().use{x->
+   if(!x.isSuccessful)error("Обновление: "+x.code)
+   val o=JSONObject(x.body!!.string())
+   val code=Regex("versionCode=(\\d+)").find(o.optString("body"))
+    ?.groupValues?.get(1)?.toIntOrNull()?:0
+   val a=o.getJSONArray("assets")
+   val assets=(0 until a.length()).map{a.getJSONObject(it)}
+   val asset=
+    assets.firstOrNull{it.optString("name")=="app-release.apk"} ?:
+    assets.firstOrNull{it.optString("label")=="Lumo.apk" && it.optString("name")!="app-debug.apk"} ?:
+    assets.firstOrNull{it.optString("name")=="app-debug.apk"}
+   if(asset!=null)return UpdateInfo(code,asset.getString("browser_download_url"))
+   error("APK не найден")
+  }
+ }
  fun socket(t:String,onMessage:(Msg)->Unit,onReceipt:(Receipt)->Unit,onError:(String)->Unit,onReady:()->Unit,onDisconnected:()->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS).header("Authorization","Bearer "+t).build(),object:WebSocketListener(){override fun onOpen(w:WebSocket,response:Response){};override fun onMessage(w:WebSocket,s:String){runCatching{val o=JSONObject(s);when(o.optString("type")){"ready"->onReady();"message"->onMessage(msg(o.getJSONObject("message")));"receipt"->onReceipt(Receipt(o.getString("messageId"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt")));"error"->onError(o.optString("error"));else->Unit}}.onFailure{onError("invalid_server_message")}};override fun onClosed(w:WebSocket,code:Int,reason:String)=onDisconnected();override fun onFailure(w:WebSocket,t:Throwable,response:Response?)=onDisconnected()})}
  private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"),nullableJsonText(o,"bio"),o.has("bio"),o.optBoolean("hasAvatar",false),nullableJsonText(o,"avatarVersion"))
  private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"),nullableJsonText(o,"attachmentId"),nullableJsonText(o,"replyToMessageId"),nullableJsonText(o,"replyPreviewText"),nullableJsonText(o,"replyPreviewFrom"),nullableJsonText(o,"editedAt"),nullableJsonText(o,"deletedAt"))
