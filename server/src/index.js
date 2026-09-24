@@ -62,7 +62,7 @@ async function auth(req, res, next) {
 }
 
 app.get("/live", (_req, res) => res.json({ ok: true, service: "lumo-server" }));
-app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled,documentsReady:mediaEnabled,groupsReady:hasDatabase,groupLinkedReplies:hasDatabase,groupSearch:hasDatabase,groupMessageEdit:hasDatabase,groupMessageDelete:hasDatabase,groupReactions:reactionsEnabled,groupAttachments:mediaEnabled&&hasDatabase}));
+app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled,documentsReady:mediaEnabled,groupsReady:hasDatabase,groupLinkedReplies:hasDatabase,groupSearch:hasDatabase,groupPagination:hasDatabase,groupMessageEdit:hasDatabase,groupMessageDelete:hasDatabase,groupReactions:reactionsEnabled,groupAttachments:mediaEnabled&&hasDatabase}));
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase,ok:false}; if(hasDatabase){try{database=await dbHealth()}catch(error){console.error("Database health check failed",error);database={configured:true,ok:false}}} const ok=database.configured===true&&database.ok===true; res.status(ok?200:503).json({ ok, service:"lumo-server", database }); });
 
@@ -417,6 +417,36 @@ app.get("/api/groups/:id/messages",auth,requireDatabase,async(req,res)=>{
     return history===null ? groupError(res,"group_not_found") : res.json(history);
   }catch(error){
     console.error("Group history failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/groups/:id/messages/page",auth,requireDatabase,rateLimit({windowMs:60_000,max:120}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  const rawAt=req.query.beforeAt,rawId=req.query.beforeId,rawLimit=req.query.limit;
+  const hasAt=typeof rawAt==="string"&&rawAt.length>0;
+  const hasId=typeof rawId==="string"&&rawId.length>0;
+  if(hasAt!==hasId)
+    return res.status(400).json({error:"invalid_history_cursor"});
+  let beforeAt=null,beforeId=null;
+  if(hasAt){
+    const parsed=new Date(rawAt);
+    if(!Number.isFinite(parsed.getTime())||!uuidPattern.test(rawId))
+      return res.status(400).json({error:"invalid_history_cursor"});
+    beforeAt=parsed.toISOString();
+    beforeId=rawId;
+  }
+  const limit=rawLimit===undefined?50:Number(rawLimit);
+  if(!Number.isInteger(limit)||limit<1||limit>100)
+    return res.status(400).json({error:"invalid_history_limit"});
+  try{
+    const page=await groupStore.historyPage(req.user.id,req.params.id,{
+      beforeAt,beforeId,limit
+    });
+    return page===null ? groupError(res,"group_not_found") : res.json(page);
+  }catch(error){
+    console.error("Group history page failed",error);
     return res.status(503).json({error:"service_unavailable"});
   }
 });
