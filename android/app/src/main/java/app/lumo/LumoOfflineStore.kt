@@ -189,7 +189,10 @@ object LumoOfflineStore {
                 .put("deliveredAt",m.deliveredAt)
                 .put("readAt",m.readAt)
                 .put("clientMessageId",m.clientMessageId)
-                .put("attachmentId",m.attachmentId))
+                .put("attachmentId",m.attachmentId)
+                .put("replyToMessageId",m.replyToMessageId)
+                .put("replyPreviewText",m.replyPreviewText.take(240))
+                .put("replyPreviewFrom",m.replyPreviewFrom))
         }
         root.put("items",a)
         write(
@@ -218,7 +221,10 @@ object LumoOfflineStore {
                         deliveredAt=o.optString("deliveredAt"),
                         readAt=o.optString("readAt"),
                         clientMessageId=o.optString("clientMessageId"),
-                        attachmentId=o.optString("attachmentId")
+                        attachmentId=o.optString("attachmentId"),
+                        replyToMessageId=o.optString("replyToMessageId"),
+                        replyPreviewText=o.optString("replyPreviewText").take(240),
+                        replyPreviewFrom=o.optString("replyPreviewFrom")
                     )
                     if((m.from==userId&&m.to==peerId)||(m.from==peerId&&m.to==userId))
                         add(m)
@@ -241,7 +247,10 @@ object LumoOfflineStore {
             if(item.clientMessageId.isBlank()||item.text.isBlank())return@forEach
             a.put(JSONObject()
                 .put("clientMessageId",item.clientMessageId)
-                .put("text",item.text.take(4000)))
+                .put("text",item.text.take(4000))
+                .put("replyToMessageId",item.replyToMessageId)
+                .put("replyPreviewText",item.replyPreviewText.take(240))
+                .put("replyPreviewFrom",item.replyPreviewFrom))
         }
         root.put("items",a)
         write(context.applicationContext,userId,file,root.toString())
@@ -263,7 +272,12 @@ object LumoOfflineStore {
                     val id=o.optString("clientMessageId")
                     val text=o.optString("text").take(4000)
                     if(id.isNotBlank()&&text.isNotBlank())
-                        add(PendingMessage(id,text))
+                        add(PendingMessage(
+                            id,text,
+                            o.optString("replyToMessageId"),
+                            o.optString("replyPreviewText").take(240),
+                            o.optString("replyPreviewFrom")
+                        ))
                 }
             }
         }.getOrDefault(emptyList())
