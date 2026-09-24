@@ -49,8 +49,8 @@ const required=["MEDIA_BUCKET","MEDIA_REGION","MEDIA_ACCESS_KEY_ID","MEDIA_SECRE
 export const mediaReady=required.every(key=>Boolean(process.env[key]?.trim()));
 let client=null;
 const bucket=mediaReady?process.env.MEDIA_BUCKET:null;
-const MAX_UNCLAIMED_RESERVATIONS=12;
-const MAX_UNCLAIMED_RESERVED_BYTES=100*1024*1024;
+const MAX_UNCLAIMED_RESERVATIONS=8;
+const MAX_UNCLAIMED_RESERVED_BYTES=75*1024*1024;
 if(mediaReady){
   client=new S3Client({
     region:process.env.MEDIA_REGION,
