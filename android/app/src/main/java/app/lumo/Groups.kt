@@ -339,7 +339,10 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
         if(items.any{it.id==msg.id})items else (items+msg).sortedBy{it.createdAt}
        }
        searchResults=searchResults.filterNot{
-        it.id==msg.id&&msg.deletedAt.isNotBlank()
+        it.id==msg.id&&(
+         msg.deletedAt.isNotBlank() ||
+         (searchText.isNotBlank()&&!msg.text.contains(searchText,ignoreCase=true))
+        )
        }.map{m->when{
         m.id==msg.id->msg
         m.replyToMessageId==msg.id->m.copy(
@@ -514,7 +517,10 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
         m.replyToMessageId==changed.id->m.copy(replyPreviewText=changed.text.take(240))
         else->m
        }}
-       searchResults=searchResults.map{m->when{
+       searchResults=searchResults.filterNot{
+        it.id==changed.id&&searchText.isNotBlank()&&
+         !changed.text.contains(searchText,ignoreCase=true)
+       }.map{m->when{
         m.id==changed.id->changed
         m.replyToMessageId==changed.id->m.copy(replyPreviewText=changed.text.take(240))
         else->m
@@ -735,7 +741,7 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
          )
         }
         Text(
-         formatMessageTime(m.createdAt)+(if(m.editedAt.isNotBlank())" · изменено" else ""),
+         formatMessageTime(m.createdAt)+(if(m.editedAt.isNotBlank()&&m.deletedAt.isBlank())" · изменено" else ""),
          style=MaterialTheme.typography.labelSmall,
          modifier=Modifier.align(Alignment.End)
         )
