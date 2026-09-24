@@ -383,7 +383,7 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
    Text("Проверяем доступность медиа…",style=MaterialTheme.typography.bodySmall)
   }else if(!available){
    Text(
-    "Сервер медиа пока не обновлён. Кнопки останутся здесь и включатся после обновления сервера.",
+    "Сервер медиа пока недоступен. После обновления функции включатся автоматически.",
     style=MaterialTheme.typography.bodySmall,
     color=MaterialTheme.colorScheme.onSurfaceVariant
    )
@@ -408,7 +408,7 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
      Text("Отменить")
     }
    }
-  }else{
+  }else if(available){
    if(recorder==null){
     Row(Modifier.fillMaxWidth()){
      TextButton(
@@ -654,7 +654,7 @@ fun GroupMediaComposer(
    LinearProgressIndicator(Modifier.fillMaxWidth(),color=LumoCyan)
   }else if(!available){
    Text(
-    "Медиа группы пока недоступны на сервере.",
+    "Медиа группы пока недоступны. После обновления сервера функции включатся автоматически.",
     style=MaterialTheme.typography.bodySmall,
     color=MaterialTheme.colorScheme.onSurfaceVariant
    )
@@ -689,7 +689,7 @@ fun GroupMediaComposer(
      onClick={rememberPending(null);status="Отправка отменена"}
     ){Text("Отменить")}
    }
-  }else{
+  }else if(available){
    if(recorder==null){
     Row(Modifier.fillMaxWidth()){
      TextButton(
