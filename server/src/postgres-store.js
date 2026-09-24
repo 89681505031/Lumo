@@ -17,6 +17,7 @@ const mapMessage = r => ({
   deliveredAt:r.delivered_at?.toISOString?.() || r.delivered_at || null,
   readAt:r.read_at?.toISOString?.() || r.read_at || null,
   clientMessageId:r.client_message_id || null,
+  attachmentId:r.media_id || null,
   replyToMessageId:r.reply_to_message_id || null,
   replyPreviewText:r.reply_preview_text || null,
   replyPreviewFrom:r.reply_preview_from || null
