@@ -135,6 +135,16 @@ export async function initDatabase() {
   )`);
   await pool.query(`create index if not exists chat_group_messages_history_idx on chat_group_messages(group_id,created_at desc,id desc)`);
   await pool.query(`alter table chat_group_messages add column if not exists reply_to_message_id uuid`);
+  await pool.query(`alter table chat_group_messages add column if not exists edited_at timestamptz`);
+  await pool.query(`alter table chat_group_messages add column if not exists deleted_at timestamptz`);
+  await pool.query(`create table if not exists chat_group_message_reactions (
+    message_id uuid not null references chat_group_messages(id) on delete cascade,
+    user_id uuid not null references users(id) on delete cascade,
+    emoji varchar(16) not null,
+    created_at timestamptz not null default now(),
+    primary key(message_id,user_id,emoji)
+  )`);
+  await pool.query(`create index if not exists chat_group_message_reactions_message_idx on chat_group_message_reactions(message_id,created_at desc)`);
   const groupReplyFk=await pool.query(
     "select 1 from pg_constraint where conname=$1 and conrelid='chat_group_messages'::regclass",
     ["chat_group_messages_reply_to_fk"]
@@ -161,6 +171,11 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='chat_group_messages' and column_name='reply_to_message_id') as group_reply_column,
     exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='chat_group_messages' and column_name='edited_at') as group_edited_column,
+    exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='chat_group_messages' and column_name='deleted_at') as group_deleted_column,
+    to_regclass('chat_group_message_reactions') as group_reactions_table,
+    exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='bio') as bio_column,
@@ -179,5 +194,5 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.group_reply_column && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.group_reply_column && row.group_edited_column && row.group_deleted_column && row.group_reactions_table && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
 }
