@@ -67,7 +67,9 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='avatar_updated_at') as avatar_updated_column,
     exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='messages' and column_name='reply_to_message_id') as reply_column,
+    exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.session_expiry_column), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.session_expiry_column), now:row.now };
 }
