@@ -33,11 +33,15 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-      - name: Build debug APK
+      - name: Build Android APKs
         env:
           LUMO_VERSION_CODE: ${{ github.run_number }}
-        run: gradle testDebugUnitTest testReleaseUnitTest assembleDebug
+        run: gradle testDebugUnitTest testReleaseUnitTest assembleDebug assembleRelease
       - uses: actions/upload-artifact@v4
         with:
           name: lumo-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumo-release-unsigned-apk
+          path: android/app/build/outputs/apk/release/app-release-unsigned.apk
