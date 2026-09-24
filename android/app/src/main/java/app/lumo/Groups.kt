@@ -35,6 +35,7 @@ data class LumoGroupMember(val id:String,val username:String,val displayName:Str
 data class LumoGroupMessage(val id:String,val from:String,val text:String,val createdAt:String,val clientMessageId:String="",val attachmentId:String="",val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="",val editedAt:String="",val deletedAt:String="")
 data class LumoGroupPending(val clientId:String,val text:String,val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="")
 data class LumoGroupDetail(val group:LumoGroup,val members:List<LumoGroupMember>)
+class GroupsUnavailableException:Exception("Group service is not available on this server")
 
 private fun optional(o:JSONObject,key:String)=if(o.isNull(key))"" else o.optString(key)
 private fun group(o:JSONObject)=LumoGroup(
@@ -63,7 +64,11 @@ private fun Api.groupCall(token:String,path:String,method:String="GET",body:JSON
  }
 }
 fun Api.listGroups(t:String):List<LumoGroup>{
- val a=JSONArray(groupCall(t,"/api/groups"))
+ val raw=try{groupCall(t,"/api/groups")}catch(error:Throwable){
+  if(error.message?.startsWith("HTTP 404")==true)throw GroupsUnavailableException()
+  throw error
+ }
+ val a=JSONArray(raw)
  return(0 until a.length()).map{group(a.getJSONObject(it))}
 }
 fun Api.createGroup(t:String,title:String):LumoGroup=
@@ -191,18 +196,26 @@ fun GroupsScreen(token:String,me:User,openGroup:(LumoGroup)->Unit){
  var title by remember{mutableStateOf("")}
  var creating by remember{mutableStateOf(false)}
  var refresh by remember{mutableIntStateOf(0)}
+ var serverSupported by remember(token){mutableStateOf<Boolean?>(null)}
  LaunchedEffect(token,me.id,refresh){
+  serverSupported=null
   while(true){
-   runCatching{withContext(Dispatchers.IO){Api.listGroups(token)}}
-    .onSuccess{
-     groups=it;error="";loading=false
-     runCatching{withContext(Dispatchers.IO){LumoOfflineStore.saveGroups(context,me.id,it)}}
-    }
-    .onFailure{
+   val result=runCatching{withContext(Dispatchers.IO){Api.listGroups(token)}}
+   result.onSuccess{
+    serverSupported=true
+    groups=it;error="";loading=false
+    runCatching{withContext(Dispatchers.IO){LumoOfflineStore.saveGroups(context,me.id,it)}}
+   }.onFailure{failure->
+    if(failure is GroupsUnavailableException){
+     serverSupported=false
+     error="Сервер групп ещё не обновлён."
+    }else{
      error=if(groups.isNotEmpty())"Нет сети — показана зашифрованная офлайн-копия групп"
-      else (it.message?:"Не удалось загрузить группы")
-     loading=false
+      else (failure.message?:"Не удалось загрузить группы")
     }
+    loading=false
+   }
+   if(serverSupported==false)break
    delay(10_000)
   }
  }
@@ -231,9 +244,14 @@ fun GroupsScreen(token:String,me:User,openGroup:(LumoGroup)->Unit){
  Column(Modifier.fillMaxSize()){
   Row(Modifier.fillMaxWidth().padding(16.dp).lumoGlass(24).padding(8.dp),verticalAlignment=Alignment.CenterVertically){
    Text("Мои группы",style=MaterialTheme.typography.titleLarge,color=Color.White,modifier=Modifier.weight(1f))
-   LumoNeonButton("+ Группа",onClick={createDialog=true})
+   LumoNeonButton("+ Группа",onClick={createDialog=true},enabled=serverSupported!=false)
   }
   if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(horizontal=16.dp))
+  if(serverSupported==false){
+   TextButton(onClick={refresh++},modifier=Modifier.padding(horizontal=8.dp)){
+    Text("Проверить сервер снова",color=LumoCyan)
+   }
+  }
   if(loading)LinearProgressIndicator(Modifier.fillMaxWidth())
   if(!loading&&groups.isEmpty()){
    Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,
