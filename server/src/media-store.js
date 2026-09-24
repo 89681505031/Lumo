@@ -81,7 +81,9 @@ const mappedMessage=row=>({
   attachmentId:row.media_id||null,
   replyToMessageId:row.reply_to_message_id||null,
   replyPreviewText:null,
-  replyPreviewFrom:null
+  replyPreviewFrom:null,
+  editedAt:iso(row.edited_at),
+  deletedAt:iso(row.deleted_at)
 });
 
 function safeFilename(value,mime){
@@ -244,13 +246,66 @@ export const mediaStore={
     }
   },
 
+  async forward(userId,id,to,clientMessageId,caption){
+    const conn=await pool.connect();
+    let committed=false;
+    try{
+      await conn.query("begin");
+      const source=await conn.query(
+        `select a.*,m.id as source_message_id
+         from media_assets a
+         join messages m on m.media_id=a.id
+         where a.id=$1 and a.uploaded_at is not null
+           and m.deleted_at is null
+           and (m.sender_id=$2 or m.recipient_id=$2)
+         order by m.created_at asc
+         limit 1
+         for share of a`,
+        [id,userId]
+      );
+      const a=source.rows[0];
+      if(!a)return {error:"media_not_found"};
+      const text=(caption||("↪ "+placeholder(a.mime,a.file_name))).trim();
+      const messageId=randomUUID();
+      const inserted=await conn.query(
+        `insert into messages(
+          id,sender_id,recipient_id,text,client_message_id,media_id
+        ) values($1,$2,$3,$4,$5,$6)
+        on conflict(sender_id,client_message_id)
+          where client_message_id is not null do nothing
+        returning *`,
+        [messageId,userId,to,text,clientMessageId,id]
+      );
+      if(!inserted.rows[0]){
+        const old=await conn.query(
+          "select * from messages where sender_id=$1 and client_message_id=$2",
+          [userId,clientMessageId]
+        );
+        const p=old.rows[0];
+        if(p && p.recipient_id===to && p.media_id===id && p.text===text)
+          return {message:mappedMessage(p),inserted:false};
+        return {error:"client_message_id_conflict"};
+      }
+      await conn.query("commit");
+      committed=true;
+      return {message:mappedMessage(inserted.rows[0]),inserted:true};
+    }finally{
+      if(!committed)await conn.query("rollback").catch(()=>{});
+      conn.release();
+    }
+  },
+
   async signedDownload(userId,id){
     if(!mediaReady)return {error:"media_unavailable"};
     const r=await dbQuery(`
-      select a.* from media_assets a
-      left join messages m on m.id=a.claimed_message_id and m.media_id=a.id and m.deleted_at is null
+      select distinct a.* from media_assets a
+      left join messages m
+        on m.media_id=a.id
+       and m.deleted_at is null
+       and (m.sender_id=$2 or m.recipient_id=$2)
       where a.id=$1 and a.uploaded_at is not null
-        and (a.owner_id=$2 or (a.recipient_id=$2 and m.id is not null))`,
+        and (a.owner_id=$2 or m.id is not null)
+      limit 1`,
       [id,userId]
     );
     const item=r.rows[0];
