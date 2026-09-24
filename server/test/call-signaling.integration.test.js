@@ -152,10 +152,11 @@ test("private cross-instance call signaling and TURN credentials are participant
       token:charlie.token
     })).status,404);
 
+    const firstMediaSession=randomUUID();
     const offer={
       clientSignalId:randomUUID(),
       type:"offer",
-      payload:{sdp:"v=0\\r\\n"}
+      payload:{mediaSessionId:firstMediaSession,sdp:"v=0\\r\\n"}
     };
     assert.equal((await request("/api/calls/"+callId+"/signals",{
       origin:other,token:bob.token,method:"POST",body:offer
@@ -191,11 +192,45 @@ test("private cross-instance call signaling and TURN credentials are participant
       body:{
         clientSignalId:randomUUID(),
         type:"answer",
-        payload:{sdp:"v=0\\r\\na=answer"}
+        payload:{mediaSessionId:firstMediaSession,sdp:"v=0\\r\\na=answer"}
       }
     });
     assert.equal(answer.status,201);
     assert.equal(answer.body.seq,2);
+
+    const unknownSessionAnswer=await request("/api/calls/"+callId+"/signals",{
+      origin:other,token:bob.token,method:"POST",
+      body:{
+        clientSignalId:randomUUID(),
+        type:"answer",
+        payload:{mediaSessionId:randomUUID(),sdp:"v=0\\r\\na=orphan"}
+      }
+    });
+    assert.equal(unknownSessionAnswer.status,409);
+    assert.equal(unknownSessionAnswer.body.error,"signal_session_not_found");
+
+    const secondMediaSession=randomUUID();
+    const restartedOffer=await request("/api/calls/"+callId+"/signals",{
+      token:alice.token,method:"POST",
+      body:{
+        clientSignalId:randomUUID(),
+        type:"offer",
+        payload:{mediaSessionId:secondMediaSession,sdp:"v=0\\r\\na=restart"}
+      }
+    });
+    assert.equal(restartedOffer.status,201);
+    assert.equal(restartedOffer.body.seq,3);
+
+    const restartedAnswer=await request("/api/calls/"+callId+"/signals",{
+      origin:other,token:bob.token,method:"POST",
+      body:{
+        clientSignalId:randomUUID(),
+        type:"answer",
+        payload:{mediaSessionId:secondMediaSession,sdp:"v=0\\r\\na=restart-answer"}
+      }
+    });
+    assert.equal(restartedAnswer.status,201);
+    assert.equal(restartedAnswer.body.seq,4);
 
     const ended=await request("/api/calls/"+callId+"/respond",{
       token:alice.token,method:"POST",body:{action:"end"}
@@ -209,7 +244,7 @@ test("private cross-instance call signaling and TURN credentials are participant
       body:{
         clientSignalId:randomUUID(),
         type:"ice",
-        payload:{candidate:"candidate:late"}
+        payload:{mediaSessionId:firstMediaSession,candidate:"candidate:late"}
       }
     })).status,409);
 
