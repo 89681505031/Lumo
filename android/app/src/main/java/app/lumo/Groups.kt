@@ -81,16 +81,40 @@ fun Api.groupHistory(t:String,id:String):List<LumoGroupMessage>{
  val a=JSONArray(groupCall(t,"/api/groups/"+id+"/messages"))
  return(0 until a.length()).map{groupMessage(a.getJSONObject(it))}
 }
-fun Api.groupCapabilities(t:String):Pair<Boolean,Boolean>{
+data class LumoGroupPage(
+ val messages:List<LumoGroupMessage>,
+ val hasMore:Boolean
+)
+fun Api.groupHistoryPage(
+ t:String,id:String,beforeId:String,limit:Int=50
+):LumoGroupPage{
+ val path="/api/groups/"+id+"/messages/page?limit="+limit+"&beforeId="+beforeId
+ val o=JSONObject(groupCall(t,path))
+ val a=o.getJSONArray("messages")
+ return LumoGroupPage(
+  messages=(0 until a.length()).map{groupMessage(a.getJSONObject(it))},
+  hasMore=!o.isNull("next")
+ )
+}
+data class LumoGroupCaps(
+ val linkedReplies:Boolean,
+ val search:Boolean,
+ val pagination:Boolean
+)
+fun Api.groupCapabilities(t:String):LumoGroupCaps{
  val req=Request.Builder().url(Api.HTTP+"/api/capabilities")
   .header("Authorization","Bearer "+t).get().build()
  Api.httpClient.newCall(req).execute().use{r->
   if(r.code==401)throw SessionExpiredException()
-  if(!r.isSuccessful)return false to false
+  if(!r.isSuccessful)return LumoGroupCaps(false,false,false)
   return runCatching{
    val o=JSONObject(r.body?.string().orEmpty())
-   o.optBoolean("groupLinkedReplies",false) to o.optBoolean("groupSearch",false)
-  }.getOrDefault(false to false)
+   LumoGroupCaps(
+    o.optBoolean("groupLinkedReplies",false),
+    o.optBoolean("groupSearch",false),
+    o.optBoolean("groupPagination",false)
+   )
+  }.getOrDefault(LumoGroupCaps(false,false,false))
  }
 }
 data class LumoGroupActionCaps(val edit:Boolean,val delete:Boolean,val reactions:Boolean)
@@ -265,6 +289,9 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
  var deleteGroupDialog by remember{mutableStateOf(false)}
  var groupLinkedReplies by remember(token){mutableStateOf(false)}
  var groupSearchEnabled by remember(token){mutableStateOf(false)}
+ var groupPaginationEnabled by remember(token){mutableStateOf(false)}
+ var olderBusy by remember(initial.id){mutableStateOf(false)}
+ var olderDone by remember(initial.id){mutableStateOf(false)}
  var groupEditEnabled by remember(token){mutableStateOf(false)}
  var groupDeleteEnabled by remember(token){mutableStateOf(false)}
  var groupReactionsEnabled by remember(token){mutableStateOf(false)}
@@ -284,9 +311,10 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
  val listState=rememberLazyListState()
  LaunchedEffect(token,initial.id){
   val caps=runCatching{withContext(Dispatchers.IO){Api.groupCapabilities(token)}}
-   .getOrDefault(false to false)
-  groupLinkedReplies=caps.first
-  groupSearchEnabled=caps.second
+   .getOrDefault(LumoGroupCaps(false,false,false))
+  groupLinkedReplies=caps.linkedReplies
+  groupSearchEnabled=caps.search
+  groupPaginationEnabled=caps.pagination
   val actions=runCatching{withContext(Dispatchers.IO){Api.groupActionCapabilities(token)}}
    .getOrDefault(LumoGroupActionCaps(false,false,false))
   groupEditEnabled=actions.edit
@@ -306,12 +334,34 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     Api.groupDetail(token,initial.id) to Api.groupHistory(token,initial.id)
    }}
    response.onSuccess{pair->
-    detail=pair.first;history=pair.second;error="";loading=false
+    detail=pair.first
+    val currentById=history.associateBy{it.id}.toMutableMap()
+    pair.second.forEach{currentById[it.id]=it}
+    history=currentById.values.sortedWith(
+     compareBy<LumoGroupMessage>{it.createdAt}.thenBy{it.id}
+    )
+    if(history.size==pair.second.size&&pair.second.size<100)olderDone=true
+    error="";loading=false
     if(pair.second.any{it.from==me.id&&it.clientMessageId.isNotBlank()&&it.clientMessageId==pending?.clientId}){
      savePending(null);input=""
     }
    }
-    .onFailure{error="Нет связи с группой или вы больше не участник";loading=false}
+    .onFailure{failure->
+     val membershipLost=failure.message?.contains("HTTP 404 group_not_found")==true
+     if(membershipLost){
+      error="Вы больше не участник этой группы"
+      // A confirmed server-side membership loss must remove group content
+      // from the active screen. A mere network outage keeps the already
+      // loaded view so offline reading is not destroyed by a transient error.
+      history=emptyList()
+      searchResults=emptyList()
+      groupReactions=emptyList()
+      olderDone=true
+     }else{
+      error="Нет связи с группой. Показываем уже загруженные сообщения."
+     }
+     loading=false
+    }
    delay(5_000)
   }
  }
@@ -683,6 +733,33 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     contentPadding=PaddingValues(12.dp),
     verticalArrangement=Arrangement.spacedBy(10.dp)
    ){
+    if(!showSearch&&groupPaginationEnabled&&history.isNotEmpty()&&!olderDone){
+     item(key="older-history"){
+      OutlinedButton(
+       enabled=!olderBusy,
+       modifier=Modifier.fillMaxWidth(),
+       onClick={
+        val oldest=history.firstOrNull()?:return@OutlinedButton
+        olderBusy=true
+        scope.launch{
+         runCatching{withContext(Dispatchers.IO){
+          Api.groupHistoryPage(
+           token,initial.id,oldest.id,50
+          )
+         }}.onSuccess{page->
+          val all=(page.messages+history).associateBy{it.id}.values
+           .sortedWith(compareBy<LumoGroupMessage>{it.createdAt}.thenBy{it.id})
+          history=all
+          if(page.messages.isEmpty()||!page.hasMore)olderDone=true
+         }.onFailure{
+          error="Не удалось загрузить ранние сообщения"
+         }
+         olderBusy=false
+        }
+       }
+      ){Text(if(olderBusy)"Загрузка…" else "Показать ранние сообщения")}
+     }
+    }
     items(visibleHistory,key={it.id}){m->
      Row(Modifier.fillMaxWidth(),horizontalArrangement=
       if(m.from==me.id)Arrangement.End else Arrangement.Start){

@@ -67,6 +67,7 @@ test("private groups: durable membership, roles, history privacy and idempotent 
     assert.equal(caps.json.groupsReady,true);
     assert.equal(caps.json.groupLinkedReplies,true);
     assert.equal(caps.json.groupSearch,true);
+    assert.equal(caps.json.groupPagination,true);
     assert.equal(caps.json.groupMessageEdit,true);
     assert.equal(caps.json.groupMessageDelete,true);
     assert.equal(caps.json.groupReactions,true);
@@ -380,6 +381,92 @@ test("private groups: durable membership, roles, history privacy and idempotent 
       role:"admin"
     })).status,403);
     assert.equal((await request(prefix,"DELETE",member.token)).status,404);
+
+    // Cursor pagination extends history beyond the legacy latest-100 endpoint
+    // without crossing membership boundaries.
+    const pageGroup=await request("/api/groups","POST",owner.token,{title:"Paged group"});
+    assert.equal(pageGroup.status,201);
+    const pageId=pageGroup.json.id;
+    const pagePrefix="/api/groups/"+pageId;
+    const pageMessageIds=Array.from({length:125},()=>randomUUID());
+    const pageClientIds=Array.from({length:125},()=>randomUUID());
+    const pageTexts=Array.from({length:125},(_,i)=>"Paged message "+String(i+1).padStart(3,"0"));
+    await pool.query(`
+      insert into chat_group_messages(
+        id,group_id,sender_id,text,client_message_id,created_at
+      )
+      select x.id,$1,$2,x.text,x.client_id,now()
+      from unnest($3::uuid[],$4::text[],$5::uuid[])
+        as x(id,text,client_id)`,
+      [pageId,owner.user.id,pageMessageIds,pageTexts,pageClientIds]
+    );
+
+    const p1=await request(pagePrefix+"/messages/page?limit=50","GET",owner.token);
+    assert.equal(p1.status,200);
+    assert.equal(p1.json.messages.length,50);
+    assert.ok(p1.json.next);
+    const p2=await request(
+      pagePrefix+"/messages/page?limit=50&beforeId="+p1.json.next.id,
+      "GET",owner.token
+    );
+    assert.equal(p2.status,200);
+    assert.equal(p2.json.messages.length,50);
+    assert.ok(p2.json.next);
+    const p3=await request(
+      pagePrefix+"/messages/page?limit=50&beforeId="+p2.json.next.id,
+      "GET",owner.token
+    );
+    assert.equal(p3.status,200);
+    assert.equal(p3.json.messages.length,25);
+    assert.equal(p3.json.next,null);
+    const pagedIds=[...p1.json.messages,...p2.json.messages,...p3.json.messages].map(m=>m.id);
+    assert.equal(new Set(pagedIds).size,125);
+    assert.deepEqual(new Set(pagedIds),new Set(pageMessageIds));
+
+    assert.equal((await request(
+      pagePrefix+"/messages/page?beforeId=not-a-uuid",
+      "GET",owner.token
+    )).status,400,"malformed cursor is rejected");
+    assert.equal((await request(
+      pagePrefix+"/messages/page?limit=101","GET",owner.token
+    )).status,400);
+    assert.equal((await request(
+      pagePrefix+"/messages/page?limit=50","GET",outsider.token
+    )).status,404);
+
+    assert.equal((await request(
+      pagePrefix+"/members","POST",owner.token,{userId:outsider.user.id}
+    )).status,201);
+    const latePage=await request(pagePrefix+"/messages/page?limit=50","GET",outsider.token);
+    assert.equal(latePage.status,200);
+    assert.deepEqual(latePage.json.messages,[],
+      "late joiner pagination cannot reveal old history");
+    const invisibleCursor=await request(
+      pagePrefix+"/messages/page?limit=50&beforeId="+pageMessageIds[0],
+      "GET",outsider.token
+    );
+    assert.equal(invisibleCursor.status,400);
+    assert.equal(invisibleCursor.json.error,"history_cursor_not_found");
+
+    const currentPageMessage=await request(pagePrefix+"/messages","POST",owner.token,{
+      text:"Visible after join",clientMessageId:randomUUID()
+    });
+    assert.equal(currentPageMessage.status,201);
+    const visiblePage=await request(pagePrefix+"/messages/page?limit=50","GET",outsider.token);
+    assert.equal(visiblePage.status,200);
+    assert.deepEqual(visiblePage.json.messages.map(m=>m.id),[currentPageMessage.json.id]);
+
+    assert.equal((await request(
+      pagePrefix+"/members/"+outsider.user.id,"DELETE",owner.token
+    )).status,204);
+    assert.equal((await request(
+      pagePrefix+"/members","POST",owner.token,{userId:outsider.user.id}
+    )).status,201);
+    const rejoinPage=await request(pagePrefix+"/messages/page?limit=50","GET",outsider.token);
+    assert.deepEqual(rejoinPage.json.messages,[],
+      "rejoin gets a new pagination boundary instead of old pages");
+    assert.equal((await request(pagePrefix,"DELETE",owner.token)).status,204);
+
     assert.equal((await request(prefix,"DELETE",owner.token,null,replica)).status,204);
     assert.equal((await request(prefix,"GET",owner.token)).status,404);
     assert.deepEqual((await request("/api/groups","GET",member.token)).json,[]);
