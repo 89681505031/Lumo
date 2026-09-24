@@ -329,7 +329,30 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
       if(data.optString("groupId")!=initial.id)return@runCatching
       val msg=groupMessage(data)
       scope.launch{
-       history=(history.filterNot{it.id==msg.id}+msg).sortedBy{it.createdAt}
+       history=history.map{m->when{
+        m.id==msg.id->msg
+        m.replyToMessageId==msg.id->m.copy(
+         replyPreviewText=if(msg.deletedAt.isNotBlank())"Сообщение удалено" else msg.text.take(240)
+        )
+        else->m
+       }}.let{items->
+        if(items.any{it.id==msg.id})items else (items+msg).sortedBy{it.createdAt}
+       }
+       searchResults=searchResults.filterNot{
+        it.id==msg.id&&msg.deletedAt.isNotBlank()
+       }.map{m->when{
+        m.id==msg.id->msg
+        m.replyToMessageId==msg.id->m.copy(
+         replyPreviewText=if(msg.deletedAt.isNotBlank())"Сообщение удалено" else msg.text.take(240)
+        )
+        else->m
+       }}
+       if(replyTarget?.id==msg.id){
+        replyTarget=if(msg.deletedAt.isBlank())msg else null
+       }
+       if(activeMessage?.id==msg.id)activeMessage=msg
+       if(msg.deletedAt.isNotBlank())
+        groupReactions=groupReactions.filterNot{it.messageId==msg.id}
        if(msg.from==me.id&&msg.clientMessageId.isNotBlank()&&msg.clientMessageId==pending?.clientId){
         savePending(null);input=""
        }
