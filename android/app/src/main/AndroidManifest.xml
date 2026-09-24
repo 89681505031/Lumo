@@ -2,7 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
  <uses-permission android:name="android.permission.INTERNET"/>
  <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+ <uses-permission android:name="android.permission.CAMERA"/>
  <uses-feature android:name="android.hardware.microphone" android:required="false"/>
+ <uses-feature android:name="android.hardware.camera.any" android:required="false"/>
  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
  <application android:label="Lumo" android:theme="@style/Theme.Lumo" android:icon="@drawable/ic_lumo_icon" android:roundIcon="@drawable/ic_lumo_icon" android:usesCleartextTraffic="false" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules">
   <receiver android:name=".LumoInstallReceiver" android:exported="false"/>
