@@ -10,7 +10,7 @@ export const postgresStore = {
     return r.rows[0] ? mapUser(r.rows[0]) : null;
   },
   async authUserByUsername(username) {
-    const r=await dbQuery("select id,username,display_name,password_hash from users where username=$1",[username]);
+    const r=await dbQuery("select id,username,display_name,bio,password_hash from users where username=$1",[username]);
     return r.rows[0] || null;
   },
   async createSession(userId,token) {
