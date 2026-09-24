@@ -609,6 +609,8 @@ class MainActivity:ComponentActivity(){
   Spacer(Modifier.height(16.dp))
   LumoOfflineCacheControls(me.id)
   Spacer(Modifier.height(16.dp))
+  LumoServerStatusCard()
+  Spacer(Modifier.height(16.dp))
   PushSettings(token,me)
   Spacer(Modifier.height(16.dp))
   Column(Modifier.fillMaxWidth().lumoGlass(25).padding(17.dp)){
