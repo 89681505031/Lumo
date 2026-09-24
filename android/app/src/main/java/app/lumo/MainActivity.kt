@@ -1149,7 +1149,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
           Box(
            Modifier.fillMaxWidth().lumoGlass(14)
             .clickable{
-             val index=msgs.indexOfFirst{it.id==m.replyToMessageId}
+             val index=visibleMessages.indexOfFirst{it.id==m.replyToMessageId}
              if(index>=0)scope.launch{listState.animateScrollToItem(index)}
             }
             .padding(horizontal=9.dp,vertical=7.dp)
