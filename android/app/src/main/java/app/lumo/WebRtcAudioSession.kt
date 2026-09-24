@@ -236,6 +236,16 @@ class WebRtcAudioSession(
         }
     }
 
+    fun setMuted(muted:Boolean) {
+        if (closed) return
+        runCatching { audioTrack.setEnabled(!muted) }
+    }
+
+    fun setSpeakerphone(enabled:Boolean) {
+        if (closed) return
+        runCatching { audioManager.isSpeakerphoneOn = enabled }
+    }
+
     fun stop() {
         synchronized(gate) {
             if (closed) return
