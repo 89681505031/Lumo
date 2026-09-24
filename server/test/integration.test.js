@@ -172,7 +172,11 @@ test("persistent HTTP messaging, idempotency, receipts and WebSocket bearer auth
     const unopened=await request("/api/messages/"+b.user.id,"GET",c.token);
     assert.equal(unopened.status,200);
     assert.equal(unopened.json.length,1);
-    assert.equal(unopened.json[0].deliveredAt,null,"Fetching Alice must not mark Charlie delivered");
+    assert.equal(
+      unopened.json[0].deliveredAt,
+      fromCharlie.json.deliveredAt,
+      "Fetching Alice must not change Charlie conversation delivery state"
+    );
     const read=await request("/api/messages/read","POST",b.token,{ids:[sent.json.id]},otherBase);
     assert.equal(read.status,200);
     assert.equal(read.json.receipts.length,1);
