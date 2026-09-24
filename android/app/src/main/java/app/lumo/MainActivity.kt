@@ -515,10 +515,11 @@ class MainActivity:ComponentActivity(){
  }
  Column(
   Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-   .padding(horizontal=18.dp,vertical=12.dp),
+   .padding(horizontal=18.dp,vertical=18.dp),
   horizontalAlignment=Alignment.CenterHorizontally
  ){
-  Spacer(Modifier.height(6.dp))
+  // Keeps the first profile content clear of the fixed header on compact phones.
+  Spacer(Modifier.height(14.dp))
   LumoEditableAvatar(token,me,profileChanged,size=122.dp)
   Spacer(Modifier.height(14.dp))
   Text(me.displayName,style=MaterialTheme.typography.headlineMedium,

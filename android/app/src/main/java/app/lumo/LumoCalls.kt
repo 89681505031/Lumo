@@ -382,7 +382,7 @@ fun LumoCallsLab(
                         Modifier.fillMaxWidth().padding(16.dp).lumoGlass(24).padding(18.dp),
                         horizontalAlignment=Alignment.CenterHorizontally
                     ){
-                        Text("Сервис звонков на этом сервере выключен.",
+                        Text("Сервис звонков пока недоступен на сервере. После обновления нажмите «Проверить снова».",
                             color=Color.White)
                         Spacer(Modifier.height(10.dp))
                         LumoNeonButton("Проверить снова",onClick={refresh++})
