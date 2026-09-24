@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -31,8 +32,8 @@ data class LumoGroup(
  val memberCount:Int,val lastMessage:String="",val lastAt:String=""
 )
 data class LumoGroupMember(val id:String,val username:String,val displayName:String,val role:String)
-data class LumoGroupMessage(val id:String,val from:String,val text:String,val createdAt:String,val clientMessageId:String="")
-data class LumoGroupPending(val clientId:String,val text:String)
+data class LumoGroupMessage(val id:String,val from:String,val text:String,val createdAt:String,val clientMessageId:String="",val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="")
+data class LumoGroupPending(val clientId:String,val text:String,val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="")
 data class LumoGroupDetail(val group:LumoGroup,val members:List<LumoGroupMember>)
 
 private fun optional(o:JSONObject,key:String)=if(o.isNull(key))"" else o.optString(key)
@@ -41,7 +42,7 @@ private fun group(o:JSONObject)=LumoGroup(
  o.getString("role"),o.optInt("memberCount",0),optional(o,"lastMessage"),optional(o,"lastAt")
 )
 private fun groupMessage(o:JSONObject)=LumoGroupMessage(
- o.getString("id"),o.getString("from"),o.getString("text"),o.getString("createdAt"),optional(o,"clientMessageId")
+ o.getString("id"),o.getString("from"),o.getString("text"),o.getString("createdAt"),optional(o,"clientMessageId"),optional(o,"replyToMessageId"),optional(o,"replyPreviewText"),optional(o,"replyPreviewFrom")
 )
 private fun Api.groupCall(token:String,path:String,method:String="GET",body:JSONObject?=null):String{
  val req=Request.Builder().url(Api.HTTP+path).header("Authorization","Bearer "+token)
@@ -80,9 +81,28 @@ fun Api.groupHistory(t:String,id:String):List<LumoGroupMessage>{
  val a=JSONArray(groupCall(t,"/api/groups/"+id+"/messages"))
  return(0 until a.length()).map{groupMessage(a.getJSONObject(it))}
 }
-fun Api.groupSend(t:String,id:String,text:String,clientId:String):LumoGroupMessage=
- groupMessage(JSONObject(groupCall(t,"/api/groups/"+id+"/messages","POST",
-  JSONObject().put("text",text).put("clientMessageId",clientId))))
+fun Api.groupCapabilities(t:String):Pair<Boolean,Boolean>{
+ val req=Request.Builder().url(Api.HTTP+"/api/capabilities")
+  .header("Authorization","Bearer "+t).get().build()
+ Api.httpClient.newCall(req).execute().use{r->
+  if(r.code==401)throw SessionExpiredException()
+  if(!r.isSuccessful)return false to false
+  return runCatching{
+   val o=JSONObject(r.body?.string().orEmpty())
+   o.optBoolean("groupLinkedReplies",false) to o.optBoolean("groupSearch",false)
+  }.getOrDefault(false to false)
+ }
+}
+fun Api.groupSearch(t:String,id:String,q:String):List<LumoGroupMessage>{
+ val encoded=java.net.URLEncoder.encode(q.trim(),Charsets.UTF_8.name())
+ val a=JSONArray(groupCall(t,"/api/groups/"+id+"/messages/search?q="+encoded))
+ return(0 until a.length()).map{groupMessage(a.getJSONObject(it))}
+}
+fun Api.groupSend(t:String,id:String,item:LumoGroupPending):LumoGroupMessage{
+ val body=JSONObject().put("text",item.text).put("clientMessageId",item.clientId)
+ if(item.replyToMessageId.isNotBlank())body.put("replyToMessageId",item.replyToMessageId)
+ return groupMessage(JSONObject(groupCall(t,"/api/groups/"+id+"/messages","POST",body)))
+}
 fun Api.groupInvite(t:String,id:String,memberId:String){
  groupCall(t,"/api/groups/"+id+"/members","POST",JSONObject().put("userId",memberId))
 }
@@ -167,14 +187,26 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
   runCatching{
    val raw=queuePrefs.getString(queueKey,null)?:return@runCatching null
    val data=JSONObject(raw)
-   LumoGroupPending(data.getString("clientId"),data.getString("text"))
+   LumoGroupPending(
+    data.getString("clientId"),
+    data.getString("text"),
+    data.optString("replyToMessageId"),
+    data.optString("replyPreviewText"),
+    data.optString("replyPreviewFrom")
+   )
   }.getOrNull()
  )}
  fun savePending(value:LumoGroupPending?){
   pending=value
   val edit=queuePrefs.edit()
   if(value==null)edit.remove(queueKey)
-  else edit.putString(queueKey,JSONObject().put("clientId",value.clientId).put("text",value.text).toString())
+  else edit.putString(queueKey,JSONObject()
+   .put("clientId",value.clientId)
+   .put("text",value.text)
+   .put("replyToMessageId",value.replyToMessageId)
+   .put("replyPreviewText",value.replyPreviewText)
+   .put("replyPreviewFrom",value.replyPreviewFrom)
+   .toString())
   edit.apply()
  }
 
@@ -190,6 +222,22 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
  var inviteUsers by remember{mutableStateOf<List<User>>(emptyList())}
  var removeUser by remember{mutableStateOf<LumoGroupMember?>(null)}
  var deleteGroupDialog by remember{mutableStateOf(false)}
+ var groupLinkedReplies by remember(token){mutableStateOf(false)}
+ var groupSearchEnabled by remember(token){mutableStateOf(false)}
+ var replyTarget by remember(initial.id){mutableStateOf<LumoGroupMessage?>(null)}
+ var showSearch by remember(initial.id){mutableStateOf(false)}
+ var searchText by remember(initial.id){mutableStateOf("")}
+ var searchResults by remember(initial.id){mutableStateOf<List<LumoGroupMessage>>(emptyList())}
+ var searchBusy by remember{mutableStateOf(false)}
+ var searchPerformed by remember{mutableStateOf(false)}
+ var searchError by remember{mutableStateOf("")}
+ val listState=rememberLazyListState()
+ LaunchedEffect(token,initial.id){
+  val caps=runCatching{withContext(Dispatchers.IO){Api.groupCapabilities(token)}}
+   .getOrDefault(false to false)
+  groupLinkedReplies=caps.first
+  groupSearchEnabled=caps.second
+ }
  fun reload(){
   scope.launch{
    runCatching{withContext(Dispatchers.IO){Api.groupDetail(token,initial.id)}}
