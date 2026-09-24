@@ -424,27 +424,22 @@ app.get("/api/groups/:id/messages",auth,requireDatabase,async(req,res)=>{
 app.get("/api/groups/:id/messages/page",auth,requireDatabase,rateLimit({windowMs:60_000,max:120}),async(req,res)=>{
   if(!uuidPattern.test(req.params.id))
     return res.status(400).json({error:"invalid_group_id"});
-  const rawAt=req.query.beforeAt,rawId=req.query.beforeId,rawLimit=req.query.limit;
-  const hasAt=typeof rawAt==="string"&&rawAt.length>0;
-  const hasId=typeof rawId==="string"&&rawId.length>0;
-  if(hasAt!==hasId)
+  const rawId=req.query.beforeId,rawLimit=req.query.limit;
+  const beforeId=rawId===undefined?null:rawId;
+  if(beforeId!==null &&
+     (typeof beforeId!=="string" || !uuidPattern.test(beforeId)))
     return res.status(400).json({error:"invalid_history_cursor"});
-  let beforeAt=null,beforeId=null;
-  if(hasAt){
-    const parsed=new Date(rawAt);
-    if(!Number.isFinite(parsed.getTime())||!uuidPattern.test(rawId))
-      return res.status(400).json({error:"invalid_history_cursor"});
-    beforeAt=parsed.toISOString();
-    beforeId=rawId;
-  }
   const limit=rawLimit===undefined?50:Number(rawLimit);
   if(!Number.isInteger(limit)||limit<1||limit>100)
     return res.status(400).json({error:"invalid_history_limit"});
   try{
     const page=await groupStore.historyPage(req.user.id,req.params.id,{
-      beforeAt,beforeId,limit
+      beforeId,limit
     });
-    return page===null ? groupError(res,"group_not_found") : res.json(page);
+    if(page===null)return groupError(res,"group_not_found");
+    if(page.error==="history_cursor_not_found")
+      return res.status(400).json({error:page.error});
+    return res.json(page);
   }catch(error){
     console.error("Group history page failed",error);
     return res.status(503).json({error:"service_unavailable"});
