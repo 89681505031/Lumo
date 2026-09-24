@@ -31,6 +31,7 @@ object LumoOfflineStore {
     private const val IV_BYTES=12
     private const val MAX_CHATS=100
     private const val MAX_MESSAGES_PER_CHAT=150
+    private const val MAX_PENDING_MESSAGES=100
     private const val FILE_PREFIX="lumo_offline_"
     private val lock=Any()
 
@@ -68,6 +69,9 @@ object LumoOfflineStore {
 
     private fun historyFile(context:Context,userId:String,peerId:String)=
         File(context.filesDir,FILE_PREFIX+accountHash(userId)+"_peer_"+peerHash(peerId)+".bin")
+
+    private fun pendingFile(context:Context,userId:String,peerId:String)=
+        File(context.filesDir,FILE_PREFIX+accountHash(userId)+"_pending_"+peerHash(peerId)+".bin")
 
     private fun encrypt(userId:String,plain:ByteArray):ByteArray {
         val cipher=Cipher.getInstance("AES/GCM/NoPadding")
@@ -213,6 +217,48 @@ object LumoOfflineStore {
                         add(m)
                 }
             }.sortedBy{it.createdAt}
+        }.getOrDefault(emptyList())
+    }
+
+    fun savePending(
+        context:Context,userId:String,peerId:String,pending:List<PendingMessage>
+    ){
+        val file=pendingFile(context.applicationContext,userId,peerId)
+        if(pending.isEmpty()){
+            synchronized(lock){runCatching{file.delete()}}
+            return
+        }
+        val root=JSONObject().put("savedAt",System.currentTimeMillis())
+        val a=JSONArray()
+        pending.takeLast(MAX_PENDING_MESSAGES).forEach{item->
+            if(item.clientMessageId.isBlank()||item.text.isBlank())return@forEach
+            a.put(JSONObject()
+                .put("clientMessageId",item.clientMessageId)
+                .put("text",item.text.take(4000)))
+        }
+        root.put("items",a)
+        write(context.applicationContext,userId,file,root.toString())
+    }
+
+    fun loadPending(
+        context:Context,userId:String,peerId:String
+    ):List<PendingMessage>{
+        val raw=read(
+            context.applicationContext,userId,
+            pendingFile(context,userId,peerId)
+        )?:return emptyList()
+        return runCatching{
+            val root=JSONObject(raw)
+            val a=root.getJSONArray("items")
+            buildList{
+                for(i in 0 until minOf(a.length(),MAX_PENDING_MESSAGES)){
+                    val o=a.getJSONObject(i)
+                    val id=o.optString("clientMessageId")
+                    val text=o.optString("text").take(4000)
+                    if(id.isNotBlank()&&text.isNotBlank())
+                        add(PendingMessage(id,text))
+                }
+            }
         }.getOrDefault(emptyList())
     }
 
