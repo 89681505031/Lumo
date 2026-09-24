@@ -265,6 +265,15 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
  var deleteGroupDialog by remember{mutableStateOf(false)}
  var groupLinkedReplies by remember(token){mutableStateOf(false)}
  var groupSearchEnabled by remember(token){mutableStateOf(false)}
+ var groupEditEnabled by remember(token){mutableStateOf(false)}
+ var groupDeleteEnabled by remember(token){mutableStateOf(false)}
+ var groupReactionsEnabled by remember(token){mutableStateOf(false)}
+ var groupReactions by remember(initial.id){mutableStateOf<List<LumoReaction>>(emptyList())}
+ var reactionBusy by remember{mutableStateOf(false)}
+ var activeMessage by remember(initial.id){mutableStateOf<LumoGroupMessage?>(null)}
+ var editTarget by remember(initial.id){mutableStateOf<LumoGroupMessage?>(null)}
+ var editDraft by remember(initial.id){mutableStateOf("")}
+ var deleteTarget by remember(initial.id){mutableStateOf<LumoGroupMessage?>(null)}
  var replyTarget by remember(initial.id){mutableStateOf<LumoGroupMessage?>(null)}
  var showSearch by remember(initial.id){mutableStateOf(false)}
  var searchText by remember(initial.id){mutableStateOf("")}
@@ -278,6 +287,11 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
    .getOrDefault(false to false)
   groupLinkedReplies=caps.first
   groupSearchEnabled=caps.second
+  val actions=runCatching{withContext(Dispatchers.IO){Api.groupActionCapabilities(token)}}
+   .getOrDefault(LumoGroupActionCaps(false,false,false))
+  groupEditEnabled=actions.edit
+  groupDeleteEnabled=actions.delete
+  groupReactionsEnabled=actions.reactions
  }
  fun reload(){
   scope.launch{
@@ -324,6 +338,13 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     }
    })
   onDispose{socket.close(1000,"Group closed")}
+ }
+ LaunchedEffect(token,initial.id,groupReactionsEnabled){
+  while(groupReactionsEnabled){
+   runCatching{withContext(Dispatchers.IO){Api.groupReactions(token,initial.id)}}
+    .onSuccess{groupReactions=it}
+   delay(5_000)
+  }
  }
  LaunchedEffect(inviteSearch,inviteDialog){
   if(inviteDialog&&inviteSearch.trim().length>=2){
