@@ -117,6 +117,9 @@ jobs:
               --latest
             exit 0
           fi
+          gh release delete-asset lumo-latest app-debug.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --yes || true
           gh release upload lumo-latest "$APK#Lumo.apk" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
