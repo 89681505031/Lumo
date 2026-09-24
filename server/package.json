@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "check": "node --check server.js && node --check src/index.js && node --check src/db.js && node --check src/postgres-store.js && node --check src/password.js && node --check src/ai-provider.js && node --check src/media-store.js && node --check src/call-signaling.js && node --check src/call-cleanup.js && node --check src/group-store.js"
+    "check": "node --check server.js && node --check src/index.js && node --check src/db.js && node --check src/postgres-store.js && node --check src/password.js && node --check src/ai-provider.js && node --check src/media-store.js && node --check src/call-signaling.js && node --check src/call-cleanup.js && node --check src/group-store.js && node --check src/push-outbox.js"
   },
   "dependencies": {
     "express": "^5.1.0",
@@ -14,6 +14,7 @@
     "pg": "^8.13.1",
     "@aws-sdk/client-s3": "^3.0.0",
     "@aws-sdk/s3-presigned-post": "^3.0.0",
-    "@aws-sdk/s3-request-presigner": "^3.0.0"
+    "@aws-sdk/s3-request-presigner": "^3.0.0",
+    "firebase-admin": "^14.4.0"
   }
 }

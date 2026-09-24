@@ -1,7 +1,7 @@
 import express from "express";
 import { WebSocketServer } from "ws";
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { dbHealth, hasDatabase, initDatabase } from "./db.js";
 import { postgresStore } from "./postgres-store.js";
 import { groupStore } from "./group-store.js";
@@ -10,6 +10,7 @@ import { aiReady, completeLumoAi } from "./ai-provider.js";
 import { mediaReady, mediaStore } from "./media-store.js";
 import { callRouter } from "./call-signaling.js";
 import { registerCallCleanup } from "./call-cleanup.js";
+import { registerPushDispatch } from "./push-outbox.js";
 
 if (hasDatabase) { try { await initDatabase(); console.log("Lumo PostgreSQL schema ready"); } catch (error) { console.error("Lumo PostgreSQL initialization failed", error); } }
 const mediaEnabled=mediaReady && process.env.MEDIA_ENABLE_UPLOADS==="true";
@@ -62,13 +63,14 @@ async function auth(req, res, next) {
 }
 
 app.get("/live", (_req, res) => res.json({ ok: true, service: "lumo-server" }));
-app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled,documentsReady:mediaEnabled,groupsReady:hasDatabase,groupLinkedReplies:hasDatabase,groupSearch:hasDatabase,groupPagination:hasDatabase,groupMessageEdit:hasDatabase,groupMessageDelete:hasDatabase,groupReactions:reactionsEnabled,groupAttachments:mediaEnabled&&hasDatabase}));
+app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled,documentsReady:mediaEnabled,groupsReady:hasDatabase,groupLinkedReplies:hasDatabase,groupSearch:hasDatabase,groupPagination:hasDatabase,groupMessageEdit:hasDatabase,groupMessageDelete:hasDatabase,groupReactions:reactionsEnabled,groupAttachments:mediaEnabled&&hasDatabase,pushRegistration:hasDatabase}));
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase,ok:false}; if(hasDatabase){try{database=await dbHealth()}catch(error){console.error("Database health check failed",error);database={configured:true,ok:false}}} const ok=database.configured===true&&database.ok===true; res.status(ok?200:503).json({ ok, service:"lumo-server", database }); });
 
 function requireDatabase(_req,res,next){if(!hasDatabase)return res.status(503).json({error:"database_unavailable"});next();}
 
 registerCallCleanup(app);
+registerPushDispatch(app);
 app.use("/api/calls",callRouter(auth));
 
 app.post("/api/register", requireDatabase, rateLimit({windowMs:60_000,max:10}), async (req, res) => {
@@ -120,6 +122,44 @@ app.post("/api/logout", auth, async (req, res) => {
   } catch (error) {
     console.error("Logout failed", error);
     res.status(503).json({ error: "service_unavailable" });
+  }
+});
+
+// Push registration is session-scoped and optional. Registration alone never
+// causes provider delivery; the cron worker is separately feature-gated.
+app.post("/api/devices/push",auth,requireDatabase,rateLimit({windowMs:60_000,max:30}),async(req,res)=>{
+  const token=req.body?.token;
+  if(req.body?.platform!=="android" || typeof token!=="string" ||
+     token.length<20 || token.length>4096 || /\s/.test(token))
+    return res.status(400).json({error:"invalid_push_token"});
+  const tokenHash=createHash("sha256").update(token).digest("hex");
+  try{
+    await postgresStore.registerPushDevice({
+      userId:req.user.id,
+      sessionToken:req.sessionToken,
+      tokenHash,
+      token
+    });
+    return res.json({registered:true});
+  }catch(error){
+    console.error(
+      "Push device registration failed; database error code:",
+      error?.code || "unknown"
+    );
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.delete("/api/devices/push",auth,requireDatabase,async(req,res)=>{
+  try{
+    await postgresStore.removePushDevice(req.user.id,req.sessionToken);
+    return res.status(204).end();
+  }catch(error){
+    console.error(
+      "Push device revocation failed; database error code:",
+      error?.code || "unknown"
+    );
+    return res.status(503).json({error:"service_unavailable"});
   }
 });
 
