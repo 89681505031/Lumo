@@ -1,6 +1,6 @@
 import { dbQuery, hasDatabase } from "./db.js";
 
-const mapUser = r => ({ id:r.id, username:r.username, displayName:r.display_name });
+const mapUser = r => ({ id:r.id, username:r.username, displayName:r.display_name, bio:r.bio || "" });
 const mapMessage = r => ({ id:r.id, from:r.sender_id, to:r.recipient_id, text:r.text, createdAt:r.created_at?.toISOString?.() || r.created_at, deliveredAt:r.delivered_at?.toISOString?.() || r.delivered_at || null, readAt:r.read_at?.toISOString?.() || r.read_at || null, clientMessageId:r.client_message_id || null });
 
 export const postgresStore = {
@@ -23,7 +23,7 @@ export const postgresStore = {
     try {
       const r=await dbQuery(`with created as (
         insert into users(id,username,display_name,password_hash) values($1,$2,$3,$4)
-        returning id,username,display_name
+        returning id,username,display_name,bio
       ), session as (
         insert into sessions(token,user_id) select $5,id from created
       ) select * from created`,[id,username,displayName,passwordHash,token]);
@@ -33,8 +33,8 @@ export const postgresStore = {
       throw error;
     }
   },
-  async updateUser(id,displayName) {
-    const r=await dbQuery("update users set display_name=$2 where id=$1 returning *",[id,displayName]);
+  async updateUser(id,displayName,bio=null) {
+    const r=await dbQuery("update users set display_name=$2, bio=coalesce($3,bio) where id=$1 returning *",[id,displayName,bio]);
     return r.rows[0] ? mapUser(r.rows[0]) : null;
   },
   async searchUsers(me,q) {
@@ -43,7 +43,7 @@ export const postgresStore = {
     return r.rows.map(mapUser);
   },
   async userExists(id) { const r=await dbQuery("select 1 from users where id=$1",[id]); return r.rowCount>0; },
-  async conversations(me) { const r=await dbQuery(`select distinct on (x.peer_id) x.peer_id, u.username, u.display_name, x.text, x.created_at from (select case when m.sender_id=$1 then m.recipient_id else m.sender_id end peer_id,m.text,m.created_at from messages m where m.sender_id=$1 or m.recipient_id=$1) x join users u on u.id=x.peer_id order by x.peer_id,x.created_at desc`,[me]); return r.rows.map(x=>({peer:{id:x.peer_id,username:x.username,displayName:x.display_name},lastMessage:x.text,lastAt:x.created_at?.toISOString?.()||x.created_at})).sort((a,b)=>String(b.lastAt).localeCompare(String(a.lastAt))); },
+  async conversations(me) { const r=await dbQuery(`select distinct on (x.peer_id) x.peer_id, u.username, u.display_name, u.bio, x.text, x.created_at from (select case when m.sender_id=$1 then m.recipient_id else m.sender_id end peer_id,m.text,m.created_at from messages m where m.sender_id=$1 or m.recipient_id=$1) x join users u on u.id=x.peer_id order by x.peer_id,x.created_at desc`,[me]); return r.rows.map(x=>({peer:{id:x.peer_id,username:x.username,displayName:x.display_name,bio:x.bio||""},lastMessage:x.text,lastAt:x.created_at?.toISOString?.()||x.created_at})).sort((a,b)=>String(b.lastAt).localeCompare(String(a.lastAt))); },
   async messages(me,peer) {
     const r=await dbQuery("select * from messages where (sender_id=$1 and recipient_id=$2) or (sender_id=$2 and recipient_id=$1) order by created_at",[me,peer]);
     return r.rows.map(mapMessage);
