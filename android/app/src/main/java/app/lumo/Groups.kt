@@ -81,6 +81,43 @@ fun Api.groupHistory(t:String,id:String):List<LumoGroupMessage>{
  val a=JSONArray(groupCall(t,"/api/groups/"+id+"/messages"))
  return(0 until a.length()).map{groupMessage(a.getJSONObject(it))}
 }
+data class LumoGroupHistoryPage(
+ val messages:List<LumoGroupMessage>,
+ val nextCreatedAt:String="",
+ val nextId:String=""
+)
+fun Api.groupHistoryPage(
+ t:String,id:String,beforeCreatedAt:String="",beforeId:String="",limit:Int=50
+):LumoGroupHistoryPage{
+ val path=buildString{
+  append("/api/groups/").append(id).append("/messages/page?limit=").append(limit.coerceIn(10,100))
+  if(beforeCreatedAt.isNotBlank()&&beforeId.isNotBlank()){
+   append("&beforeCreatedAt=")
+   append(java.net.URLEncoder.encode(beforeCreatedAt,Charsets.UTF_8.name()))
+   append("&beforeId=").append(beforeId)
+  }
+ }
+ val o=JSONObject(groupCall(t,path))
+ val a=o.getJSONArray("messages")
+ val messages=(0 until a.length()).map{groupMessage(a.getJSONObject(it))}
+ val next=o.optJSONObject("next")
+ return LumoGroupHistoryPage(
+  messages,
+  next?.optString("createdAt").orEmpty(),
+  next?.optString("id").orEmpty()
+ )
+}
+fun Api.groupPaginationSupported(t:String):Boolean{
+ val req=Request.Builder().url(Api.HTTP+"/api/capabilities")
+  .header("Authorization","Bearer "+t).get().build()
+ Api.httpClient.newCall(req).execute().use{r->
+  if(r.code==401)throw SessionExpiredException()
+  if(!r.isSuccessful)return false
+  return runCatching{
+   JSONObject(r.body?.string().orEmpty()).optBoolean("groupHistoryPagination",false)
+  }.getOrDefault(false)
+ }
+}
 fun Api.groupCapabilities(t:String):Pair<Boolean,Boolean>{
  val req=Request.Builder().url(Api.HTTP+"/api/capabilities")
   .header("Authorization","Bearer "+t).get().build()
@@ -268,6 +305,10 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
  var groupEditEnabled by remember(token){mutableStateOf(false)}
  var groupDeleteEnabled by remember(token){mutableStateOf(false)}
  var groupReactionsEnabled by remember(token){mutableStateOf(false)}
+ var groupPaginationEnabled by remember(token){mutableStateOf(false)}
+ var olderLoading by remember(initial.id){mutableStateOf(false)}
+ var olderAvailable by remember(initial.id){mutableStateOf(false)}
+ var historyExpanded by remember(initial.id){mutableStateOf(false)}
  var groupReactions by remember(initial.id){mutableStateOf<List<LumoReaction>>(emptyList())}
  var reactionBusy by remember{mutableStateOf(false)}
  var activeMessage by remember(initial.id){mutableStateOf<LumoGroupMessage?>(null)}
@@ -292,6 +333,9 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
   groupEditEnabled=actions.edit
   groupDeleteEnabled=actions.delete
   groupReactionsEnabled=actions.reactions
+  groupPaginationEnabled=runCatching{
+   withContext(Dispatchers.IO){Api.groupPaginationSupported(token)}
+  }.getOrDefault(false)
  }
  fun reload(){
   scope.launch{
@@ -306,8 +350,19 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     Api.groupDetail(token,initial.id) to Api.groupHistory(token,initial.id)
    }}
    response.onSuccess{pair->
-    detail=pair.first;history=pair.second;error="";loading=false
-    if(pair.second.any{it.from==me.id&&it.clientMessageId.isNotBlank()&&it.clientMessageId==pending?.clientId}){
+    detail=pair.first
+    val latest=pair.second
+    if(historyExpanded){
+     val merged=LinkedHashMap<String,LumoGroupMessage>()
+     for(m in history)merged[m.id]=m
+     for(m in latest)merged[m.id]=m
+     history=merged.values.sortedBy{it.createdAt}
+    }else{
+     history=latest
+     olderAvailable=latest.size>=100
+    }
+    error="";loading=false
+    if(latest.any{it.from==me.id&&it.clientMessageId.isNotBlank()&&it.clientMessageId==pending?.clientId}){
      savePending(null);input=""
     }
    }
@@ -683,6 +738,35 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     contentPadding=PaddingValues(12.dp),
     verticalArrangement=Arrangement.spacedBy(10.dp)
    ){
+    if(!showSearch&&groupPaginationEnabled&&olderAvailable){
+     item(key="older-history"){
+      Box(Modifier.fillMaxWidth(),contentAlignment=Alignment.Center){
+       OutlinedButton(
+        enabled=!olderLoading&&history.isNotEmpty(),
+        onClick={
+         val oldest=history.firstOrNull()?:return@OutlinedButton
+         olderLoading=true
+         scope.launch{
+          runCatching{withContext(Dispatchers.IO){
+           Api.groupHistoryPage(token,initial.id,oldest.createdAt,oldest.id,50)
+          }}.onSuccess{page->
+           val merged=LinkedHashMap<String,LumoGroupMessage>()
+           for(m in page.messages)merged[m.id]=m
+           for(m in history)merged[m.id]=m
+           history=merged.values.sortedBy{it.createdAt}
+           historyExpanded=true
+           olderAvailable=page.nextId.isNotBlank()
+           error=""
+          }.onFailure{
+           error="Не удалось загрузить более ранние сообщения"
+          }
+          olderLoading=false
+         }
+        }
+       ){Text(if(olderLoading)"Загрузка…" else "Загрузить более ранние")}
+      }
+     }
+    }
     items(visibleHistory,key={it.id}){m->
      Row(Modifier.fillMaxWidth(),horizontalArrangement=
       if(m.from==me.id)Arrangement.End else Arrangement.Start){
