@@ -171,9 +171,10 @@ private object LumoAvatarApi {
             if(response.code==401)throw SessionExpiredException()
             if(!response.isSuccessful){
                 val reason=runCatching{JSONObject(raw).optString("error")}.getOrDefault("")
-                error(when(reason){
-                    "avatar_too_large"->"Фото превышает лимит сервера"
-                    "invalid_avatar"->"Сервер отклонил изображение"
+                error(when{
+                    response.code==404->"Сервер Lumo ещё не обновлён для синхронизации фото"
+                    reason=="avatar_too_large"->"Фото превышает лимит сервера"
+                    reason=="invalid_avatar"->"Сервер отклонил изображение"
                     else->"Не удалось синхронизировать фото"
                 })
             }
