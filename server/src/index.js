@@ -7,6 +7,8 @@ import { postgresStore } from "./postgres-store.js";
 import { hashPassword, verifyPassword, validPassword } from "./password.js";
 import { aiReady, completeLumoAi } from "./ai-provider.js";
 import { mediaReady, mediaStore } from "./media-store.js";
+import { callRouter } from "./call-signaling.js";
+import { registerCallCleanup } from "./call-cleanup.js";
 
 if (hasDatabase) { try { await initDatabase(); console.log("Lumo PostgreSQL schema ready"); } catch (error) { console.error("Lumo PostgreSQL initialization failed", error); } }
 const mediaEnabled=mediaReady && process.env.MEDIA_ENABLE_UPLOADS==="true";
@@ -64,6 +66,9 @@ app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled,docume
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase,ok:false}; if(hasDatabase){try{database=await dbHealth()}catch(error){console.error("Database health check failed",error);database={configured:true,ok:false}}} const ok=database.configured===true&&database.ok===true; res.status(ok?200:503).json({ ok, service:"lumo-server", database }); });
 
 function requireDatabase(_req,res,next){if(!hasDatabase)return res.status(503).json({error:"database_unavailable"});next();}
+
+registerCallCleanup(app);
+app.use("/api/calls",callRouter(auth));
 
 app.post("/api/register", requireDatabase, rateLimit({windowMs:60_000,max:10}), async (req, res) => {
   try {
