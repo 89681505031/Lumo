@@ -62,7 +62,7 @@ async function auth(req, res, next) {
 }
 
 app.get("/live", (_req, res) => res.json({ ok: true, service: "lumo-server" }));
-app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled,documentsReady:mediaEnabled,groupsReady:hasDatabase,groupLinkedReplies:hasDatabase,groupSearch:hasDatabase,groupMessageEdit:hasDatabase,groupMessageDelete:hasDatabase,groupReactions:reactionsEnabled}));
+app.get("/api/capabilities",(_req,res)=>res.json({mediaReady:mediaEnabled,documentsReady:mediaEnabled,groupsReady:hasDatabase,groupLinkedReplies:hasDatabase,groupSearch:hasDatabase,groupMessageEdit:hasDatabase,groupMessageDelete:hasDatabase,groupReactions:reactionsEnabled,groupAttachments:mediaEnabled&&hasDatabase}));
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase,ok:false}; if(hasDatabase){try{database=await dbHealth()}catch(error){console.error("Database health check failed",error);database={configured:true,ok:false}}} const ok=database.configured===true&&database.ok===true; res.status(ok?200:503).json({ ok, service:"lumo-server", database }); });
 
@@ -513,6 +513,53 @@ app.delete("/api/groups/:id/messages/:messageId/reactions",auth,requireDatabase,
     return res.status(204).end();
   }catch(error){
     console.error("Group reaction remove failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.post("/api/groups/:id/media/init",auth,requireDatabase,rateLimit({windowMs:60_000,max:20}),async(req,res)=>{
+  if(!mediaEnabled)return mediaError(res,"media_unavailable");
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_group_id"});
+  try{
+    const membership=await groupStore.membership(req.user.id,req.params.id);
+    if(!membership)return groupError(res,"group_not_found");
+    const upload=await mediaStore.initiateGroup(req.user.id,req.params.id,{
+      mime:req.body?.mime,
+      bytes:req.body?.bytes,
+      filename:req.body?.filename
+    });
+    return upload.error ? mediaError(res,upload.error) : res.status(201).json(upload);
+  }catch(error){
+    console.error("Group media init failed",error?.name||"unknown");
+    return mediaError(res,"media_unavailable");
+  }
+});
+
+app.post("/api/groups/:id/media/:assetId/send",auth,requireDatabase,rateLimit({windowMs:60_000,max:30}),async(req,res)=>{
+  const {id,assetId}=req.params;
+  if(!uuidPattern.test(id)||!uuidPattern.test(assetId))
+    return res.status(400).json({error:"invalid_media_id"});
+  if(typeof req.body?.clientMessageId!=="string"||
+     !uuidPattern.test(req.body.clientMessageId))
+    return mediaError(res,"invalid_client_message_id");
+  if(req.body?.caption!==undefined&&
+     (typeof req.body.caption!=="string"||req.body.caption.trim().length>1000))
+    return mediaError(res,"invalid_caption");
+  try{
+    const result=await mediaStore.sendGroup(
+      req.user.id,assetId,id,req.body.clientMessageId,
+      req.body.caption?.trim()||""
+    );
+    if(result.error)return mediaError(res,result.error);
+    if(result.inserted){
+      const recipients=await groupStore.recipients(id,result.message.createdAt);
+      for(const userId of recipients)
+        sendTo(userId,{type:"group_message",message:result.message});
+    }
+    return res.status(result.inserted?201:200).json(result.message);
+  }catch(error){
+    console.error("Group media send failed",error?.name||"unknown");
     return res.status(503).json({error:"service_unavailable"});
   }
 });
