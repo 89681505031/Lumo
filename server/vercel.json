@@ -8,5 +8,6 @@
       "hotfix/*": false,
       "design/*": false
     }
-  }
+  },
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD ./"
 }
