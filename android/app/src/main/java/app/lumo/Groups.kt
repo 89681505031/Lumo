@@ -356,6 +356,15 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     Text((detail?.group?.memberCount?:initial.memberCount).toString()+" участников",
      style=MaterialTheme.typography.bodySmall)
    }
+   if(groupSearchEnabled){
+    TextButton(onClick={
+     showSearch=!showSearch
+     searchText=""
+     searchResults=emptyList()
+     searchPerformed=false
+     searchError=""
+    }){Text(if(showSearch)"×" else "⌕",color=LumoCyan)}
+   }
    if(detail?.group?.role in listOf("owner","admin"))
     TextButton(onClick={inviteDialog=true}){Text("+ Люди")}
   }
@@ -398,17 +407,94 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
      }
     }
    }
-   LazyColumn(Modifier.fillMaxWidth().weight(1f),contentPadding=PaddingValues(12.dp),
-    verticalArrangement=Arrangement.spacedBy(10.dp)){
-    items(history,key={it.id}){m->
+   if(showSearch){
+    Column(
+     Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp)
+      .lumoGlass(20).padding(10.dp)
+    ){
+     Row(verticalAlignment=Alignment.CenterVertically){
+      LumoSearchField(
+       value=searchText,
+       onValueChange={
+        searchText=it.take(100)
+        searchResults=emptyList()
+        searchPerformed=false
+        searchError=""
+       },
+       placeholder="Найти в группе",
+       modifier=Modifier.weight(1f)
+      )
+      Spacer(Modifier.width(6.dp))
+      TextButton(
+       enabled=!searchBusy&&searchText.trim().length in 2..100,
+       onClick={
+        searchBusy=true;searchError=""
+        scope.launch{
+         runCatching{withContext(Dispatchers.IO){
+          Api.groupSearch(token,initial.id,searchText)
+         }}.onSuccess{
+          searchResults=it
+          searchPerformed=true
+         }.onFailure{
+          searchError="Поиск временно недоступен"
+         }
+         searchBusy=false
+        }
+       }
+      ){Text("Найти",color=LumoCyan)}
+     }
+     if(searchBusy)LinearProgressIndicator(Modifier.fillMaxWidth(),color=LumoCyan)
+     if(searchError.isNotBlank())Text(
+      searchError,color=MaterialTheme.colorScheme.error,
+      style=MaterialTheme.typography.bodySmall
+     )
+     if(searchPerformed)Text(
+      if(searchResults.isEmpty())"Совпадений не найдено" else "Найдено: "+searchResults.size,
+      style=MaterialTheme.typography.labelMedium,
+      color=MaterialTheme.colorScheme.onSurfaceVariant
+     )
+    }
+   }
+   val visibleHistory=if(showSearch&&searchPerformed)searchResults else history
+   LazyColumn(
+    state=listState,
+    modifier=Modifier.fillMaxWidth().weight(1f),
+    contentPadding=PaddingValues(12.dp),
+    verticalArrangement=Arrangement.spacedBy(10.dp)
+   ){
+    items(visibleHistory,key={it.id}){m->
      Row(Modifier.fillMaxWidth(),horizontalArrangement=
       if(m.from==me.id)Arrangement.End else Arrangement.Start){
-      Surface(shape=RoundedCornerShape(20.dp),color=Color.Transparent,
-       modifier=Modifier.widthIn(max=300.dp).lumoBubble(m.from==me.id)){
+      Surface(
+       shape=RoundedCornerShape(20.dp),color=Color.Transparent,
+       modifier=Modifier.widthIn(max=300.dp).lumoBubble(m.from==me.id)
+        .clickable{replyTarget=m}
+      ){
        Column(Modifier.padding(12.dp)){
         if(m.from!=me.id){
          Text(detail?.members?.firstOrNull{it.id==m.from}?.displayName?:"Участник",
           style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.Bold)
+        }
+        if(m.replyToMessageId.isNotBlank()){
+         Box(Modifier.fillMaxWidth().lumoGlass(13).padding(8.dp)){
+          Column{
+           val replyName=when{
+            m.replyPreviewFrom==me.id->"Вы"
+            m.replyPreviewFrom.isNotBlank()->
+             detail?.members?.firstOrNull{it.id==m.replyPreviewFrom}?.displayName?:"Участник"
+            else->"Более ранняя история"
+           }
+           Text(replyName,color=LumoCyan,
+            style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.SemiBold)
+           Text(
+            m.replyPreviewText.ifBlank{"Исходное сообщение недоступно для этой истории"},
+            color=Color.White.copy(alpha=.82f),
+            style=MaterialTheme.typography.bodySmall,
+            maxLines=2
+           )
+          }
+         }
+         Spacer(Modifier.height(7.dp))
         }
         Text(m.text,color=Color.White)
         Text(formatMessageTime(m.createdAt),style=MaterialTheme.typography.labelSmall,
@@ -419,32 +505,68 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     }
    }
    Surface(color=Color.Transparent){
+    val replyPreview=pending?.takeIf{it.replyToMessageId.isNotBlank()}?.let{
+     Triple(it.replyToMessageId,it.replyPreviewText,it.replyPreviewFrom)
+    } ?: replyTarget?.let{Triple(it.id,it.text,it.from)}
+    if(replyPreview!=null){
+     Row(
+      Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=3.dp)
+       .lumoGlass(16).padding(horizontal=10.dp,vertical=6.dp),
+      verticalAlignment=Alignment.CenterVertically
+     ){
+      Column(Modifier.weight(1f)){
+       Text("Ответ на сообщение",color=LumoCyan,
+        style=MaterialTheme.typography.labelMedium,fontWeight=FontWeight.SemiBold)
+       Text(replyPreview.second.ifBlank{"Сообщение"},maxLines=2,
+        style=MaterialTheme.typography.bodySmall,color=Color.White.copy(alpha=.82f))
+      }
+      if(pending==null)TextButton(onClick={replyTarget=null}){Text("×")}
+     }
+    }
     if(pending!=null){
      Row(Modifier.fillMaxWidth().padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically){
       Text("Сообщение ожидает подтверждения",modifier=Modifier.weight(1f),
        style=MaterialTheme.typography.bodySmall)
-      TextButton(onClick={savePending(null);input=""},enabled=!sending){Text("Не повторять")}
+      TextButton(onClick={savePending(null);input="";replyTarget=null},enabled=!sending){Text("Не повторять")}
      }
     }
     Row(Modifier.fillMaxWidth().imePadding().padding(8.dp).lumoGlass(23).padding(6.dp),verticalAlignment=Alignment.Bottom){
      OutlinedTextField(input,{input=it.take(4000)},enabled=pending==null,modifier=Modifier.weight(1f),
       label={Text("Сообщение группе")},maxLines=4)
      Spacer(Modifier.width(8.dp))
+     val target=replyTarget
+     val fallbackExtra=if(target!=null&&!groupLinkedReplies)
+      ("↪ "+target.text.replace("\n"," ").take(120)+"\n").length else 0
      Button(onClick={
-      val item=pending?:LumoGroupPending(java.util.UUID.randomUUID().toString(),input.trim())
+      val item=pending?:run{
+       val selected=replyTarget
+       val linked=groupLinkedReplies&&selected!=null
+       val quote=if(!linked&&selected!=null)
+        "↪ "+selected.text.replace("\n"," ").take(120)+"\n" else ""
+       LumoGroupPending(
+        clientId=java.util.UUID.randomUUID().toString(),
+        text=quote+input.trim(),
+        replyToMessageId=if(linked)selected?.id.orEmpty() else "",
+        replyPreviewText=if(linked)selected?.text?.take(240).orEmpty() else "",
+        replyPreviewFrom=if(linked)selected?.from.orEmpty() else ""
+       )
+      }
       savePending(item)
       sending=true
       scope.launch{
-       runCatching{withContext(Dispatchers.IO){Api.groupSend(token,initial.id,item.text,item.clientId)}}
+       runCatching{withContext(Dispatchers.IO){Api.groupSend(token,initial.id,item)}}
         .onSuccess{m->
          if(pending?.clientId==item.clientId){savePending(null);input=""}
          history=(history.filterNot{it.id==m.id}+m).sortedBy{it.createdAt}
+         replyTarget=null
          error=""
         }
         .onFailure{error="Не удалось отправить сообщение; повторите с тем же идентификатором"}
        sending=false
       }
-     },enabled=!sending&&!loading&&(pending!=null||input.trim().isNotEmpty())){
+     },enabled=!sending&&!loading&&(
+       pending!=null || (input.trim().isNotEmpty()&&input.trim().length+fallbackExtra<=4000)
+      )){
       Text(if(pending==null)"➤" else "↻")
      }
     }
