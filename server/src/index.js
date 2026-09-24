@@ -443,7 +443,7 @@ app.delete("/api/groups/:id",auth,requireDatabase,rateLimit({windowMs:60_000,max
     return res.status(400).json({error:"invalid_group_id"});
   try{
     const detail=await groupStore.detail(req.user.id,req.params.id);
-    if(!detail || detail.group?.role!=="owner")
+    if(!detail || detail.role!=="owner")
       return groupError(res,"group_not_found");
     const assetCount=await mediaStore.groupAssetCount(req.params.id);
     if(assetCount>0){
