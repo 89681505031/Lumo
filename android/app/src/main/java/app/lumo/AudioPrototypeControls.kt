@@ -40,6 +40,8 @@ fun AudioPrototypeControls(
     var outbound by remember(call.id) { mutableStateOf<Channel<Pair<String, JSONObject>>?>(null) }
     var senderJob by remember(call.id) { mutableStateOf<Job?>(null) }
     var startupJob by remember(call.id) { mutableStateOf<Job?>(null) }
+    var muted by remember(call.id) { mutableStateOf(false) }
+    var speaker by remember(call.id) { mutableStateOf(false) }
     val gate = remember(call.id) { AudioStartGate() }
 
     fun stop(message: String = "Микрофон выключен") {
@@ -53,6 +55,8 @@ fun AudioPrototypeControls(
         senderJob = null
         outbound = null
         engine = null
+        muted = false
+        speaker = false
         busy = false
         status = message
         onStop(call.id)
@@ -235,8 +239,27 @@ fun AudioPrototypeControls(
     Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
         Text(status, style = MaterialTheme.typography.bodySmall)
         if (engine != null) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { stop() }) { Text("Выключить микрофон") }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        muted = !muted
+                        engine?.setMuted(muted)
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text(if (muted) "Включить микрофон" else "Без звука") }
+                OutlinedButton(
+                    onClick = {
+                        speaker = !speaker
+                        engine?.setSpeakerphone(speaker)
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text(if (speaker) "Динамик ✓" else "Динамик") }
+            }
+            TextButton(onClick = { stop("Аудиосоединение отключено") }) {
+                Text("Отключить аудио")
             }
         } else if (busy) {
             OutlinedButton(onClick = { stop("Подключение отменено") }) {
