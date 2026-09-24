@@ -20,7 +20,9 @@ const mapMessage = r => ({
   attachmentId:r.media_id || null,
   replyToMessageId:r.reply_to_message_id || null,
   replyPreviewText:r.reply_preview_text || null,
-  replyPreviewFrom:r.reply_preview_from || null
+  replyPreviewFrom:r.reply_preview_from || null,
+  editedAt:r.edited_at?.toISOString?.() || r.edited_at || null,
+  deletedAt:r.deleted_at?.toISOString?.() || r.deleted_at || null
 });
 
 export const postgresStore = {
@@ -106,7 +108,7 @@ export const postgresStore = {
   async replyTarget(userId,peerId,messageId) {
     const r=await dbQuery(
       `select id,left(text,240) as text,sender_id from messages
-       where id=$1 and (
+       where id=$1 and deleted_at is null and (
          (sender_id=$2 and recipient_id=$3)
          or (sender_id=$3 and recipient_id=$2)
        )`,
@@ -150,11 +152,54 @@ export const postgresStore = {
     );
     return {message:mapMessage(inserted.rows[0]),inserted:true};
   },
+  async searchMessages(me,peer,query) {
+    const r=await dbQuery(
+      `select m.*,left(reply.text,240) as reply_preview_text,
+              reply.sender_id as reply_preview_from
+       from messages m
+       left join messages reply on reply.id=m.reply_to_message_id
+       where ((m.sender_id=$1 and m.recipient_id=$2)
+          or (m.sender_id=$2 and m.recipient_id=$1))
+         and m.deleted_at is null
+         and strpos(lower(m.text),lower($3))>0
+       order by m.created_at desc,m.id desc
+       limit 50`,
+      [me,peer,query]
+    );
+    return r.rows.map(mapMessage);
+  },
+  async editMessage(me,id,text) {
+    const r=await dbQuery(
+      `update messages
+       set text=$3,edited_at=now()
+       where id=$1 and sender_id=$2 and deleted_at is null
+       returning *`,
+      [id,me,text]
+    );
+    return r.rows[0] ? mapMessage(r.rows[0]) : null;
+  },
+  async deleteMessage(me,id) {
+    const r=await dbQuery(
+      `with updated as (
+         update messages
+         set text='Сообщение удалено',
+             deleted_at=coalesce(deleted_at,now())
+         where id=$1 and sender_id=$2
+         returning *
+       ), cleared as (
+         delete from message_reactions
+         where message_id in (select id from updated)
+       )
+       select * from updated`,
+      [id,me]
+    );
+    return r.rows[0] ? mapMessage(r.rows[0]) : null;
+  },
   // Only direct-message participants may react. No lookup ever returns an
   // unrelated user's message, including when the caller knows its UUID.
   async messageAccessible(messageId,userId) {
     const r=await dbQuery(
-      "select 1 from messages where id=$1 and (sender_id=$2 or recipient_id=$2)",
+      "select 1 from messages where id=$1 and deleted_at is null and (sender_id=$2 or recipient_id=$2)",
       [messageId,userId]
     );
     return r.rowCount>0;
@@ -163,7 +208,8 @@ export const postgresStore = {
     const result=await dbQuery(
       `insert into message_reactions(message_id,user_id,emoji)
        select m.id,$2,$3 from messages m
-       where m.id=$1 and (m.sender_id=$2 or m.recipient_id=$2)
+       where m.id=$1 and m.deleted_at is null
+         and (m.sender_id=$2 or m.recipient_id=$2)
        on conflict (message_id,user_id,emoji) do nothing
        returning message_id`,
       [messageId,userId,emoji]
@@ -186,8 +232,9 @@ export const postgresStore = {
     const r=await dbQuery(
       `select r.message_id,r.user_id,r.emoji from message_reactions r
        join messages m on m.id=r.message_id
-       where (m.sender_id=$1 and m.recipient_id=$2)
-          or (m.sender_id=$2 and m.recipient_id=$1)
+       where m.deleted_at is null and (
+         (m.sender_id=$1 and m.recipient_id=$2)
+          or (m.sender_id=$2 and m.recipient_id=$1))
        order by m.created_at desc,r.created_at desc
        limit 500`,
       [userId,peerId]
