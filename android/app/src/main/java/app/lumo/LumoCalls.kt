@@ -272,7 +272,7 @@ fun LumoCallsLab(token:String,me:User,back:()->Unit){
                 Column(Modifier.weight(1f)){
                     Text("Звонки Lumo",color=Color.White,
                         style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
-                    Text("Экспериментальная сигнализация",
+                    Text("Приватные аудио- и видеозвонки · staging",
                         color=MaterialTheme.colorScheme.onSurfaceVariant,
                         style=MaterialTheme.typography.labelMedium)
                 }
@@ -282,9 +282,9 @@ fun LumoCallsLab(token:String,me:User,back:()->Unit){
                 Modifier.fillMaxWidth().padding(12.dp).lumoGlass(22).padding(14.dp)
             ){
                 Text(
-                    "Аудио и видео WebRTC включаются только после принятия вызова и отдельного действия каждого участника. " +
-                        "Микрофон и камера никогда не запускаются автоматически. Соединение использует только приватный TURN; " +
-                        "при сворачивании Lumo захват останавливается.",
+                    "После принятия вызова каждый участник отдельно включает аудио или видео. " +
+                        "Экран показывает реальное состояние WebRTC и время соединения. Камера и микрофон не запускаются автоматически; " +
+                        "медиатрафик остаётся в TURN-only режиме, а при сворачивании захват останавливается.",
                     color=Color.White,style=MaterialTheme.typography.bodySmall
                 )
             }
