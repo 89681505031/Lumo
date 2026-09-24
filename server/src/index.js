@@ -309,7 +309,7 @@ app.get("/api/messages/:peerId", auth, async (req, res) => {
       const delivered=await postgresStore.markDeliveredFromPeer(req.user.id,peerId,pendingIds);
       const changed=new Map(delivered.map(m=>[m.id,m]));
       for(const m of delivered) sendTo(m.from,{type:"receipt",messageId:m.id,deliveredAt:m.deliveredAt,readAt:m.readAt});
-      return res.json(history.map(m=>changed.get(m.id)||m));
+      return res.json(history.map(m=>{const receipt=changed.get(m.id);return receipt?{...m,deliveredAt:receipt.deliveredAt,readAt:receipt.readAt}:m;}));
     }
     res.json(messages.filter(m=>(m.from===req.user.id&&m.to===peerId)||(m.from===peerId&&m.to===req.user.id)));
   }
