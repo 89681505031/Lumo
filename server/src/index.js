@@ -65,6 +65,8 @@ async function auth(req, res, next) {
 app.get("/live", (_req, res) => res.json({ ok: true, service: "lumo-server" }));
 app.get("/api/capabilities",(_req,res)=>res.json({
   mediaReady:mediaEnabled,
+  mediaStorageReady:mediaReady,
+  mediaUploadsEnabled:mediaEnabled,
   documentsReady:mediaEnabled,
   groupsReady:hasDatabase,
   groupLinkedReplies:hasDatabase,
