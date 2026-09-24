@@ -163,6 +163,13 @@ export async function initDatabase() {
     await pool.query(`alter table media_assets add constraint media_assets_scope_ck check ((recipient_id is null) <> (group_id is null))`);
   }
   await pool.query(`create unique index if not exists media_assets_claimed_group_uidx on media_assets(claimed_group_message_id) where claimed_group_message_id is not null`);
+  const mediaClaimedGroupFk=await pool.query(
+    "select 1 from pg_constraint where conname=$1 and conrelid='media_assets'::regclass",
+    ["media_assets_claimed_group_fk"]
+  );
+  if(!mediaClaimedGroupFk.rowCount){
+    await pool.query(`alter table media_assets add constraint media_assets_claimed_group_fk foreign key(claimed_group_message_id) references chat_group_messages(id) on delete set null`);
+  }
   await pool.query(`alter table chat_group_messages add column if not exists media_id uuid references media_assets(id) on delete set null`);
   await pool.query(`create index if not exists chat_group_messages_media_idx on chat_group_messages(media_id) where media_id is not null`);
   const groupReplyFk=await pool.query(
