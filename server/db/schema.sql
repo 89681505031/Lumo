@@ -172,6 +172,23 @@ create table if not exists push_outbox (
   constraint push_outbox_scope_ck
     check ((direct_message_id is null) <> (group_message_id is null))
 );
+/* Compatibility with the earlier direct-only experimental push schema. */
+alter table push_outbox add column if not exists direct_message_id uuid references messages(id) on delete cascade;
+alter table push_outbox add column if not exists group_message_id uuid references chat_group_messages(id) on delete cascade;
+do 'begin if exists (
+  select 1 from information_schema.columns
+  where table_schema=current_schema() and table_name=''push_outbox'' and column_name=''message_id''
+) then
+  execute ''alter table push_outbox alter column message_id drop not null'';
+  execute ''update push_outbox set direct_message_id=message_id where direct_message_id is null and group_message_id is null and message_id is not null'';
+end if; end';
+do 'begin if not exists (
+  select 1 from pg_constraint
+  where conname=''push_outbox_scope_ck'' and conrelid=''push_outbox''::regclass
+) then
+  alter table push_outbox add constraint push_outbox_scope_ck
+    check ((direct_message_id is null) <> (group_message_id is null));
+end if; end';
 create unique index if not exists push_outbox_direct_session_uidx
   on push_outbox(direct_message_id,session_token)
   where direct_message_id is not null;
@@ -193,6 +210,13 @@ begin
   return new;
 end;
 ' language plpgsql;
+do 'begin if exists (
+  select 1 from pg_trigger t join pg_proc p on p.oid=t.tgfoid
+  where t.tgname = ''lumo_message_push_outbox''
+    and t.tgrelid = ''messages''::regclass
+    and not t.tgisinternal
+    and p.proname <> ''lumo_enqueue_direct_push''
+) then execute ''drop trigger lumo_message_push_outbox on messages''; end if; end';
 do 'begin if not exists (
   select 1 from pg_trigger
   where tgname = ''lumo_message_push_outbox''
