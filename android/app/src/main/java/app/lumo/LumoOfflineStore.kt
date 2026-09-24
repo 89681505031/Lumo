@@ -134,6 +134,7 @@ object LumoOfflineStore {
                 .put("peerId",chat.peer.id)
                 .put("username",chat.peer.username)
                 .put("displayName",chat.peer.displayName.take(50))
+                .put("bio",chat.peer.bio.take(160))
                 .put("lastMessage",chat.lastMessage.take(4000))
                 .put("lastAt",chat.lastAt))
         }
@@ -153,7 +154,8 @@ object LumoOfflineStore {
                     val peer=User(
                         o.getString("peerId"),
                         o.getString("username"),
-                        o.getString("displayName")
+                        o.getString("displayName"),
+                        o.optString("bio").take(160)
                     )
                     add(Conversation(
                         peer=peer,
