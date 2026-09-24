@@ -302,21 +302,20 @@ class MainActivity:ComponentActivity(){
    kotlinx.coroutines.delay(12_000)
   }
  }
- if(loadError&&chats.isEmpty()){
-  Box(Modifier.fillMaxSize().padding(20.dp),contentAlignment=Alignment.Center){
-   Column(Modifier.fillMaxWidth().lumoGlass(28).padding(22.dp),horizontalAlignment=Alignment.CenterHorizontally){
-    Text("Чаты пока недоступны",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White)
-    Spacer(Modifier.height(12.dp))
-    Text(loadErrorDetail,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
-    Spacer(Modifier.height(18.dp))
-    LumoNeonButton("Повторить",onClick={retry++},modifier=Modifier.fillMaxWidth())
-    TextButton(find){Text("Найти людей",color=Color.White)}
-   }
-  }
-  return
- }
  if(loading){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator(color=LumoCyan)};return}
  Column(Modifier.fillMaxSize()){
+  if(loadError&&chats.isEmpty()){
+   Column(
+    Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp)
+     .lumoGlass(22).padding(horizontal=14.dp,vertical=12.dp)
+   ){
+    Text("Не удалось обновить список чатов",color=Color.White,fontWeight=FontWeight.SemiBold)
+    Text(loadErrorDetail,color=MaterialTheme.colorScheme.onSurfaceVariant,
+     style=MaterialTheme.typography.bodySmall)
+    Spacer(Modifier.height(8.dp))
+    OutlinedButton(onClick={retry++}){Text("Повторить")}
+   }
+  }
   if(groupsReady){
    Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp).lumoGlass(22).clickable{openGroups()}.padding(13.dp),verticalAlignment=Alignment.CenterVertically){
     LumoNeonAvatar("Группы",size=44.dp)
@@ -339,9 +338,14 @@ class MainActivity:ComponentActivity(){
   if(chats.isEmpty()){
    Box(Modifier.fillMaxSize().padding(20.dp),contentAlignment=Alignment.Center){
     Column(Modifier.fillMaxWidth().lumoGlass(28).padding(22.dp),horizontalAlignment=Alignment.CenterHorizontally){
-     Text("Сообщений пока нет",style=MaterialTheme.typography.titleLarge,color=Color.White,fontWeight=FontWeight.Bold)
+     Text(if(loadError)"Чаты временно не загружены" else "Сообщений пока нет",
+      style=MaterialTheme.typography.titleLarge,color=Color.White,fontWeight=FontWeight.Bold)
      Spacer(Modifier.height(8.dp))
-     Text("Найди человека и начни первый диалог",color=MaterialTheme.colorScheme.onSurfaceVariant)
+     Text(
+      if(loadError)"Можно найти человека и открыть диалог — список чатов обновится, когда сервер ответит."
+      else "Найди человека и начни первый диалог",
+      color=MaterialTheme.colorScheme.onSurfaceVariant
+     )
      Spacer(Modifier.height(16.dp))
      LumoNeonButton("Найти людей",find,Modifier.fillMaxWidth())
     }
@@ -587,7 +591,7 @@ class MainActivity:ComponentActivity(){
   Column(Modifier.fillMaxWidth().lumoGlass(25).padding(17.dp)){
    Text("Звонки",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=Color.White)
    Spacer(Modifier.height(6.dp))
-   Text("Тестовая сигнализация вызовов. Микрофон и камера в этой сборке не включаются автоматически.",
+   Text("Звонки Lumo. Микрофон и камера включаются только после вашего явного действия.",
     style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
    Spacer(Modifier.height(12.dp))
    LumoNeonButton("Открыть лабораторию звонков",openCalls,Modifier.fillMaxWidth())
@@ -1374,7 +1378,7 @@ object Api{
  fun updateMe(t:String,name:String,bio:String):Pair<User,Boolean>{val j=JSONObject().put("displayName",name).put("bio",bio);val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).patch(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful)error("Профиль: "+x.code);val o=JSONObject(x.body!!.string());return user(o) to o.has("bio")}}
  fun me(t:String):User{val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful)error("Сессия: "+x.code);return user(JSONObject(x.body!!.string()))}}
  fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
- fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful){val reason=when(x.code){401->"Сессия истекла. Выйди из аккаунта и войди снова.";429->"Слишком много запросов. Подожди немного.";503->"Сервер или база данных временно недоступны.";else->"Ошибка сервера HTTP "+x.code};error(reason)};val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"),o.optString("lastAt"))}}}
+ fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful){val reason=when(x.code){429->"Слишком много запросов. Подожди немного.";503->"Сервис чатов временно недоступен.";else->"Ошибка сервера HTTP "+x.code};error(reason)};val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"),o.optString("lastAt"))}}}
  fun history(t:String,p:String):List<Msg>{val r=Request.Builder().url(HTTP+"/api/messages/"+p).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("История: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{msg(a.getJSONObject(it))}}}
  fun linkedRepliesSupported(t:String):Boolean{
   val request=Request.Builder().url(HTTP+"/api/messages/capabilities")
