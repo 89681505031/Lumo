@@ -542,7 +542,18 @@ wss.on("connection", async (ws, req) => {
       const shouldDeliver=inserted||!message.deliveredAt;
       if(shouldDeliver && sendTo(message.to, { type: "message", message })) {
         message={...message,deliveredAt:new Date().toISOString()};
-        if(hasDatabase){message=await postgresStore.markMessageDelivered(message.id,message.to)||message;}else{const i=messages.findIndex(m=>m.id===message.id);if(i>=0)messages[i]=message;}
+        if(hasDatabase){
+          const delivered=await postgresStore.markMessageDelivered(message.id,message.to);
+          if(delivered)message={
+            ...delivered,
+            replyToMessageId:message.replyToMessageId,
+            replyPreviewText:message.replyPreviewText,
+            replyPreviewFrom:message.replyPreviewFrom
+          };
+        }else{
+          const i=messages.findIndex(m=>m.id===message.id);
+          if(i>=0)messages[i]=message;
+        }
       }
       ws.send(JSON.stringify({ type: "message", message }));
     } catch (error) { console.error("WebSocket message handling failed",error); if(ws.readyState===ws.OPEN) ws.send(JSON.stringify({ type: "error", error: error?.code==="CLIENT_MESSAGE_ID_CONFLICT" ? "client_message_id_conflict" : "service_unavailable" })); }
