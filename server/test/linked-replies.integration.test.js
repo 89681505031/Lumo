@@ -131,7 +131,7 @@ test("linked replies stay inside one direct conversation and remain idempotent",
     assert.equal(malformed.status,400);
     assert.equal(malformed.body.error,"invalid_reply_message_id");
 
-    const history=await request("/api/messages/with/"+bob.user.id,{
+    const history=await request("/api/messages/"+bob.user.id,{
       token:alice.token
     });
     assert.equal(history.status,200);
