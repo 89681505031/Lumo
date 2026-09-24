@@ -41,7 +41,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.launch
 
-data class User(val id:String,val username:String,val displayName:String)
+data class User(val id:String,val username:String,val displayName:String,val bio:String="",val bioSupported:Boolean=false)
 data class Msg(val id:String,val from:String,val to:String,val text:String,val createdAt:String="",val deliveredAt:String="",val readAt:String="",val clientMessageId:String="",val attachmentId:String="")
 data class Conversation(val peer:User,val lastMessage:String,val lastAt:String="")
 data class UpdateInfo(val versionCode:Int,val downloadUrl:String)
@@ -434,6 +434,11 @@ class MainActivity:ComponentActivity(){
        color=Color.White,maxLines=1)
       Spacer(Modifier.height(3.dp))
       Text("@"+u.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
+      if(u.bio.isNotBlank())Text(
+       u.bio,maxLines=1,
+       style=MaterialTheme.typography.bodySmall,
+       color=MaterialTheme.colorScheme.onSurfaceVariant
+      )
      }
      Text("›",style=MaterialTheme.typography.headlineSmall,color=Color.White,
       modifier=Modifier.padding(end=4.dp))
@@ -449,7 +454,8 @@ class MainActivity:ComponentActivity(){
  val profilePrefs=remember{context.getSharedPreferences("lumo_local_profile",Context.MODE_PRIVATE)}
  var editing by remember{mutableStateOf(false)}
  var name by remember(me.displayName){mutableStateOf(me.displayName)}
- var bio by remember(me.id){mutableStateOf(profilePrefs.getString("bio_"+me.id,"")?:"")}
+ var bio by remember(me.id,me.bio,me.bioSupported){mutableStateOf(if(me.bioSupported)me.bio else me.bio.ifBlank{profilePrefs.getString("bio_"+me.id,"")?:""})}
+ var bioNotice by remember(me.id){mutableStateOf("")}
  var saving by remember{mutableStateOf(false)}
  var profileError by remember{mutableStateOf("")}
  var loggingOut by remember{mutableStateOf(false)}
@@ -503,7 +509,7 @@ class MainActivity:ComponentActivity(){
      bio,{bio=it.take(160)},label={Text("О себе")},
      shape=RoundedCornerShape(20.dp),maxLines=3,modifier=Modifier.fillMaxWidth()
     )
-    Text("Описание пока хранится только на этом устройстве.",
+    Text("Описание синхронизируется между устройствами, когда сервер поддерживает новую версию профиля.",
      color=MaterialTheme.colorScheme.onSurfaceVariant,
      style=MaterialTheme.typography.bodySmall,modifier=Modifier.padding(top=6.dp))
     if(profileError.isNotBlank())Text(profileError,color=MaterialTheme.colorScheme.error,
@@ -516,10 +522,13 @@ class MainActivity:ComponentActivity(){
       saving=true
       scope.launch{
        runCatching{
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.updateMe(token,name)}
-       }.onSuccess{
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.updateMe(token,name,bio)}
+       }.onSuccess{result->
         profilePrefs.edit().putString("bio_"+me.id,bio).apply()
-        profileChanged(it);editing=false;profileError=""
+        val serverUser=result.first
+        val synced=result.second && serverUser.bio==bio.trim()
+        bioNotice=if(synced)"Описание синхронизировано с аккаунтом." else "Сервер пока не поддерживает описание — сохранено только на этом телефоне."
+        profileChanged(serverUser.copy(bio=if(synced)serverUser.bio else bio.trim()));editing=false;profileError=""
        }.onFailure{profileError="Не удалось сохранить имя"}
        saving=false
       }
@@ -528,7 +537,7 @@ class MainActivity:ComponentActivity(){
     TextButton(
      onClick={
       name=me.displayName
-      bio=profilePrefs.getString("bio_"+me.id,"")?:""
+      bio=if(me.bioSupported)me.bio else me.bio.ifBlank{profilePrefs.getString("bio_"+me.id,"")?:""}
       editing=false;profileError=""
      },modifier=Modifier.align(Alignment.CenterHorizontally)
     ){Text("Отмена",color=Color.White)}
@@ -537,6 +546,12 @@ class MainActivity:ComponentActivity(){
      if(bio.isBlank())"Управление данными" else bio,
      style=MaterialTheme.typography.bodyMedium,
      color=MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    if(bioNotice.isNotBlank())Text(
+     bioNotice,
+     style=MaterialTheme.typography.labelSmall,
+     color=LumoCyan,
+     modifier=Modifier.padding(top=6.dp)
     )
     Spacer(Modifier.height(14.dp))
     LumoNeonButton(
@@ -1082,7 +1097,7 @@ object Api{
    if(!response.isSuccessful)error("Выход: "+response.code)
   }
  }
- fun updateMe(t:String,name:String):User{val j=JSONObject().put("displayName",name);val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).patch(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Профиль: "+x.code);return user(JSONObject(x.body!!.string()))}}
+ fun updateMe(t:String,name:String,bio:String):Pair<User,Boolean>{val j=JSONObject().put("displayName",name).put("bio",bio);val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).patch(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful)error("Профиль: "+x.code);val o=JSONObject(x.body!!.string());return user(o) to o.has("bio")}}
  fun me(t:String):User{val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful)error("Сессия: "+x.code);return user(JSONObject(x.body!!.string()))}}
  fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
  fun conversations(t:String):List<Conversation>{val r=Request.Builder().url(HTTP+"/api/conversations").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful){val reason=when(x.code){401->"Сессия истекла. Выйди из аккаунта и войди снова.";429->"Слишком много запросов. Подожди немного.";503->"Сервер или база данных временно недоступны.";else->"Ошибка сервера HTTP "+x.code};error(reason)};val a=JSONArray(x.body!!.string());return(0 until a.length()).map{val o=a.getJSONObject(it);Conversation(user(o.getJSONObject("peer")),o.getString("lastMessage"),o.optString("lastAt"))}}}
@@ -1100,6 +1115,6 @@ object Api{
  }
  fun latestRelease():UpdateInfo{val r=Request.Builder().url("https://api.github.com/repos/89681505031/Lumo/releases/tags/lumo-latest").header("Accept","application/vnd.github+json").build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Обновление: "+x.code);val o=JSONObject(x.body!!.string());val code=Regex("versionCode=(\\d+)").find(o.optString("body"))?.groupValues?.get(1)?.toIntOrNull()?:0;val a=o.getJSONArray("assets");for(i in 0 until a.length()){val asset=a.getJSONObject(i);if(asset.optString("name")=="app-debug.apk" || asset.optString("name")=="app-release.apk" || asset.optString("label")=="Lumo.apk")return UpdateInfo(code,asset.getString("browser_download_url"))};error("APK не найден")}}
  fun socket(t:String,onMessage:(Msg)->Unit,onReceipt:(Receipt)->Unit,onError:(String)->Unit,onReady:()->Unit,onDisconnected:()->Unit):WebSocket{return c.newWebSocket(Request.Builder().url(WS).header("Authorization","Bearer "+t).build(),object:WebSocketListener(){override fun onOpen(w:WebSocket,response:Response){};override fun onMessage(w:WebSocket,s:String){runCatching{val o=JSONObject(s);when(o.optString("type")){"ready"->onReady();"message"->onMessage(msg(o.getJSONObject("message")));"receipt"->onReceipt(Receipt(o.getString("messageId"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt")));"error"->onError(o.optString("error"));else->Unit}}.onFailure{onError("invalid_server_message")}};override fun onClosed(w:WebSocket,code:Int,reason:String)=onDisconnected();override fun onFailure(w:WebSocket,t:Throwable,response:Response?)=onDisconnected()})}
- private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"))
+ private fun user(o:JSONObject)=User(o.getString("id"),o.getString("username"),o.getString("displayName"),nullableJsonText(o,"bio"),o.has("bio"))
  private fun msg(o:JSONObject)=Msg(o.getString("id"),o.getString("from"),o.getString("to"),o.getString("text"),nullableJsonText(o,"createdAt"),nullableJsonText(o,"deliveredAt"),nullableJsonText(o,"readAt"),nullableJsonText(o,"clientMessageId"),nullableJsonText(o,"attachmentId"))
 }

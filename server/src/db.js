@@ -17,6 +17,7 @@ export async function initDatabase() {
   if (!pool) return false;
   await pool.query(`create table if not exists users (id uuid primary key, username varchar(24) unique not null, display_name varchar(50) not null, created_at timestamptz not null default now())`);
   await pool.query(`alter table users add column if not exists password_hash text`);
+  await pool.query(`alter table users add column if not exists bio varchar(160) not null default ''`);
   await pool.query(`create table if not exists sessions (
     token uuid primary key,
     user_id uuid not null references users(id) on delete cascade,
@@ -54,7 +55,9 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column,
     exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='users' and column_name='bio') as bio_column,
+    exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.password_column && row.session_expiry_column), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.password_column && row.bio_column && row.session_expiry_column), now:row.now };
 }
