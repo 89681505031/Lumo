@@ -32,7 +32,7 @@ data class LumoGroup(
  val memberCount:Int,val lastMessage:String="",val lastAt:String=""
 )
 data class LumoGroupMember(val id:String,val username:String,val displayName:String,val role:String)
-data class LumoGroupMessage(val id:String,val from:String,val text:String,val createdAt:String,val clientMessageId:String="",val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="")
+data class LumoGroupMessage(val id:String,val from:String,val text:String,val createdAt:String,val clientMessageId:String="",val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="",val editedAt:String="",val deletedAt:String="")
 data class LumoGroupPending(val clientId:String,val text:String,val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="")
 data class LumoGroupDetail(val group:LumoGroup,val members:List<LumoGroupMember>)
 
@@ -42,7 +42,7 @@ private fun group(o:JSONObject)=LumoGroup(
  o.getString("role"),o.optInt("memberCount",0),optional(o,"lastMessage"),optional(o,"lastAt")
 )
 private fun groupMessage(o:JSONObject)=LumoGroupMessage(
- o.getString("id"),o.getString("from"),o.getString("text"),o.getString("createdAt"),optional(o,"clientMessageId"),optional(o,"replyToMessageId"),optional(o,"replyPreviewText"),optional(o,"replyPreviewFrom")
+ o.getString("id"),o.getString("from"),o.getString("text"),o.getString("createdAt"),optional(o,"clientMessageId"),optional(o,"replyToMessageId"),optional(o,"replyPreviewText"),optional(o,"replyPreviewFrom"),optional(o,"editedAt"),optional(o,"deletedAt")
 )
 private fun Api.groupCall(token:String,path:String,method:String="GET",body:JSONObject?=null):String{
  val req=Request.Builder().url(Api.HTTP+path).header("Authorization","Bearer "+token)
@@ -91,6 +91,47 @@ fun Api.groupCapabilities(t:String):Pair<Boolean,Boolean>{
    val o=JSONObject(r.body?.string().orEmpty())
    o.optBoolean("groupLinkedReplies",false) to o.optBoolean("groupSearch",false)
   }.getOrDefault(false to false)
+ }
+}
+data class LumoGroupActionCaps(val edit:Boolean,val delete:Boolean,val reactions:Boolean)
+fun Api.groupActionCapabilities(t:String):LumoGroupActionCaps{
+ val req=Request.Builder().url(Api.HTTP+"/api/capabilities")
+  .header("Authorization","Bearer "+t).get().build()
+ Api.httpClient.newCall(req).execute().use{r->
+  if(r.code==401)throw SessionExpiredException()
+  if(!r.isSuccessful)return LumoGroupActionCaps(false,false,false)
+  return runCatching{
+   val o=JSONObject(r.body?.string().orEmpty())
+   LumoGroupActionCaps(
+    o.optBoolean("groupMessageEdit",false),
+    o.optBoolean("groupMessageDelete",false),
+    o.optBoolean("groupReactions",false)
+   )
+  }.getOrDefault(LumoGroupActionCaps(false,false,false))
+ }
+}
+fun Api.groupEdit(t:String,groupId:String,messageId:String,text:String):LumoGroupMessage=
+ groupMessage(JSONObject(groupCall(t,"/api/groups/"+groupId+"/messages/"+messageId,"PATCH",
+  JSONObject().put("text",text.trim()))))
+fun Api.groupDeleteMessage(t:String,groupId:String,messageId:String):LumoGroupMessage=
+ groupMessage(JSONObject(groupCall(t,"/api/groups/"+groupId+"/messages/"+messageId,"DELETE")))
+fun Api.groupReactions(t:String,groupId:String):List<LumoReaction>{
+ val a=JSONArray(groupCall(t,"/api/groups/"+groupId+"/reactions"))
+ return (0 until a.length()).map{i->
+  val o=a.getJSONObject(i)
+  LumoReaction(o.getString("messageId"),o.getString("userId"),o.getString("emoji"))
+ }
+}
+fun Api.groupSetReaction(t:String,groupId:String,messageId:String,emoji:String,active:Boolean){
+ require(emoji in LumoReactionApi.choices)
+ val path="/api/groups/"+groupId+"/messages/"+messageId+"/reactions"
+ val req=Request.Builder().url(Api.HTTP+path).header("Authorization","Bearer "+t)
+ val body=JSONObject().put("emoji",emoji).toString()
+  .toRequestBody("application/json".toMediaType())
+ val request=if(active)req.put(body).build() else req.delete(body).build()
+ Api.httpClient.newCall(request).execute().use{r->
+  if(r.code==401)throw SessionExpiredException()
+  if(!r.isSuccessful)error("Не удалось изменить реакцию ("+r.code+")")
  }
 }
 fun Api.groupSearch(t:String,id:String,q:String):List<LumoGroupMessage>{
@@ -224,6 +265,15 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
  var deleteGroupDialog by remember{mutableStateOf(false)}
  var groupLinkedReplies by remember(token){mutableStateOf(false)}
  var groupSearchEnabled by remember(token){mutableStateOf(false)}
+ var groupEditEnabled by remember(token){mutableStateOf(false)}
+ var groupDeleteEnabled by remember(token){mutableStateOf(false)}
+ var groupReactionsEnabled by remember(token){mutableStateOf(false)}
+ var groupReactions by remember(initial.id){mutableStateOf<List<LumoReaction>>(emptyList())}
+ var reactionBusy by remember{mutableStateOf(false)}
+ var activeMessage by remember(initial.id){mutableStateOf<LumoGroupMessage?>(null)}
+ var editTarget by remember(initial.id){mutableStateOf<LumoGroupMessage?>(null)}
+ var editDraft by remember(initial.id){mutableStateOf("")}
+ var deleteTarget by remember(initial.id){mutableStateOf<LumoGroupMessage?>(null)}
  var replyTarget by remember(initial.id){mutableStateOf<LumoGroupMessage?>(null)}
  var showSearch by remember(initial.id){mutableStateOf(false)}
  var searchText by remember(initial.id){mutableStateOf("")}
@@ -237,6 +287,11 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
    .getOrDefault(false to false)
   groupLinkedReplies=caps.first
   groupSearchEnabled=caps.second
+  val actions=runCatching{withContext(Dispatchers.IO){Api.groupActionCapabilities(token)}}
+   .getOrDefault(LumoGroupActionCaps(false,false,false))
+  groupEditEnabled=actions.edit
+  groupDeleteEnabled=actions.delete
+  groupReactionsEnabled=actions.reactions
  }
  fun reload(){
   scope.launch{
@@ -274,7 +329,33 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
       if(data.optString("groupId")!=initial.id)return@runCatching
       val msg=groupMessage(data)
       scope.launch{
-       history=(history.filterNot{it.id==msg.id}+msg).sortedBy{it.createdAt}
+       history=history.map{m->when{
+        m.id==msg.id->msg
+        m.replyToMessageId==msg.id->m.copy(
+         replyPreviewText=if(msg.deletedAt.isNotBlank())"Сообщение удалено" else msg.text.take(240)
+        )
+        else->m
+       }}.let{items->
+        if(items.any{it.id==msg.id})items else (items+msg).sortedBy{it.createdAt}
+       }
+       searchResults=searchResults.filterNot{
+        it.id==msg.id&&(
+         msg.deletedAt.isNotBlank() ||
+         (searchText.isNotBlank()&&!msg.text.contains(searchText,ignoreCase=true))
+        )
+       }.map{m->when{
+        m.id==msg.id->msg
+        m.replyToMessageId==msg.id->m.copy(
+         replyPreviewText=if(msg.deletedAt.isNotBlank())"Сообщение удалено" else msg.text.take(240)
+        )
+        else->m
+       }}
+       if(replyTarget?.id==msg.id){
+        replyTarget=if(msg.deletedAt.isBlank())msg else null
+       }
+       if(activeMessage?.id==msg.id)activeMessage=msg
+       if(msg.deletedAt.isNotBlank())
+        groupReactions=groupReactions.filterNot{it.messageId==msg.id}
        if(msg.from==me.id&&msg.clientMessageId.isNotBlank()&&msg.clientMessageId==pending?.clientId){
         savePending(null);input=""
        }
@@ -283,6 +364,13 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     }
    })
   onDispose{socket.close(1000,"Group closed")}
+ }
+ LaunchedEffect(token,initial.id,groupReactionsEnabled){
+  while(groupReactionsEnabled){
+   runCatching{withContext(Dispatchers.IO){Api.groupReactions(token,initial.id)}}
+    .onSuccess{groupReactions=it}
+   delay(5_000)
+  }
  }
  LaunchedEffect(inviteSearch,inviteDialog){
   if(inviteDialog&&inviteSearch.trim().length>=2){
@@ -346,6 +434,137 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     }
    },enabled=!actionBusy){Text("Удалить")}},
    dismissButton={TextButton(onClick={deleteGroupDialog=false},enabled=!actionBusy){Text("Отмена")}}
+  )
+ }
+ activeMessage?.let{selected->
+  AlertDialog(
+   onDismissRequest={if(!actionBusy&&!reactionBusy)activeMessage=null},
+   title={Text("Действия с сообщением")},
+   text={
+    Column{
+     Text(selected.text.take(180),style=MaterialTheme.typography.bodyMedium)
+     if(selected.deletedAt.isBlank()){
+      Spacer(Modifier.height(12.dp))
+      LumoNeonButton("↩ Ответить",onClick={
+       replyTarget=selected;activeMessage=null
+      },modifier=Modifier.fillMaxWidth())
+      if(selected.from==me.id&&groupEditEnabled){
+       Spacer(Modifier.height(8.dp))
+       OutlinedButton(
+        onClick={editDraft=selected.text;editTarget=selected;activeMessage=null},
+        modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(22.dp)
+       ){Text("✎ Изменить")}
+      }
+      if(selected.from==me.id&&groupDeleteEnabled){
+       Spacer(Modifier.height(8.dp))
+       OutlinedButton(
+        onClick={deleteTarget=selected;activeMessage=null},
+        modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(22.dp)
+       ){Text("Удалить сообщение")}
+      }
+      if(groupReactionsEnabled){
+       Spacer(Modifier.height(10.dp))
+       Text("Реакция",style=MaterialTheme.typography.labelMedium)
+       Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement=Arrangement.SpaceBetween
+       ){
+        LumoReactionApi.choices.forEach{emoji->
+         val own=groupReactions.any{
+          it.messageId==selected.id&&it.userId==me.id&&it.emoji==emoji
+         }
+         TextButton(
+          enabled=!reactionBusy,
+          onClick={
+           reactionBusy=true
+           scope.launch{
+            runCatching{withContext(Dispatchers.IO){
+             Api.groupSetReaction(token,initial.id,selected.id,emoji,!own)
+             Api.groupReactions(token,initial.id)
+            }}.onSuccess{groupReactions=it}
+             .onFailure{error="Не удалось изменить реакцию"}
+            reactionBusy=false
+           }
+          }
+         ){Text(emoji,color=if(own)LumoCyan else Color.White)}
+        }
+       }
+      }
+     }
+    }
+   },
+   confirmButton={TextButton(onClick={activeMessage=null}){Text("Закрыть")}}
+  )
+ }
+ editTarget?.let{target->
+  AlertDialog(
+   onDismissRequest={if(!actionBusy)editTarget=null},
+   title={Text("Изменить сообщение")},
+   text={OutlinedTextField(
+    value=editDraft,onValueChange={editDraft=it.take(4000)},
+    modifier=Modifier.fillMaxWidth(),label={Text("Текст")},maxLines=6
+   )},
+   confirmButton={TextButton(
+    enabled=!actionBusy&&editDraft.trim().isNotEmpty(),
+    onClick={
+     actionBusy=true
+     scope.launch{
+      runCatching{withContext(Dispatchers.IO){
+       Api.groupEdit(token,initial.id,target.id,editDraft)
+      }}.onSuccess{changed->
+       history=history.map{m->when{
+        m.id==changed.id->changed
+        m.replyToMessageId==changed.id->m.copy(replyPreviewText=changed.text.take(240))
+        else->m
+       }}
+       searchResults=searchResults.filterNot{
+        it.id==changed.id&&searchText.isNotBlank()&&
+         !changed.text.contains(searchText,ignoreCase=true)
+       }.map{m->when{
+        m.id==changed.id->changed
+        m.replyToMessageId==changed.id->m.copy(replyPreviewText=changed.text.take(240))
+        else->m
+       }}
+       if(replyTarget?.id==changed.id)replyTarget=changed
+       editTarget=null;error=""
+      }.onFailure{error="Не удалось изменить сообщение"}
+      actionBusy=false
+     }
+    }
+   ){Text(if(actionBusy)"Сохраняем…" else "Сохранить")}},
+   dismissButton={TextButton(onClick={editTarget=null},enabled=!actionBusy){Text("Отмена")}}
+  )
+ }
+ deleteTarget?.let{target->
+  AlertDialog(
+   onDismissRequest={if(!actionBusy)deleteTarget=null},
+   title={Text("Удалить сообщение?")},
+   text={Text("Текст станет пометкой «Сообщение удалено», а реакции будут очищены.")},
+   confirmButton={TextButton(
+    enabled=!actionBusy,
+    onClick={
+     actionBusy=true
+     scope.launch{
+      runCatching{withContext(Dispatchers.IO){
+       Api.groupDeleteMessage(token,initial.id,target.id)
+      }}.onSuccess{changed->
+       history=history.map{m->when{
+        m.id==changed.id->changed
+        m.replyToMessageId==changed.id->m.copy(replyPreviewText="Сообщение удалено")
+        else->m
+       }}
+       searchResults=searchResults.filterNot{it.id==changed.id}.map{m->
+        if(m.replyToMessageId==changed.id)m.copy(replyPreviewText="Сообщение удалено") else m
+       }
+       groupReactions=groupReactions.filterNot{it.messageId==changed.id}
+       if(replyTarget?.id==changed.id)replyTarget=null
+       deleteTarget=null;error=""
+      }.onFailure{error="Не удалось удалить сообщение"}
+      actionBusy=false
+     }
+    }
+   ){Text(if(actionBusy)"Удаляем…" else "Удалить")}},
+   dismissButton={TextButton(onClick={deleteTarget=null},enabled=!actionBusy){Text("Отмена")}}
   )
  }
  LumoBackdrop(Modifier.fillMaxSize()){Scaffold(containerColor=Color.Transparent,topBar={Surface(color=Color(0x882B43A0)){
@@ -468,7 +687,7 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
       Surface(
        shape=RoundedCornerShape(20.dp),color=Color.Transparent,
        modifier=Modifier.widthIn(max=300.dp).lumoBubble(m.from==me.id)
-        .clickable{replyTarget=m}
+        .clickable{activeMessage=m}
       ){
        Column(Modifier.padding(12.dp)){
         if(m.from!=me.id){
@@ -496,9 +715,36 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
          }
          Spacer(Modifier.height(7.dp))
         }
-        Text(m.text,color=Color.White)
-        Text(formatMessageTime(m.createdAt),style=MaterialTheme.typography.labelSmall,
-         modifier=Modifier.align(Alignment.End))
+        Text(
+         m.text,
+         color=if(m.deletedAt.isNotBlank())Color.White.copy(alpha=.58f) else Color.White
+        )
+        val messageReactions=groupReactions.filter{it.messageId==m.id}
+        if(messageReactions.isNotEmpty()&&m.deletedAt.isBlank()){
+         Spacer(Modifier.height(6.dp))
+         LumoReactionBadges(
+          entries=messageReactions,
+          meId=me.id,
+          onTap={emoji,add->
+           if(!reactionBusy){
+            reactionBusy=true
+            scope.launch{
+             runCatching{withContext(Dispatchers.IO){
+              Api.groupSetReaction(token,initial.id,m.id,emoji,add)
+              Api.groupReactions(token,initial.id)
+             }}.onSuccess{groupReactions=it}
+              .onFailure{error="Не удалось изменить реакцию"}
+             reactionBusy=false
+            }
+           }
+          }
+         )
+        }
+        Text(
+         formatMessageTime(m.createdAt)+(if(m.editedAt.isNotBlank()&&m.deletedAt.isBlank())" · изменено" else ""),
+         style=MaterialTheme.typography.labelSmall,
+         modifier=Modifier.align(Alignment.End)
+        )
        }
       }
      }

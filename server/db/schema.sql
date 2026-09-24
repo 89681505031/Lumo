@@ -125,5 +125,15 @@ create table if not exists chat_group_messages (
 );
 create index if not exists chat_group_messages_history_idx on chat_group_messages(group_id,created_at desc,id desc);
 alter table chat_group_messages add column if not exists reply_to_message_id uuid;
+alter table chat_group_messages add column if not exists edited_at timestamptz;
+alter table chat_group_messages add column if not exists deleted_at timestamptz;
+create table if not exists chat_group_message_reactions (
+  message_id uuid not null references chat_group_messages(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  emoji varchar(16) not null,
+  created_at timestamptz not null default now(),
+  primary key(message_id,user_id,emoji)
+);
+create index if not exists chat_group_message_reactions_message_idx on chat_group_message_reactions(message_id,created_at desc);
 do 'begin if not exists (select 1 from pg_constraint where conname = ''chat_group_messages_reply_to_fk'' and conrelid = ''chat_group_messages''::regclass) then alter table chat_group_messages add constraint chat_group_messages_reply_to_fk foreign key (reply_to_message_id) references chat_group_messages(id) on delete set null; end if; end';
 create index if not exists chat_group_messages_reply_idx on chat_group_messages(reply_to_message_id) where reply_to_message_id is not null;
