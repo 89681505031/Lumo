@@ -112,7 +112,7 @@ object LumoOfflineStore {
         if(!file.isFile)return null
         return synchronized(lock){
             runCatching{
-                decrypt(userId,AtomicFile(file).readFully()).toString(Charsets.UTF_8)
+                String(decrypt(userId,AtomicFile(file).readFully()),Charsets.UTF_8)
             }.getOrElse{
                 // A corrupt/inaccessible ciphertext is never treated as valid history.
                 // Delete only this cache blob; server history remains authoritative.
