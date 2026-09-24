@@ -348,14 +348,20 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
      savePending(null);input=""
     }
    }
-    .onFailure{
-     error="Нет связи с группой или вы больше не участник"
-     // Do not keep prior group history visible after membership can no longer
-     // be proven by the server.
-     history=emptyList()
-     searchResults=emptyList()
-     groupReactions=emptyList()
-     olderDone=true
+    .onFailure{failure->
+     val membershipLost=failure.message?.contains("HTTP 404 group_not_found")==true
+     if(membershipLost){
+      error="Вы больше не участник этой группы"
+      // A confirmed server-side membership loss must remove group content
+      // from the active screen. A mere network outage keeps the already
+      // loaded view so offline reading is not destroyed by a transient error.
+      history=emptyList()
+      searchResults=emptyList()
+      groupReactions=emptyList()
+      olderDone=true
+     }else{
+      error="Нет связи с группой. Показываем уже загруженные сообщения."
+     }
      loading=false
     }
    delay(5_000)
