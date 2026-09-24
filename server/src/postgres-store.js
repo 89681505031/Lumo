@@ -1,4 +1,4 @@
-import { dbQuery, hasDatabase } from "./db.js";
+import { dbQuery, hasDatabase, pool } from "./db.js";
 
 const mapUser = r => ({
   id:r.id,
@@ -40,6 +40,45 @@ export const postgresStore = {
   },
   async revokeSession(userId,token) {
     await dbQuery("delete from sessions where user_id=$1 and token=$2",[userId,token]);
+  },
+  async registerPushDevice({userId,sessionToken,tokenHash,token}) {
+    // One physical FCM token may move between accounts on the same phone.
+    // Serialize by hash so concurrent server instances cannot leave it bound
+    // to two Lumo sessions.
+    const client=await pool.connect();
+    try {
+      await client.query("begin");
+      await client.query(
+        "select pg_advisory_xact_lock(hashtext($1))",
+        [tokenHash]
+      );
+      await client.query(
+        "delete from push_devices where token_hash=$1 and session_token<>$2",
+        [tokenHash,sessionToken]
+      );
+      await client.query(`
+        insert into push_devices(session_token,user_id,token_hash,fcm_token)
+        values($1,$2,$3,$4)
+        on conflict(session_token) do update set
+          user_id=excluded.user_id,
+          token_hash=excluded.token_hash,
+          fcm_token=excluded.fcm_token,
+          updated_at=now()`,
+        [sessionToken,userId,tokenHash,token]
+      );
+      await client.query("commit");
+    }catch(error){
+      await client.query("rollback").catch(()=>{});
+      throw error;
+    }finally{
+      client.release();
+    }
+  },
+  async removePushDevice(userId,sessionToken) {
+    await dbQuery(
+      "delete from push_devices where user_id=$1 and session_token=$2",
+      [userId,sessionToken]
+    );
   },
   async createUser({id,username,displayName,passwordHash,token}) {
     try {
