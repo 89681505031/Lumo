@@ -41,6 +41,8 @@ test("deployed Lumo API and PostgreSQL are available without test accounts",{
     "Production backend must expose current private-group support"
   );
   assert.equal(typeof capabilities.body?.mediaReady,"boolean");
+  assert.equal(typeof capabilities.body?.mediaStorageReady,"boolean");
+  assert.equal(typeof capabilities.body?.mediaUploadsEnabled,"boolean");
   assert.equal(typeof capabilities.body?.groupAttachments,"boolean");
   assert.equal(typeof capabilities.body?.callsReady,"boolean");
   assert.equal(typeof capabilities.body?.turnReady,"boolean");
