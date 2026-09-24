@@ -15,7 +15,7 @@ This draft branch is stacked on the still-draft calls/push lab PR #34. It does n
 - Each Lumo account gets a separate **AES-256-GCM key generated inside Android Keystore**. The key is not written to files or preferences.
 - Cache blobs are written atomically in the app-private files directory and include a random 12-byte GCM IV plus authenticated ciphertext.
 - File/key names are derived from SHA-256 digests of Lumo user IDs rather than raw usernames or message text.
-- The offline cache never stores the login/session token, Firebase token, signed media URL, downloaded image/video/audio bytes, call signaling secrets or push credentials.
+- The encrypted offline files never store the login/session token, Firebase token, signed media URL, downloaded image/video/audio bytes, call signaling secrets or push credentials.
 - Cached message records may contain text, timestamps, delivery/read state, client message UUID and an attachment **ID** so the online viewer can request an authorized asset later.
 - A corrupt/undecryptable blob fails closed and is deleted locally; PostgreSQL/server history remains authoritative.
 
@@ -25,7 +25,7 @@ This protects recent cached history **at rest on this Android device**. It is no
 
 - Offline media playback is not implemented. An attachment ID can appear in cached history, but opening the media still requires the authenticated server.
 - Search is limited to the already cached chat list and currently loaded conversation; there is no full local database/index yet.
-- The existing unsent-message retry queue predates this work and is stored separately. This milestone does not claim that queue has been migrated into the encrypted history cache yet.
+- Existing per-chat unsent-message retries are migrated from the old local JSON preference into an encrypted per-peer AES-GCM file. Future queue updates prefer encrypted storage. If Android Keystore/storage itself fails, the client retains the legacy local queue as a reliability fallback instead of discarding an unsent message.
 - Group history is not cached by this change.
 - A user who clears Android app storage or uninstalls the app loses this local history/key. That does not delete server-side messages.
 
