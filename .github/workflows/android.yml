@@ -115,7 +115,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           APK="app/build/outputs/apk/release/app-release.apk"
+          PUBLISH_APK="$RUNNER_TEMP/Lumo.apk"
           test -f "$APK"
+          cp "$APK" "$PUBLISH_APK"
           if gh release view lumo-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit lumo-latest \
               --repo "$GITHUB_REPOSITORY" \
@@ -123,7 +125,7 @@ jobs:
               --notes "versionCode=1006" \
               --latest
           else
-            gh release create lumo-latest "$APK#Lumo.apk" \
+            gh release create lumo-latest "$PUBLISH_APK" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "Lumo 1.0.6" \
@@ -131,10 +133,12 @@ jobs:
               --latest
             exit 0
           fi
-          gh release delete-asset lumo-latest app-debug.apk \
-            --repo "$GITHUB_REPOSITORY" \
-            --yes || true
-          gh release upload lumo-latest "$APK#Lumo.apk" \
+          for LEGACY_ASSET in app-debug.apk app-release.apk app-release-unsigned.apk; do
+            gh release delete-asset lumo-latest "$LEGACY_ASSET" \
+              --repo "$GITHUB_REPOSITORY" \
+              --yes || true
+          done
+          gh release upload lumo-latest "$PUBLISH_APK" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
 
