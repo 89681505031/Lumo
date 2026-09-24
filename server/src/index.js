@@ -808,24 +808,76 @@ app.get("/api/media/:id/download",auth,requireDatabase,rateLimit({windowMs:60_00
 });
 
 app.get("/api/messages/capabilities",auth,(_req,res)=>{
-  res.json({linkedReplies:true,messageEdit:true,messageDelete:true,messageSearch:true});
+  res.json({linkedReplies:true,messageEdit:true,messageDelete:true,messageSearch:true,messagePagination:true});
 });
 
 app.get("/api/messages/:peerId", auth, async (req, res) => {
   try {
     const peerId = req.params.peerId;
-    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(peerId)) return res.status(400).json({error:"invalid_peer_id"});
+    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(peerId))
+      return res.status(400).json({error:"invalid_peer_id"});
+    const rawLimit=req.query.limit;
+    const limit=rawLimit===undefined?null:Number(rawLimit);
+    if(limit!==null && (!Number.isInteger(limit)||limit<1||limit>100))
+      return res.status(400).json({error:"invalid_history_limit"});
     if(hasDatabase) {
-      const history=await postgresStore.messages(req.user.id,peerId);
+      // Old clients omit ?limit and preserve the legacy full-history response.
+      // New clients request a bounded latest slice then page backward.
+      const history=limit===null
+        ? await postgresStore.messages(req.user.id,peerId)
+        : await postgresStore.latestMessages(req.user.id,peerId,limit);
       const pendingIds=history.filter(m=>m.from===peerId&&!m.deliveredAt).map(m=>m.id);
       const delivered=await postgresStore.markDeliveredFromPeer(req.user.id,peerId,pendingIds);
       const changed=new Map(delivered.map(m=>[m.id,m]));
-      for(const m of delivered) sendTo(m.from,{type:"receipt",messageId:m.id,deliveredAt:m.deliveredAt,readAt:m.readAt});
-      return res.json(history.map(m=>{const receipt=changed.get(m.id);return receipt?{...m,deliveredAt:receipt.deliveredAt,readAt:receipt.readAt}:m;}));
+      for(const m of delivered)
+        sendTo(m.from,{type:"receipt",messageId:m.id,deliveredAt:m.deliveredAt,readAt:m.readAt});
+      return res.json(history.map(m=>{
+        const receipt=changed.get(m.id);
+        return receipt?{...m,deliveredAt:receipt.deliveredAt,readAt:receipt.readAt}:m;
+      }));
     }
     res.json(messages.filter(m=>(m.from===req.user.id&&m.to===peerId)||(m.from===peerId&&m.to===req.user.id)));
   }
   catch(error){console.error("Message history failed",error);res.status(503).json({error:"service_unavailable"});}
+});
+
+app.get("/api/messages/:peerId/page",auth,requireDatabase,rateLimit({windowMs:60_000,max:120}),async(req,res)=>{
+  const peerId=req.params.peerId;
+  const beforeId=req.query.beforeId;
+  const rawLimit=req.query.limit;
+  if(!uuidPattern.test(peerId)||peerId===req.user.id)
+    return res.status(400).json({error:"invalid_peer_id"});
+  if(typeof beforeId!=="string"||!uuidPattern.test(beforeId))
+    return res.status(400).json({error:"invalid_history_cursor"});
+  const limit=rawLimit===undefined?50:Number(rawLimit);
+  if(!Number.isInteger(limit)||limit<1||limit>100)
+    return res.status(400).json({error:"invalid_history_limit"});
+  try{
+    const page=await postgresStore.messagePage(
+      req.user.id,peerId,{beforeId,limit}
+    );
+    if(page.error==="history_cursor_not_found")
+      return res.status(400).json({error:page.error});
+    const pendingIds=page.messages
+      .filter(m=>m.from===peerId&&!m.deliveredAt)
+      .map(m=>m.id);
+    const delivered=await postgresStore.markDeliveredFromPeer(
+      req.user.id,peerId,pendingIds
+    );
+    const changed=new Map(delivered.map(m=>[m.id,m]));
+    for(const m of delivered)
+      sendTo(m.from,{type:"receipt",messageId:m.id,deliveredAt:m.deliveredAt,readAt:m.readAt});
+    return res.json({
+      messages:page.messages.map(m=>{
+        const receipt=changed.get(m.id);
+        return receipt?{...m,deliveredAt:receipt.deliveredAt,readAt:receipt.readAt}:m;
+      }),
+      next:page.next
+    });
+  }catch(error){
+    console.error("Message history page failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
 });
 
 // HTTP transport is a durable fallback when WebSocket peers connect to different instances.
