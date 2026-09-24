@@ -131,11 +131,14 @@ fun LumoMessageOptions(
                 if(message.deletedAt.isBlank()){
                     LumoNeonButton("↩ Ответить",onReply,Modifier.fillMaxWidth())
                     Spacer(Modifier.height(8.dp))
-                    if(message.text.isNotBlank() && message.attachmentId.isBlank()){
+                    if(message.text.isNotBlank() || message.attachmentId.isNotBlank()){
                         OutlinedButton(
                             onClick=onForward,shape=RoundedCornerShape(22.dp),
                             modifier=Modifier.fillMaxWidth()
-                        ){Text("↗ Переслать текст")}
+                        ){
+                            Text(if(message.attachmentId.isNotBlank())
+                                "↗ Переслать вложение" else "↗ Переслать текст")
+                        }
                         Spacer(Modifier.height(8.dp))
                     }
                     if(canEdit){
@@ -228,10 +231,29 @@ fun LumoForwardDialog(
         sending=true
         status="Отправляем…"
         scope.launch {
+            if(source.attachmentId.isNotBlank()){
+                runCatching{
+                    withContext(Dispatchers.IO){
+                        forwardExistingAttachment(
+                            token=token,
+                            assetId=source.attachmentId,
+                            to=recipient.id,
+                            clientMessageId=clientId,
+                            caption=source.text.trim().take(1000)
+                        )
+                    }
+                }.onSuccess{
+                    sent=true
+                    status="Вложение переслано: "+recipient.displayName
+                }.onFailure{
+                    status="Не удалось переслать вложение. Можно повторить с тем же ID."
+                }
+                sending=false
+                return@launch
+            }
             val key="pending_"+me.id+"_"+recipient.id
             val queued=PendingMessage(clientId,forwardText)
-            // This is the same queue consumed by the destination Chat screen.
-            // Do not overwrite any previously queued messages.
+            // Text forwarding keeps the normal destination-chat retry queue.
             val stored=runCatching {
                 val old=JSONArray(prefs.getString(key,"[]"))
                 var exists=false
@@ -255,7 +277,6 @@ fun LumoForwardDialog(
             runCatching{
                 withContext(Dispatchers.IO){Api.sendMessage(token,recipient.id,queued)}
             }.onSuccess{
-                // Remove only our UUID: preserve other pending destination texts.
                 val current=JSONArray(prefs.getString(key,"[]"))
                 val remaining=JSONArray()
                 for(i in 0 until current.length()){
@@ -273,13 +294,22 @@ fun LumoForwardDialog(
     }
     AlertDialog(
         onDismissRequest={if(!sending)onDismiss()},
-        title={Text("Переслать сообщение")},
+        title={Text(if(source.attachmentId.isNotBlank())"Переслать вложение" else "Переслать сообщение")},
         text={
             Column {
-                Text("Будет отправлен только текст выбранному контакту.",
-                    style=MaterialTheme.typography.bodySmall)
+                Text(
+                    if(source.attachmentId.isNotBlank())
+                        "Lumo не делает вложение публичным: доступ получит только выбранный получатель через отдельное сообщение."
+                    else "Будет отправлен только текст выбранному контакту.",
+                    style=MaterialTheme.typography.bodySmall
+                )
                 Spacer(Modifier.height(9.dp))
-                Text(forwardText.take(160),style=MaterialTheme.typography.bodyMedium)
+                Text(
+                    if(source.attachmentId.isNotBlank())
+                        source.text.ifBlank{"Вложение"}.take(160)
+                    else forwardText.take(160),
+                    style=MaterialTheme.typography.bodyMedium
+                )
                 Spacer(Modifier.height(13.dp))
                 val target=chosen
                 if(target==null){
