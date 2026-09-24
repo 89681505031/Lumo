@@ -70,7 +70,14 @@ class WebRtcVideoSession(
     }
 
     private val eglBase=EglBase.create()
-    private val factory=PeerConnectionFactory.builder().createPeerConnectionFactory()
+    private val factory=PeerConnectionFactory.builder()
+        .setVideoEncoderFactory(
+            DefaultVideoEncoderFactory(eglBase.eglBaseContext,true,true)
+        )
+        .setVideoDecoderFactory(
+            DefaultVideoDecoderFactory(eglBase.eglBaseContext)
+        )
+        .createPeerConnectionFactory()
     private val audioSource=factory.createAudioSource(MediaConstraints())
     private val audioTrack=factory.createAudioTrack("lumoVideoAudio",audioSource).apply{
         setEnabled(true)
