@@ -35,7 +35,8 @@ jobs:
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::VERCEL_TOKEN is not configured; production deployment was not attempted."
+            echo "::error::VERCEL_TOKEN is not configured; refusing to report a successful production deployment."
+            exit 1
           fi
       - name: Deploy current server to Vercel production
         if: steps.credential.outputs.available == 'true'
@@ -49,7 +50,9 @@ jobs:
           for attempt in $(seq 1 18); do
             HEALTH=$(curl -fsS --max-time 10 https://lumo-gamma-seven.vercel.app/health || true)
             CAPS=$(curl -fsS --max-time 10 https://lumo-gamma-seven.vercel.app/api/capabilities || true)
-            if echo "$HEALTH" | grep -q '"ok":true' && echo "$CAPS" | grep -q '"groupsReady"'; then
+            if echo "$HEALTH" | grep -q '"ok":true' \
+              && echo "$CAPS" | grep -q '"groupsReady":true' \
+              && echo "$CAPS" | grep -q '"callsReady"'; then
               echo "Production Lumo backend is current and healthy."
               exit 0
             fi
