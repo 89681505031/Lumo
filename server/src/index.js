@@ -388,6 +388,45 @@ app.post("/api/media/:id/send",auth,requireDatabase,rateLimit({windowMs:60_000,m
   }
 });
 
+app.post("/api/media/:id/forward",auth,requireDatabase,rateLimit({windowMs:60_000,max:30}),async(req,res)=>{
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_media_id"});
+  const to=req.body?.to;
+  const clientMessageId=req.body?.clientMessageId;
+  if(typeof to!=="string" || !uuidPattern.test(to) || to===req.user.id)
+    return mediaError(res,"invalid_recipient_id");
+  if(typeof clientMessageId!=="string" || !uuidPattern.test(clientMessageId))
+    return mediaError(res,"invalid_client_message_id");
+  if(req.body?.caption!==undefined &&
+     (typeof req.body.caption!=="string" || req.body.caption.trim().length>1000))
+    return mediaError(res,"invalid_caption");
+  try{
+    if(!await postgresStore.userExists(to))
+      return mediaError(res,"recipient_not_found");
+    const result=await mediaStore.forward(
+      req.user.id,
+      req.params.id,
+      to,
+      clientMessageId,
+      req.body.caption?.trim()||""
+    );
+    if(result.error)return mediaError(res,result.error);
+    let message=result.message;
+    if(result.inserted && sendTo(message.to,{type:"message",message})){
+      const delivered=await postgresStore.markMessageDelivered(message.id,message.to);
+      if(delivered)message={
+        ...message,
+        deliveredAt:delivered.deliveredAt,
+        readAt:delivered.readAt
+      };
+    }
+    return res.status(result.inserted?201:200).json(message);
+  }catch(error){
+    console.error("Media forward failed",error?.name||"unknown");
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
 app.get("/api/media/:id/download",auth,requireDatabase,rateLimit({windowMs:60_000,max:90}),async(req,res)=>{
   if(!uuidPattern.test(req.params.id))
     return res.status(400).json({error:"invalid_media_id"});
