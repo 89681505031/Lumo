@@ -42,6 +42,8 @@ test("deployed Lumo API and PostgreSQL are available without test accounts",{
   );
   assert.equal(typeof capabilities.body?.mediaReady,"boolean");
   assert.equal(typeof capabilities.body?.groupAttachments,"boolean");
+  assert.equal(typeof capabilities.body?.callsReady,"boolean");
+  assert.equal(typeof capabilities.body?.turnReady,"boolean");
 
   const anonymous=await request("/api/me");
   assert.equal(anonymous.status,401,"Private profile must reject anonymous requests");
