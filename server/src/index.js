@@ -7,7 +7,7 @@ import { postgresStore } from "./postgres-store.js";
 import { groupStore } from "./group-store.js";
 import { hashPassword, verifyPassword, validPassword } from "./password.js";
 import { aiReady, completeLumoAi } from "./ai-provider.js";
-import { mediaReady, mediaStore } from "./media-store.js";
+import { mediaReady, mediaStore, registerMediaCleanup } from "./media-store.js";
 import { callRouter } from "./call-signaling.js";
 import { registerCallCleanup } from "./call-cleanup.js";
 import { registerPushDispatch } from "./push-outbox.js";
@@ -71,6 +71,7 @@ function requireDatabase(_req,res,next){if(!hasDatabase)return res.status(503).j
 
 registerCallCleanup(app);
 registerPushDispatch(app);
+registerMediaCleanup(app);
 app.use("/api/calls",callRouter(auth));
 
 app.post("/api/register", requireDatabase, rateLimit({windowMs:60_000,max:10}), async (req, res) => {
@@ -688,6 +689,7 @@ function mediaError(res,error){
     media_already_sent:409,
     client_message_id_conflict:409,
     upload_expired:410,
+    media_quota_exceeded:429,
     media_unavailable:503
   }[error] || 503;
   return res.status(status).json({error});
