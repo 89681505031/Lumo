@@ -145,6 +145,33 @@ export async function initDatabase() {
     primary key(message_id,user_id,emoji)
   )`);
   await pool.query(`create index if not exists chat_group_message_reactions_message_idx on chat_group_message_reactions(message_id,created_at desc)`);
+  await pool.query(`alter table media_assets alter column recipient_id drop not null`);
+  await pool.query(`alter table media_assets add column if not exists group_id uuid`);
+  await pool.query(`alter table media_assets add column if not exists claimed_group_message_id uuid`);
+  const mediaGroupFk=await pool.query(
+    "select 1 from pg_constraint where conname=$1 and conrelid='media_assets'::regclass",
+    ["media_assets_group_fk"]
+  );
+  if(!mediaGroupFk.rowCount){
+    await pool.query(`alter table media_assets add constraint media_assets_group_fk foreign key(group_id) references chat_groups(id) on delete cascade`);
+  }
+  const mediaScopeCheck=await pool.query(
+    "select 1 from pg_constraint where conname=$1 and conrelid='media_assets'::regclass",
+    ["media_assets_scope_ck"]
+  );
+  if(!mediaScopeCheck.rowCount){
+    await pool.query(`alter table media_assets add constraint media_assets_scope_ck check ((recipient_id is null) <> (group_id is null))`);
+  }
+  await pool.query(`create unique index if not exists media_assets_claimed_group_uidx on media_assets(claimed_group_message_id) where claimed_group_message_id is not null`);
+  const mediaClaimedGroupFk=await pool.query(
+    "select 1 from pg_constraint where conname=$1 and conrelid='media_assets'::regclass",
+    ["media_assets_claimed_group_fk"]
+  );
+  if(!mediaClaimedGroupFk.rowCount){
+    await pool.query(`alter table media_assets add constraint media_assets_claimed_group_fk foreign key(claimed_group_message_id) references chat_group_messages(id) on delete set null`);
+  }
+  await pool.query(`alter table chat_group_messages add column if not exists media_id uuid references media_assets(id) on delete set null`);
+  await pool.query(`create index if not exists chat_group_messages_media_idx on chat_group_messages(media_id) where media_id is not null`);
   const groupReplyFk=await pool.query(
     "select 1 from pg_constraint where conname=$1 and conrelid='chat_group_messages'::regclass",
     ["chat_group_messages_reply_to_fk"]
@@ -176,6 +203,10 @@ export async function dbHealth() {
       where table_schema=current_schema() and table_name='chat_group_messages' and column_name='deleted_at') as group_deleted_column,
     to_regclass('chat_group_message_reactions') as group_reactions_table,
     exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='chat_group_messages' and column_name='media_id') as group_media_column,
+    exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='media_assets' and column_name='group_id') as media_group_column,
+    exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='bio') as bio_column,
@@ -194,5 +225,5 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.group_reply_column && row.group_edited_column && row.group_deleted_column && row.group_reactions_table && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.group_reply_column && row.group_edited_column && row.group_deleted_column && row.group_reactions_table && row.group_media_column && row.media_group_column && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
 }

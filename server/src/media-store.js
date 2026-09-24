@@ -85,6 +85,20 @@ const mappedMessage=row=>({
   editedAt:iso(row.edited_at),
   deletedAt:iso(row.deleted_at)
 });
+const mappedGroupMessage=row=>({
+  id:row.id,
+  groupId:row.group_id,
+  from:row.sender_id,
+  text:row.text,
+  createdAt:iso(row.created_at),
+  clientMessageId:row.client_message_id||null,
+  attachmentId:row.media_id||null,
+  replyToMessageId:row.reply_to_message_id||null,
+  replyPreviewText:null,
+  replyPreviewFrom:null,
+  editedAt:iso(row.edited_at),
+  deletedAt:iso(row.deleted_at)
+});
 
 function safeFilename(value,mime){
   const allowed=extensions[mime];
@@ -133,6 +147,37 @@ export const mediaStore={
       id,owner_id,recipient_id,object_key,mime,file_name,byte_length
     ) values($1,$2,$3,$4,$5,$6,$7)`,
     [id,ownerId,recipientId,key,checked.mime,checked.filename,checked.bytes]);
+    const upload=await createPresignedPost(client,{
+      Bucket:bucket,
+      Key:key,
+      Expires:300,
+      Fields:{"Content-Type":checked.mime},
+      Conditions:[
+        {"Content-Type":checked.mime},
+        ["content-length-range",1,allowedMimeSizes[checked.mime]]
+      ]
+    });
+    return {
+      assetId:id,
+      uploadUrl:upload.url,
+      fields:upload.fields,
+      expiresIn:300,
+      maxBytes:allowedMimeSizes[checked.mime],
+      filename:checked.filename,
+      mime:checked.mime
+    };
+  },
+
+  async initiateGroup(ownerId,groupId,input){
+    const checked=validateMedia(input);
+    if(checked.error)return checked;
+    if(!mediaReady)return {error:"media_unavailable"};
+    const id=randomUUID();
+    const key=`private/${ownerId}/groups/${groupId}/${id}`;
+    await dbQuery(`insert into media_assets(
+      id,owner_id,group_id,object_key,mime,file_name,byte_length
+    ) values($1,$2,$3,$4,$5,$6,$7)`,
+    [id,ownerId,groupId,key,checked.mime,checked.filename,checked.bytes]);
     const upload=await createPresignedPost(client,{
       Bucket:bucket,
       Key:key,
@@ -246,6 +291,73 @@ export const mediaStore={
     }
   },
 
+  async sendGroup(ownerId,id,groupId,clientMessageId,caption){
+    const conn=await pool.connect();
+    let committed=false;
+    try{
+      await conn.query("begin");
+      const selected=await conn.query(`
+        select a.* from media_assets a
+        join chat_group_members membership
+          on membership.group_id=a.group_id and membership.user_id=$2
+        where a.id=$1 and a.owner_id=$2 and a.group_id=$3
+        for update of a`,
+        [id,ownerId,groupId]
+      );
+      const a=selected.rows[0];
+      if(!a)return {error:"media_not_found"};
+      if(!a.uploaded_at)return {error:"upload_incomplete"};
+      if(new Date(a.expires_at).getTime()<=Date.now() && !a.claimed_group_message_id)
+        return {error:"upload_expired"};
+      const text=(caption||placeholder(a.mime,a.file_name)).trim();
+      if(a.claimed_group_message_id){
+        const previous=await conn.query(
+          `select * from chat_group_messages
+           where id=$1 and group_id=$2 and sender_id=$3`,
+          [a.claimed_group_message_id,groupId,ownerId]
+        );
+        const p=previous.rows[0];
+        if(p && p.client_message_id===clientMessageId &&
+           p.text===text && p.media_id===id)
+          return {message:mappedGroupMessage(p),inserted:false};
+        return {error:"media_already_sent"};
+      }
+      const messageId=randomUUID();
+      const inserted=await conn.query(`
+        insert into chat_group_messages(
+          id,group_id,sender_id,text,client_message_id,media_id
+        )
+        select $1,$2,$3,$4,$5,$6
+        from chat_group_members membership
+        where membership.group_id=$2 and membership.user_id=$3
+        on conflict(group_id,sender_id,client_message_id) do nothing
+        returning *`,
+        [messageId,groupId,ownerId,text,clientMessageId,id]
+      );
+      if(!inserted.rows[0]){
+        const old=await conn.query(`
+          select * from chat_group_messages
+          where group_id=$1 and sender_id=$2 and client_message_id=$3`,
+          [groupId,ownerId,clientMessageId]
+        );
+        const p=old.rows[0];
+        if(p && p.media_id===id && p.text===text)
+          return {message:mappedGroupMessage(p),inserted:false};
+        return {error:"client_message_id_conflict"};
+      }
+      await conn.query(
+        "update media_assets set claimed_group_message_id=$2 where id=$1",
+        [id,messageId]
+      );
+      await conn.query("commit");
+      committed=true;
+      return {message:mappedGroupMessage(inserted.rows[0]),inserted:true};
+    }finally{
+      if(!committed)await conn.query("rollback").catch(()=>{});
+      conn.release();
+    }
+  },
+
   async forward(userId,id,to,clientMessageId,caption){
     const conn=await pool.connect();
     let committed=false;
@@ -303,8 +415,14 @@ export const mediaStore={
         on m.media_id=a.id
        and m.deleted_at is null
        and (m.sender_id=$2 or m.recipient_id=$2)
+      left join chat_group_messages gm
+        on gm.media_id=a.id and gm.deleted_at is null
+      left join chat_group_members membership
+        on membership.group_id=gm.group_id
+       and membership.user_id=$2
+       and gm.created_at>=membership.joined_at
       where a.id=$1 and a.uploaded_at is not null
-        and (a.owner_id=$2 or m.id is not null)
+        and (a.owner_id=$2 or m.id is not null or membership.user_id is not null)
       limit 1`,
       [id,userId]
     );

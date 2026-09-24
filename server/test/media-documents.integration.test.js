@@ -298,6 +298,121 @@ test("private document attachments are allowlisted, signed, participant-only and
     });
     assert.equal(docx.status,201);
     assert.equal(docx.json.maxBytes,15*1024*1024);
+
+    // Group attachments reuse the same private storage but authorization comes
+    // from the viewer's CURRENT group membership window.
+    const createdGroup=await request("/api/groups","POST",alice.token,{
+      title:"Private media group"
+    });
+    assert.equal(createdGroup.status,201);
+    const groupId=createdGroup.json.id;
+    assert.equal((await request(
+      "/api/groups/"+groupId+"/members","POST",alice.token,{userId:bob.user.id}
+    )).status,201);
+
+    const groupCaps=await request("/api/capabilities");
+    assert.equal(groupCaps.json.groupAttachments,true);
+
+    expectedMime="text/plain";
+    expectedBytes=Buffer.from("Lumo private group attachment");
+    const groupInit=await request(
+      "/api/groups/"+groupId+"/media/init","POST",alice.token,{
+        mime:expectedMime,
+        bytes:expectedBytes.length,
+        filename:"group-notes.txt"
+      }
+    );
+    assert.equal(groupInit.status,201);
+    expectedUploadKey=groupInit.json.fields.key||groupInit.json.fields.Key;
+    assert.ok(expectedUploadKey?.startsWith(
+      "private/"+alice.user.id+"/groups/"+groupId+"/"
+    ));
+
+    assert.equal((await request(
+      "/api/media/"+groupInit.json.assetId+"/download","GET",bob.token
+    )).status,404,"a group member cannot read an unclaimed upload");
+
+    const groupForm=new FormData();
+    for(const [key,value] of Object.entries(groupInit.json.fields))
+      groupForm.append(key,value);
+    groupForm.append(
+      "file",new Blob([expectedBytes],{type:expectedMime}),"group-notes.txt"
+    );
+    assert.equal((await fetch(
+      groupInit.json.uploadUrl,{method:"POST",body:groupForm}
+    )).status,204);
+    assert.equal((await request(
+      "/api/media/"+groupInit.json.assetId+"/complete","POST",alice.token
+    )).status,200);
+
+    const groupClientId=randomUUID();
+    const groupSent=await request(
+      "/api/groups/"+groupId+"/media/"+groupInit.json.assetId+"/send",
+      "POST",alice.token,{
+        clientMessageId:groupClientId,
+        caption:"Групповой документ"
+      }
+    );
+    assert.equal(groupSent.status,201);
+    assert.equal(groupSent.json.attachmentId,groupInit.json.assetId);
+    assert.equal((await request(
+      "/api/media/"+groupInit.json.assetId+"/download","GET",bob.token
+    )).status,200,"current members can read an attachment linked to visible group history");
+    assert.equal((await request(
+      "/api/media/"+groupInit.json.assetId+"/download","GET",stranger.token
+    )).status,404);
+
+    const groupReplay=await request(
+      "/api/groups/"+groupId+"/media/"+groupInit.json.assetId+"/send",
+      "POST",alice.token,{
+        clientMessageId:groupClientId,
+        caption:"Групповой документ"
+      }
+    );
+    assert.equal(groupReplay.status,200);
+    assert.equal(groupReplay.json.id,groupSent.json.id);
+
+    const groupHistory=await request(
+      "/api/groups/"+groupId+"/messages","GET",bob.token
+    );
+    assert.equal(groupHistory.status,200);
+    assert.equal(
+      groupHistory.json.find(m=>m.id===groupSent.json.id)?.attachmentId,
+      groupInit.json.assetId
+    );
+
+    // A late join must not use a new attachment message as a side channel to
+    // read media from before that membership period.
+    assert.equal((await request(
+      "/api/groups/"+groupId+"/members","POST",alice.token,{userId:other.user.id}
+    )).status,201);
+    assert.equal((await request(
+      "/api/media/"+groupInit.json.assetId+"/download","GET",other.token
+    )).status,404,"late joiners cannot open older group attachments");
+
+    assert.equal((await request(
+      "/api/groups/"+groupId+"/members/"+bob.user.id,"DELETE",alice.token
+    )).status,204);
+    assert.equal((await request(
+      "/api/media/"+groupInit.json.assetId+"/download","GET",bob.token
+    )).status,404,"leaving/removal revokes group attachment access");
+
+    assert.equal((await request(
+      "/api/groups/"+groupId+"/members","POST",alice.token,{userId:bob.user.id}
+    )).status,201);
+    assert.equal((await request(
+      "/api/media/"+groupInit.json.assetId+"/download","GET",bob.token
+    )).status,404,"rejoining does not reopen old group attachments");
+
+    const groupDeleted=await request(
+      "/api/groups/"+groupId+"/messages/"+groupSent.json.id,
+      "DELETE",alice.token
+    );
+    assert.equal(groupDeleted.status,200);
+    assert.ok(groupDeleted.json.deletedAt);
+    assert.equal((await request(
+      "/api/media/"+groupInit.json.assetId+"/download","GET",alice.token
+    )).status,200,"the uploader keeps owner access pending retention cleanup");
   }finally{
     server.kill("SIGTERM");
     if(server.exitCode===null)await new Promise(resolve=>{

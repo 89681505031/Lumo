@@ -32,7 +32,7 @@ data class LumoGroup(
  val memberCount:Int,val lastMessage:String="",val lastAt:String=""
 )
 data class LumoGroupMember(val id:String,val username:String,val displayName:String,val role:String)
-data class LumoGroupMessage(val id:String,val from:String,val text:String,val createdAt:String,val clientMessageId:String="",val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="",val editedAt:String="",val deletedAt:String="")
+data class LumoGroupMessage(val id:String,val from:String,val text:String,val createdAt:String,val clientMessageId:String="",val attachmentId:String="",val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="",val editedAt:String="",val deletedAt:String="")
 data class LumoGroupPending(val clientId:String,val text:String,val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="")
 data class LumoGroupDetail(val group:LumoGroup,val members:List<LumoGroupMember>)
 
@@ -42,7 +42,7 @@ private fun group(o:JSONObject)=LumoGroup(
  o.getString("role"),o.optInt("memberCount",0),optional(o,"lastMessage"),optional(o,"lastAt")
 )
 private fun groupMessage(o:JSONObject)=LumoGroupMessage(
- o.getString("id"),o.getString("from"),o.getString("text"),o.getString("createdAt"),optional(o,"clientMessageId"),optional(o,"replyToMessageId"),optional(o,"replyPreviewText"),optional(o,"replyPreviewFrom"),optional(o,"editedAt"),optional(o,"deletedAt")
+ o.getString("id"),o.getString("from"),o.getString("text"),o.getString("createdAt"),optional(o,"clientMessageId"),optional(o,"attachmentId"),optional(o,"replyToMessageId"),optional(o,"replyPreviewText"),optional(o,"replyPreviewFrom"),optional(o,"editedAt"),optional(o,"deletedAt")
 )
 private fun Api.groupCall(token:String,path:String,method:String="GET",body:JSONObject?=null):String{
  val req=Request.Builder().url(Api.HTTP+path).header("Authorization","Bearer "+token)
@@ -539,7 +539,9 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
   AlertDialog(
    onDismissRequest={if(!actionBusy)deleteTarget=null},
    title={Text("Удалить сообщение?")},
-   text={Text("Текст станет пометкой «Сообщение удалено», а реакции будут очищены.")},
+   text={Text(if(target.attachmentId.isBlank())
+    "Текст станет пометкой «Сообщение удалено», а реакции будут очищены."
+    else "Вложение перестанет открываться участникам через это сообщение; останется пометка об удалении.")},
    confirmButton={TextButton(
     enabled=!actionBusy,
     onClick={
@@ -715,6 +717,10 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
          }
          Spacer(Modifier.height(7.dp))
         }
+        if(m.attachmentId.isNotBlank()&&m.deletedAt.isBlank()){
+         MediaAttachmentButton(token,m.attachmentId)
+         Spacer(Modifier.height(7.dp))
+        }
         Text(
          m.text,
          color=if(m.deletedAt.isNotBlank())Color.White.copy(alpha=.58f) else Color.White
@@ -750,6 +756,16 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
      }
     }
    }
+   GroupMediaComposer(
+    token=token,
+    me=me,
+    groupId=initial.id,
+    allowSend=!sending&&pending==null&&replyTarget==null&&!loading,
+    onSent={m->
+     history=(history.filterNot{it.id==m.id}+m).sortedBy{it.createdAt}
+     error=""
+    }
+   )
    Surface(color=Color.Transparent){
     val replyPreview=pending?.takeIf{it.replyToMessageId.isNotBlank()}?.let{
      Triple(it.replyToMessageId,it.replyPreviewText,it.replyPreviewFrom)
