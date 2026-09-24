@@ -295,5 +295,24 @@ export const groupStore = {
       [groupId,createdAt]
     );
     return rows.rows.map(r=>r.user_id);
+  },
+  async recipientViews(groupId,createdAt,replyToMessageId=null) {
+    const rows=await dbQuery(`
+      select m.user_id,
+        case
+          when $3::uuid is null then true
+          when reply.id is null then false
+          else reply.created_at>=m.joined_at
+        end as can_see_reply
+      from chat_group_members m
+      left join chat_group_messages reply
+        on reply.id=$3 and reply.group_id=m.group_id
+      where m.group_id=$1 and m.joined_at<=$2`,
+      [groupId,createdAt,replyToMessageId]
+    );
+    return rows.rows.map(r=>({
+      userId:r.user_id,
+      canSeeReply:Boolean(r.can_see_reply)
+    }));
   }
 };
