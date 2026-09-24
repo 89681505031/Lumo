@@ -22,6 +22,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -749,7 +750,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    kotlinx.coroutines.delay(12_000)
   }
  }
- val msgs=remember{mutableStateListOf<Msg>()};var input by remember{mutableStateOf("")};var ws by remember{mutableStateOf<WebSocket?>(null)};var socketGeneration by remember{mutableIntStateOf(0)};var connected by remember{mutableStateOf(false)};var socketError by remember{mutableStateOf("")};var historyError by remember{mutableStateOf(false)};val pending=remember{mutableStateListOf<PendingMessage>().apply{val a=runCatching{JSONArray(queuePrefs.getString(queueKey,"[]"))}.getOrNull();if(a!=null)for(i in 0 until a.length()){val o=a.optJSONObject(i);if(o!=null){val id=o.optString("clientMessageId");val text=o.optString("text");if(id.isNotBlank()&&text.isNotBlank())add(PendingMessage(id,text,o.optString("replyToMessageId"),o.optString("replyPreviewText"),o.optString("replyPreviewFrom")))}else{val text=a.optString(i);if(text.isNotBlank())add(PendingMessage(java.util.UUID.randomUUID().toString(),text))}}}}
+ val msgs=remember{mutableStateListOf<Msg>()};val listState=rememberLazyListState();var input by remember{mutableStateOf("")};var ws by remember{mutableStateOf<WebSocket?>(null)};var socketGeneration by remember{mutableIntStateOf(0)};var connected by remember{mutableStateOf(false)};var socketError by remember{mutableStateOf("")};var historyError by remember{mutableStateOf(false)};val pending=remember{mutableStateListOf<PendingMessage>().apply{val a=runCatching{JSONArray(queuePrefs.getString(queueKey,"[]"))}.getOrNull();if(a!=null)for(i in 0 until a.length()){val o=a.optJSONObject(i);if(o!=null){val id=o.optString("clientMessageId");val text=o.optString("text");if(id.isNotBlank()&&text.isNotBlank())add(PendingMessage(id,text,o.optString("replyToMessageId"),o.optString("replyPreviewText"),o.optString("replyPreviewFrom")))}else{val text=a.optString(i);if(text.isNotBlank())add(PendingMessage(java.util.UUID.randomUUID().toString(),text))}}}}
  fun savePending(){
   val snapshot=pending.toList()
   val encrypted=runCatching{
@@ -932,7 +933,8 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
      }
     }
     LazyColumn(
-     Modifier.weight(1f).fillMaxWidth(),
+     state=listState,
+     modifier=Modifier.weight(1f).fillMaxWidth(),
      contentPadding=PaddingValues(horizontal=13.dp,vertical=14.dp),
      verticalArrangement=Arrangement.spacedBy(11.dp)
     ){
@@ -952,7 +954,12 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
          Column {
           if(m.replyToMessageId.isNotBlank()){
           Box(
-           Modifier.fillMaxWidth().lumoGlass(14).padding(horizontal=9.dp,vertical=7.dp)
+           Modifier.fillMaxWidth().lumoGlass(14)
+            .clickable{
+             val index=msgs.indexOfFirst{it.id==m.replyToMessageId}
+             if(index>=0)scope.launch{listState.animateScrollToItem(index)}
+            }
+            .padding(horizontal=9.dp,vertical=7.dp)
           ){
            Column{
             Text(
@@ -1027,7 +1034,14 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
        Box(Modifier.widthIn(max=290.dp).lumoBubble(true).padding(horizontal=14.dp,vertical=10.dp)){
         Column{
          if(p.replyToMessageId.isNotBlank()){
-          Box(Modifier.fillMaxWidth().lumoGlass(14).padding(8.dp)){
+          Box(
+           Modifier.fillMaxWidth().lumoGlass(14)
+            .clickable{
+             val index=msgs.indexOfFirst{it.id==p.replyToMessageId}
+             if(index>=0)scope.launch{listState.animateScrollToItem(index)}
+            }
+            .padding(8.dp)
+          ){
            Text(
             p.replyPreviewText.ifBlank{"Ответ на сообщение"},
             color=Color.White.copy(alpha=.82f),
