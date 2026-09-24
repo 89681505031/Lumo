@@ -86,11 +86,9 @@ data class LumoGroupPage(
  val hasMore:Boolean
 )
 fun Api.groupHistoryPage(
- t:String,id:String,beforeAt:String,beforeId:String,limit:Int=50
+ t:String,id:String,beforeId:String,limit:Int=50
 ):LumoGroupPage{
- val at=java.net.URLEncoder.encode(beforeAt,Charsets.UTF_8.name())
- val path="/api/groups/"+id+"/messages/page?limit="+limit+
-  "&beforeAt="+at+"&beforeId="+beforeId
+ val path="/api/groups/"+id+"/messages/page?limit="+limit+"&beforeId="+beforeId
  val o=JSONObject(groupCall(t,path))
  val a=o.getJSONArray("messages")
  return LumoGroupPage(
@@ -746,7 +744,7 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
         scope.launch{
          runCatching{withContext(Dispatchers.IO){
           Api.groupHistoryPage(
-           token,initial.id,oldest.createdAt,oldest.id,50
+           token,initial.id,oldest.id,50
           )
          }}.onSuccess{page->
           val all=(page.messages+history).associateBy{it.id}.values
