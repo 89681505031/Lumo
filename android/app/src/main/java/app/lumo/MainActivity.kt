@@ -1170,12 +1170,28 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
           }
           Spacer(Modifier.height(7.dp))
          }
-         if(m.text.isNotBlank())Text(m.text,color=Color.White)
-         if(m.attachmentId.isNotBlank())MediaAttachmentButton(token,m.attachmentId)
+         if(m.text.isNotBlank())Text(
+          m.text,
+          color=if(m.deletedAt.isNotBlank())
+           MaterialTheme.colorScheme.onSurfaceVariant else Color.White,
+          fontStyle=if(m.deletedAt.isNotBlank())
+           androidx.compose.ui.text.font.FontStyle.Italic
+           else androidx.compose.ui.text.font.FontStyle.Normal
+         )
+         if(m.attachmentId.isNotBlank() && m.deletedAt.isBlank())
+          MediaAttachmentButton(token,m.attachmentId)
          Spacer(Modifier.height(5.dp))
          Row(
           Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically
          ){
+          if(m.editedAt.isNotBlank() && m.deletedAt.isBlank()){
+           Text(
+            "изменено",
+            color=Color.White.copy(alpha=.62f),
+            style=MaterialTheme.typography.labelSmall
+           )
+           Spacer(Modifier.width(5.dp))
+          }
           if(m.createdAt.isNotBlank())Text(
            formatMessageTime(m.createdAt),
            color=Color.White.copy(alpha=.73f),
@@ -1189,14 +1205,16 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
             style=MaterialTheme.typography.labelSmall
            )
           }
-          Spacer(Modifier.width(5.dp))
-          TextButton(onClick={activeMessage=m},contentPadding=PaddingValues(horizontal=7.dp)){
-           Text("⋯",color=LumoCyan,style=MaterialTheme.typography.titleMedium)
+          if(m.deletedAt.isBlank()){
+           Spacer(Modifier.width(5.dp))
+           TextButton(onClick={activeMessage=m},contentPadding=PaddingValues(horizontal=7.dp)){
+            Text("⋯",color=LumoCyan,style=MaterialTheme.typography.titleMedium)
+           }
           }
          }
         }
        }
-       if(reactionsEnabled){
+       if(reactionsEnabled && m.deletedAt.isBlank()){
         LumoReactionBadges(
          entries=reactions.filter{it.messageId==m.id},
          meId=me.id,
