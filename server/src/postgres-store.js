@@ -92,7 +92,7 @@ export const postgresStore = {
   },
   async messages(me,peer) {
     const r=await dbQuery(
-      `select m.*, reply.text as reply_preview_text, reply.sender_id as reply_preview_from
+      `select m.*, left(reply.text,240) as reply_preview_text, reply.sender_id as reply_preview_from
        from messages m
        left join messages reply on reply.id=m.reply_to_message_id
        where (m.sender_id=$1 and m.recipient_id=$2)
@@ -104,7 +104,7 @@ export const postgresStore = {
   },
   async replyTarget(userId,peerId,messageId) {
     const r=await dbQuery(
-      `select id,text,sender_id from messages
+      `select id,left(text,240) as text,sender_id from messages
        where id=$1 and (
          (sender_id=$2 and recipient_id=$3)
          or (sender_id=$3 and recipient_id=$2)
