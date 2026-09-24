@@ -230,7 +230,7 @@ class MainActivity:ComponentActivity(){
   ){pad->
    Box(Modifier.fillMaxSize().padding(pad)){
     when(tab){
-     0->Chats(token,{tab=1},open,openGroups,privacy)
+     0->Chats(token,me,{tab=1},open,openGroups,privacy)
      1->People(token,open)
      else->Profile(token,me,profileChanged,privacy,openCalls,logout)
     }
@@ -239,7 +239,8 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Chats(token:String,find:()->Unit,open:(User)->Unit,openGroups:()->Unit,privacy:LumoPrivacy){
+@Composable fun Chats(token:String,me:User,find:()->Unit,open:(User)->Unit,openGroups:()->Unit,privacy:LumoPrivacy){
+ val context=LocalContext.current
  var chats by remember{mutableStateOf<List<Conversation>>(emptyList())}
  var chatQuery by remember{mutableStateOf("")}
  var groupsReady by remember(token){mutableStateOf(false)}
@@ -253,13 +254,46 @@ class MainActivity:ComponentActivity(){
  var loadError by remember{mutableStateOf(false)}
  var loadErrorDetail by remember{mutableStateOf("")}
  var refreshError by remember{mutableStateOf(false)}
+ var showingCached by remember(me.id){mutableStateOf(false)}
  var retry by remember{mutableIntStateOf(0)}
- LaunchedEffect(token,retry){
-  loading=true;loadError=false;refreshError=false;chats=emptyList()
+ LaunchedEffect(token,me.id,retry){
+  loading=true;loadError=false;refreshError=false
+  if(chats.isEmpty()){
+   val cached=runCatching{
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+     LumoOfflineStore.loadConversations(context,me.id)
+    }
+   }.getOrDefault(emptyList())
+   if(cached.isNotEmpty()){
+    chats=cached
+    showingCached=true
+    loading=false
+   }
+  }
   while(true){
-   val result=runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.conversations(token)}}
-   result.onSuccess{chats=it;loadError=false;refreshError=false}
-    .onFailure{loadErrorDetail=it.message?:"Ошибка соединения";if(chats.isEmpty())loadError=true else refreshError=true}
+   val result=runCatching{
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+     Api.conversations(token)
+    }
+   }
+   result.onSuccess{fresh->
+    chats=fresh
+    loadError=false
+    refreshError=false
+    showingCached=false
+    runCatching{
+     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+      LumoOfflineStore.saveConversations(context,me.id,fresh)
+     }
+    }
+   }.onFailure{
+    loadErrorDetail=it.message?:"Ошибка соединения"
+    if(chats.isEmpty())loadError=true
+    else {
+     refreshError=true
+     showingCached=true
+    }
+   }
    loading=false
    kotlinx.coroutines.delay(12_000)
   }
@@ -294,8 +328,8 @@ class MainActivity:ComponentActivity(){
    chatQuery,{chatQuery=it},"Поиск по чатам",
    modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp)
   )
-  if(refreshError)Text(
-   "Нет связи. Показываем последнюю загруженную историю.",
+  if(refreshError||showingCached)Text(
+   "Офлайн: показываем зашифрованную копию последних чатов с этого телефона.",
    color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(horizontal=18.dp,vertical=6.dp)
   )
   if(chats.isEmpty()){
@@ -513,6 +547,8 @@ class MainActivity:ComponentActivity(){
   Spacer(Modifier.height(16.dp))
   LumoPrivacyControls(privacy)
   Spacer(Modifier.height(16.dp))
+  LumoOfflineCacheControls(me.id)
+  Spacer(Modifier.height(16.dp))
   PushSettings(token,me)
   Spacer(Modifier.height(16.dp))
   Column(Modifier.fillMaxWidth().lumoGlass(25).padding(17.dp)){
@@ -653,6 +689,8 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  var reactionRefresh by remember{mutableIntStateOf(0)}
  var reactionBusy by remember{mutableStateOf(false)}
  var actionError by remember{mutableStateOf("")}
+ var showingCachedHistory by remember(me.id,peer.id){mutableStateOf(false)}
+ var networkHistoryLoaded by remember(me.id,peer.id){mutableStateOf(false)}
  LaunchedEffect(token,peer.id) {
   reactionsEnabled=runCatching {
    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){LumoReactionApi.enabled(token)}
@@ -669,10 +707,69 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
   }
  }
  val msgs=remember{mutableStateListOf<Msg>()};var input by remember{mutableStateOf("")};var ws by remember{mutableStateOf<WebSocket?>(null)};var socketGeneration by remember{mutableIntStateOf(0)};var connected by remember{mutableStateOf(false)};var socketError by remember{mutableStateOf("")};var historyError by remember{mutableStateOf(false)};val pending=remember{mutableStateListOf<PendingMessage>().apply{val a=runCatching{JSONArray(queuePrefs.getString(queueKey,"[]"))}.getOrNull();if(a!=null)for(i in 0 until a.length()){val o=a.optJSONObject(i);if(o!=null){val id=o.optString("clientMessageId");val text=o.optString("text");if(id.isNotBlank()&&text.isNotBlank())add(PendingMessage(id,text))}else{val text=a.optString(i);if(text.isNotBlank())add(PendingMessage(java.util.UUID.randomUUID().toString(),text))}}}}
- fun savePending(){val a=JSONArray();pending.forEach{a.put(JSONObject().put("clientMessageId",it.clientMessageId).put("text",it.text))};queuePrefs.edit().putString(queueKey,a.toString()).apply()}
+ fun savePending(){
+  val snapshot=pending.toList()
+  val encrypted=runCatching{
+   LumoOfflineStore.savePending(context,me.id,peer.id,snapshot)
+  }.isSuccess
+  if(encrypted){
+   queuePrefs.edit().remove(queueKey).apply()
+  }else{
+   // Reliability fallback for a rare Keystore/storage failure. Existing app
+   // versions already understand this local legacy queue and can retry it.
+   val a=JSONArray()
+   snapshot.forEach{
+    a.put(JSONObject()
+     .put("clientMessageId",it.clientMessageId)
+     .put("text",it.text))
+   }
+   queuePrefs.edit().putString(queueKey,a.toString()).apply()
+  }
+ }
+ LaunchedEffect(me.id,peer.id){
+  val encrypted=runCatching{
+   kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+    LumoOfflineStore.loadPending(context,me.id,peer.id)
+   }
+  }.getOrDefault(emptyList())
+  if(encrypted.isNotEmpty()){
+   pending.clear();pending.addAll(encrypted)
+   queuePrefs.edit().remove(queueKey).apply()
+  }else if(pending.isNotEmpty()){
+   val legacySnapshot=pending.toList()
+   val migrated=runCatching{
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+     LumoOfflineStore.savePending(context,me.id,peer.id,legacySnapshot)
+    }
+   }.isSuccess
+   if(migrated)queuePrefs.edit().remove(queueKey).apply()
+  }
+ }
+ fun persistHistory(){
+  val snapshot=msgs.toList()
+  scope.launch{
+   runCatching{
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+     LumoOfflineStore.saveHistory(context,me.id,peer.id,snapshot)
+    }
+   }
+  }
+ }
+ LaunchedEffect(me.id,peer.id){
+  val cached=runCatching{
+   kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+    LumoOfflineStore.loadHistory(context,me.id,peer.id)
+   }
+  }.getOrDefault(emptyList())
+  if(!networkHistoryLoaded&&cached.isNotEmpty()){
+   val merged=mergeChatMessages(msgs,cached)
+   msgs.clear();msgs.addAll(merged)
+   showingCachedHistory=true
+  }
+ }
  DisposableEffect(peer.id){
-  scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{historyError=false;val merged=mergeChatMessages(msgs,it);msgs.clear();msgs.addAll(merged);val unread=it.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true}}
-  fun syncHistory(){scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{fresh->historyError=false;val byId=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(byId);val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->scope.launch{if(m.from==peer.id||m.to==peer.id){if(m.from==me.id&&m.clientMessageId.isNotBlank()){pending.removeAll{it.clientMessageId==m.clientMessageId};savePending()};val existing=msgs.indexOfFirst{it.id==m.id};if(existing>=0){msgs[existing]=mergeChatMessages(listOf(msgs[existing]),listOf(m)).first()}else msgs.add(m);if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}}},{r->scope.launch{val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=old.deliveredAt.ifBlank{r.deliveredAt},readAt=old.readAt.ifBlank{r.readAt})}}},{e->scope.launch{socketError=when(e){"service_unavailable"->"Сервер временно недоступен. Переподключаемся…";"recipient_not_found"->"Получатель больше не найден.";"message_too_long"->"Сообщение слишком длинное.";"empty_message"->"Пустое сообщение не отправлено.";"client_message_id_conflict"->"Конфликт повторной отправки. Сообщение сохранено.";"invalid_client_message_id"->"Ошибка идентификатора сообщения.";"invalid_recipient_id"->"Некорректный получатель.";"invalid_server_message"->"Получен некорректный ответ сервера.";"cannot_message_self"->"Нельзя отправить сообщение самому себе." ;else->"Не удалось отправить сообщение"};if(e=="service_unavailable"){connected=false;ws?.close(1012,"retry")}}},{scope.launch{connected=true;socketError="";for(p in pending.toList()){val sent=ws?.send(JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId).toString())==true;if(!sent){connected=false;ws?.close(1012,"retry");break}};syncHistory()}},{scope.launch{if(generation==socketGeneration){connected=false;kotlinx.coroutines.delay(2000);if(generation==socketGeneration)connect()}}})};connect()
+  scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{fresh->historyError=false;networkHistoryLoaded=true;showingCachedHistory=false;val merged=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(merged);persistHistory();val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}}
+  fun syncHistory(){scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{fresh->historyError=false;networkHistoryLoaded=true;showingCachedHistory=false;val byId=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(byId);persistHistory();val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->scope.launch{if(m.from==peer.id||m.to==peer.id){if(m.from==me.id&&m.clientMessageId.isNotBlank()){pending.removeAll{it.clientMessageId==m.clientMessageId};savePending()};val existing=msgs.indexOfFirst{it.id==m.id};if(existing>=0){msgs[existing]=mergeChatMessages(listOf(msgs[existing]),listOf(m)).first()}else msgs.add(m);persistHistory();if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}}},{r->scope.launch{val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=old.deliveredAt.ifBlank{r.deliveredAt},readAt=old.readAt.ifBlank{r.readAt});persistHistory()}}},{e->scope.launch{socketError=when(e){"service_unavailable"->"Сервер временно недоступен. Переподключаемся…";"recipient_not_found"->"Получатель больше не найден.";"message_too_long"->"Сообщение слишком длинное.";"empty_message"->"Пустое сообщение не отправлено.";"client_message_id_conflict"->"Конфликт повторной отправки. Сообщение сохранено.";"invalid_client_message_id"->"Ошибка идентификатора сообщения.";"invalid_recipient_id"->"Некорректный получатель.";"invalid_server_message"->"Получен некорректный ответ сервера.";"cannot_message_self"->"Нельзя отправить сообщение самому себе." ;else->"Не удалось отправить сообщение"};if(e=="service_unavailable"){connected=false;ws?.close(1012,"retry")}}},{scope.launch{connected=true;socketError="";for(p in pending.toList()){val sent=ws?.send(JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId).toString())==true;if(!sent){connected=false;ws?.close(1012,"retry");break}};syncHistory()}},{scope.launch{if(generation==socketGeneration){connected=false;kotlinx.coroutines.delay(2000);if(generation==socketGeneration)connect()}}})};connect()
   onDispose{socketGeneration++;ws?.close(1000,"bye")}
  }
  // A message can be replied to or explicitly copied to another contact on
@@ -722,7 +819,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
     if(saved.isFailure)break
     val m=saved.getOrThrow()
     pending.removeAll{it.clientMessageId==p.clientMessageId};savePending()
-    val merged=mergeChatMessages(msgs,listOf(m));msgs.clear();msgs.addAll(merged)
+    val merged=mergeChatMessages(msgs,listOf(m));msgs.clear();msgs.addAll(merged);persistHistory()
    }
    val refreshed=runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
     val fresh=Api.history(token,peer.id)
@@ -732,10 +829,12 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    }}
    refreshed.onSuccess{fresh->
     historyError=false
+    networkHistoryLoaded=true
+    showingCachedHistory=false
     val acknowledged=fresh.filter{it.from==me.id&&it.clientMessageId.isNotBlank()}.map{it.clientMessageId}.toSet()
     if(pending.removeAll{it.clientMessageId in acknowledged})savePending()
-    val merged=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(merged)
-   }.onFailure{historyError=true}
+    val merged=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(merged);persistHistory()
+   }.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}
   }
  }
  LumoBackdrop(Modifier.fillMaxSize()){
@@ -771,9 +870,9 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
        color=MaterialTheme.colorScheme.onSurfaceVariant,style=MaterialTheme.typography.bodySmall)
      }
     }
-    if(historyError){
+    if(historyError||showingCachedHistory){
      Box(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(16).padding(10.dp)){
-      Text("История пока недоступна. Повторим загрузку после подключения.",
+      Text(if(showingCachedHistory)"Офлайн: показываем зашифрованную копию последних сообщений с этого телефона." else "История пока недоступна. Повторим загрузку после подключения.",
        color=Color(0xFFFFD5E4),style=MaterialTheme.typography.bodySmall)
      }
     }
@@ -869,7 +968,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
     }
     MediaComposer(token,me,peer,allowSend=true){attached->
      val merged=mergeChatMessages(msgs,listOf(attached))
-     msgs.clear();msgs.addAll(merged)
+     msgs.clear();msgs.addAll(merged);persistHistory()
     }
     replyTarget?.let { original ->
      Row(
