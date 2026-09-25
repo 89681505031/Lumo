@@ -759,7 +759,7 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
    }
   }
  }
-
+){pad->
   Column(Modifier.fillMaxSize().padding(pad)){
    if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error,
     modifier=Modifier.padding(10.dp))
