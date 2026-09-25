@@ -7,13 +7,16 @@ import { postgresStore } from "./postgres-store.js";
 import { groupStore } from "./group-store.js";
 import { hashPassword, verifyPassword, validPassword } from "./password.js";
 import { aiReady, completeLumoAi } from "./ai-provider.js";
-import { mediaReady, mediaStore, registerMediaCleanup } from "./media-store.js";
+import {
+  mediaReady, inlineMediaReady, mediaAvailable, inlineMediaMaxBytes,
+  mediaStore, registerMediaCleanup
+} from "./media-store.js";
 import { callRouter, callSignalingReady, turnReady } from "./call-signaling.js";
 import { registerCallCleanup } from "./call-cleanup.js";
 import { registerPushDispatch } from "./push-outbox.js";
 
 if (hasDatabase) { try { await initDatabase(); console.log("Lumo PostgreSQL schema ready"); } catch (error) { console.error("Lumo PostgreSQL initialization failed", error); } }
-const mediaEnabled=mediaReady && process.env.MEDIA_ENABLE_UPLOADS!=="false";
+const mediaEnabled=mediaAvailable && process.env.MEDIA_ENABLE_UPLOADS!=="false";
 
 const app = express();
 app.disable("x-powered-by");
@@ -203,6 +206,9 @@ app.get("/api/capabilities",(_req,res)=>res.json({
   backendRevision:(process.env.VERCEL_GIT_COMMIT_SHA || process.env.GITHUB_SHA || "local").slice(0,12),
   mediaReady:mediaEnabled,
   mediaStorageReady:mediaReady,
+  mediaInlineReady:inlineMediaReady,
+  mediaMode:mediaReady?"s3":inlineMediaReady?"inline":"disabled",
+  mediaInlineMaxBytes:inlineMediaReady?inlineMediaMaxBytes:null,
   mediaUploadsEnabled:mediaEnabled,
   documentsReady:mediaEnabled,
   groupsReady:hasDatabase,
@@ -600,7 +606,7 @@ app.delete("/api/groups/:id",auth,requireDatabase,rateLimit({windowMs:60_000,max
       return groupError(res,"group_not_found");
     const assetCount=await mediaStore.groupAssetCount(req.params.id);
     if(assetCount>0){
-      if(process.env.MEDIA_ENABLE_UPLOADS==="false" || !mediaReady)
+      if(!mediaEnabled)
         return res.status(503).json({error:"media_cleanup_unavailable"});
       const cleanup=await mediaStore.cleanupGroupAssets(req.params.id);
       if(cleanup.error)
@@ -849,11 +855,14 @@ function mediaError(res,error){
     media_not_found:404,
     upload_not_found:409,
     upload_mismatch:409,
+    upload_mode_mismatch:409,
     upload_incomplete:409,
     media_already_sent:409,
     client_message_id_conflict:409,
     upload_expired:410,
     media_quota_exceeded:429,
+    media_storage_quota_exceeded:429,
+    inline_media_too_large:413,
     media_unavailable:503
   }[error] || 503;
   return res.status(status).json({error});
@@ -875,6 +884,40 @@ app.post("/api/media/init",auth,requireDatabase,rateLimit({windowMs:60_000,max:2
     return upload.error ? mediaError(res,upload.error) : res.status(201).json(upload);
   }catch(error){
     console.error("Media init failed",error?.name||"unknown");
+    return mediaError(res,"media_unavailable");
+  }
+});
+
+async function readInlineMediaBody(req,maxBytes){
+  const chunks=[];
+  let total=0;
+  let tooLarge=false;
+  for await (const chunk of req){
+    const part=Buffer.isBuffer(chunk)?chunk:Buffer.from(chunk);
+    total+=part.length;
+    if(total>maxBytes){
+      tooLarge=true;
+      chunks.length=0;
+      continue;
+    }
+    if(!tooLarge)chunks.push(part);
+  }
+  return tooLarge?null:Buffer.concat(chunks,total);
+}
+
+app.put("/api/media/:id/content",auth,requireDatabase,rateLimit({windowMs:60_000,max:20}),async(req,res)=>{
+  if(!mediaEnabled)return mediaError(res,"media_unavailable");
+  if(!uuidPattern.test(req.params.id))
+    return res.status(400).json({error:"invalid_media_id"});
+  const mime=String(req.headers["content-type"]||"")
+    .split(";")[0].trim().toLowerCase();
+  try{
+    const body=await readInlineMediaBody(req,inlineMediaMaxBytes);
+    if(body===null)return mediaError(res,"inline_media_too_large");
+    const result=await mediaStore.storeInline(req.user.id,req.params.id,mime,body);
+    return result.error ? mediaError(res,result.error) : res.json(result.asset);
+  }catch(error){
+    console.error("Inline media upload failed",error?.name||"unknown");
     return mediaError(res,"media_unavailable");
   }
 });
@@ -958,6 +1001,52 @@ app.post("/api/media/:id/forward",auth,requireDatabase,rateLimit({windowMs:60_00
     return res.status(503).json({error:"service_unavailable"});
   }
 });
+
+async function serveInlineMediaToken(req,res){
+  if(!uuidPattern.test(req.params.token))
+    return res.status(404).json({error:"media_not_found"});
+  try{
+    const result=await mediaStore.inlineDownload(req.params.token);
+    if(result.error)return res.status(404).json({error:"media_not_found"});
+    const safeName=result.filename.replace(/["\\\r\n]/g,"_");
+    res.set({
+      "Content-Type":result.mime,
+      "Content-Disposition":`attachment; filename="${safeName}"`,
+      "Accept-Ranges":"bytes",
+      "Cache-Control":"private, no-store"
+    });
+    if(req.method==="HEAD"){
+      res.set("Content-Length",String(result.body.length));
+      return res.status(200).end();
+    }
+    const range=String(req.headers.range||"");
+    const match=/^bytes=(\d*)-(\d*)$/.exec(range);
+    if(match){
+      let start=match[1]?Number(match[1]):0;
+      let end=match[2]?Number(match[2]):result.body.length-1;
+      if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||
+         start<0||end<start||start>=result.body.length)
+        return res.status(416).set(
+          "Content-Range",`bytes */${result.body.length}`
+        ).end();
+      end=Math.min(end,result.body.length-1);
+      const body=result.body.subarray(start,end+1);
+      res.status(206);
+      res.set({
+        "Content-Range":`bytes ${start}-${end}/${result.body.length}`,
+        "Content-Length":String(body.length)
+      });
+      return res.end(body);
+    }
+    res.set("Content-Length",String(result.body.length));
+    return res.status(200).end(result.body);
+  }catch(error){
+    console.error("Inline media download failed",error?.name||"unknown");
+    return res.status(404).json({error:"media_not_found"});
+  }
+}
+app.get("/api/media/content/:token",serveInlineMediaToken);
+app.head("/api/media/content/:token",serveInlineMediaToken);
 
 app.get("/api/media/:id/download",auth,requireDatabase,rateLimit({windowMs:60_000,max:90}),async(req,res)=>{
   if(!uuidPattern.test(req.params.id))
