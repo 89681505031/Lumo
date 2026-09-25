@@ -50,6 +50,7 @@ data class Receipt(val messageId:String,val deliveredAt:String,val readAt:String
 data class PendingMessage(val clientMessageId:String,val text:String,val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="")
 private fun nullableJsonText(o:JSONObject,key:String):String=if(o.isNull(key))"" else o.optString(key)
 class SessionExpiredException:Exception("Сессия недействительна")
+class UserInteractionBlockedException:Exception("Общение с этим контактом недоступно.")
 
 class MainActivity:ComponentActivity(){
  override fun onCreate(b:Bundle?){super.onCreate(b);PushLifecycle.onAppStart(this);setContent{LumoTheme{App()}}}
@@ -955,6 +956,10 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  var directPaginationEnabled by remember(token,peer.id){mutableStateOf(false)}
  var olderHistoryBusy by remember(peer.id){mutableStateOf(false)}
  var olderHistoryDone by remember(peer.id){mutableStateOf(false)}
+ var blockSupported by remember(token,peer.id){mutableStateOf(false)}
+ var blockedByMe by remember(token,peer.id){mutableStateOf(false)}
+ var blockBusy by remember(peer.id){mutableStateOf(false)}
+ var blockDialog by remember(peer.id){mutableStateOf(false)}
  LaunchedEffect(token,peer.id) {
   reactionsEnabled=runCatching {
    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){LumoReactionApi.enabled(token)}
@@ -978,6 +983,16 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
     Api.directPaginationSupported(token)
    }
   }.getOrDefault(false)
+  runCatching {
+   kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+    Api.blockStatus(token,peer.id)
+   }
+  }.onSuccess{
+   blockSupported=true
+   blockedByMe=it
+  }.onFailure{
+   blockSupported=false
+  }
  }
  LaunchedEffect(token,peer.id,reactionsEnabled,reactionRefresh) {
   if(reactionsEnabled) while(true) {
@@ -1031,6 +1046,14 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    if(migrated)queuePrefs.edit().remove(queueKey).apply()
   }
  }
+ LaunchedEffect(blockedByMe){
+  if(blockedByMe){
+   pending.clear()
+   savePending()
+   input=""
+   replyTarget=null
+  }
+ }
  fun persistHistory(){
   val snapshot=msgs.toList()
   scope.launch{
@@ -1055,7 +1078,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  }
  DisposableEffect(peer.id){
   scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.directHistoryWindow(token,peer.id,100).messages}}.onSuccess{fresh->historyError=false;networkHistoryLoaded=true;showingCachedHistory=false;val merged=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(merged);persistHistory();val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}}
-  fun syncHistory(){scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.directHistoryWindow(token,peer.id,100).messages}}.onSuccess{fresh->historyError=false;networkHistoryLoaded=true;showingCachedHistory=false;val byId=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(byId);persistHistory();val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->scope.launch{if(m.from==peer.id||m.to==peer.id){if(m.from==me.id&&m.clientMessageId.isNotBlank()){pending.removeAll{it.clientMessageId==m.clientMessageId};savePending()};val existing=msgs.indexOfFirst{it.id==m.id};if(existing>=0){msgs[existing]=mergeChatMessages(listOf(msgs[existing]),listOf(m)).first()}else msgs.add(m);persistHistory();if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}}},{r->scope.launch{val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=old.deliveredAt.ifBlank{r.deliveredAt},readAt=old.readAt.ifBlank{r.readAt});persistHistory()}}},{e->scope.launch{socketError=when(e){"service_unavailable"->"Сервер временно недоступен. Переподключаемся…";"recipient_not_found"->"Получатель больше не найден.";"message_too_long"->"Сообщение слишком длинное.";"empty_message"->"Пустое сообщение не отправлено.";"client_message_id_conflict"->"Конфликт повторной отправки. Сообщение сохранено.";"invalid_client_message_id"->"Ошибка идентификатора сообщения.";"invalid_recipient_id"->"Некорректный получатель.";"invalid_reply_message_id"->"Некорректный ответ на сообщение.";"reply_message_not_found"->"Исходное сообщение для ответа больше недоступно.";"invalid_server_message"->"Получен некорректный ответ сервера.";"cannot_message_self"->"Нельзя отправить сообщение самому себе." ;else->"Не удалось отправить сообщение"};if(e=="service_unavailable"){connected=false;ws?.close(1012,"retry")}}},{scope.launch{connected=true;socketError="";for(p in pending.toList()){val payload=JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId);if(p.replyToMessageId.isNotBlank())payload.put("replyToMessageId",p.replyToMessageId);val sent=ws?.send(payload.toString())==true;if(!sent){connected=false;ws?.close(1012,"retry");break}};syncHistory()}},{scope.launch{if(generation==socketGeneration){connected=false;kotlinx.coroutines.delay(2000);if(generation==socketGeneration)connect()}}})};connect()
+  fun syncHistory(){scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.directHistoryWindow(token,peer.id,100).messages}}.onSuccess{fresh->historyError=false;networkHistoryLoaded=true;showingCachedHistory=false;val byId=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(byId);persistHistory();val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->scope.launch{if(m.from==peer.id||m.to==peer.id){if(m.from==me.id&&m.clientMessageId.isNotBlank()){pending.removeAll{it.clientMessageId==m.clientMessageId};savePending()};val existing=msgs.indexOfFirst{it.id==m.id};if(existing>=0){msgs[existing]=mergeChatMessages(listOf(msgs[existing]),listOf(m)).first()}else msgs.add(m);persistHistory();if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}}},{r->scope.launch{val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=old.deliveredAt.ifBlank{r.deliveredAt},readAt=old.readAt.ifBlank{r.readAt});persistHistory()}}},{e->scope.launch{socketError=when(e){"service_unavailable"->"Сервер временно недоступен. Переподключаемся…";"recipient_not_found"->"Получатель больше не найден.";"message_too_long"->"Сообщение слишком длинное.";"empty_message"->"Пустое сообщение не отправлено.";"client_message_id_conflict"->"Конфликт повторной отправки. Сообщение сохранено.";"invalid_client_message_id"->"Ошибка идентификатора сообщения.";"invalid_recipient_id"->"Некорректный получатель.";"invalid_reply_message_id"->"Некорректный ответ на сообщение.";"reply_message_not_found"->"Исходное сообщение для ответа больше недоступно.";"invalid_server_message"->"Получен некорректный ответ сервера.";"cannot_message_self"->"Нельзя отправить сообщение самому себе.";"user_blocked"->"Общение с этим контактом недоступно.";else->"Не удалось отправить сообщение"};if(e=="user_blocked"){pending.clear();savePending();actionError="Сообщение не отправлено: общение с этим контактом недоступно."};if(e=="service_unavailable"){connected=false;ws?.close(1012,"retry")}}},{scope.launch{connected=true;socketError="";for(p in pending.toList()){val payload=JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId);if(p.replyToMessageId.isNotBlank())payload.put("replyToMessageId",p.replyToMessageId);val sent=ws?.send(payload.toString())==true;if(!sent){connected=false;ws?.close(1012,"retry");break}};syncHistory()}},{scope.launch{if(generation==socketGeneration){connected=false;kotlinx.coroutines.delay(2000);if(generation==socketGeneration)connect()}}})};connect()
   onDispose{socketGeneration++;ws?.close(1000,"bye")}
  }
  // A message can be replied to or explicitly copied to another contact on
@@ -1193,16 +1216,67 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    onDismiss={forwardingMessage=null}
   )
  }
+ if(blockDialog){
+  val nextBlocked=!blockedByMe
+  AlertDialog(
+   onDismissRequest={if(!blockBusy)blockDialog=false},
+   title={Text(if(nextBlocked)"Заблокировать контакт?" else "Разблокировать контакт?")},
+   text={Text(
+    if(nextBlocked)
+     "После блокировки личные сообщения, файлы, реакции и звонки между вами будут недоступны. История переписки останется."
+    else "После разблокировки вы снова сможете обмениваться сообщениями и звонками."
+   )},
+   confirmButton={
+    TextButton(
+     enabled=!blockBusy,
+     onClick={
+      blockBusy=true
+      scope.launch{
+       runCatching{
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+         Api.setBlocked(token,peer.id,nextBlocked)
+        }
+       }.onSuccess{
+        blockedByMe=nextBlocked
+        if(nextBlocked){
+         pending.clear();savePending()
+         input="";replyTarget=null
+        }
+        blockDialog=false
+        actionError=if(nextBlocked)"Контакт заблокирован." else "Контакт разблокирован."
+       }.onFailure{error->
+        if(error is SessionExpiredException)back()
+        else actionError="Не удалось изменить блокировку. Проверь соединение."
+       }
+       blockBusy=false
+      }
+     }
+    ){Text(if(blockBusy)"Сохраняем…" else if(nextBlocked)"Заблокировать" else "Разблокировать")}
+   },
+   dismissButton={
+    TextButton(onClick={blockDialog=false},enabled=!blockBusy){Text("Отмена")}
+   }
+  )
+ }
  // Reconcile through PostgreSQL-backed HTTP because Vercel peers may use different function instances.
  LaunchedEffect(token,peer.id){
   while(true){
    kotlinx.coroutines.delay(5000)
+   if(blockedByMe)continue
    // Retry unacknowledged messages even if the socket looks connected:
    // HTTP and WebSocket share the same PostgreSQL idempotency key.
    for(p in pending.toList()){
     if(pending.none{it.clientMessageId==p.clientMessageId})continue
     val saved=runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.sendMessage(token,peer.id,p)}}
-    if(saved.isFailure)break
+    if(saved.isFailure){
+     if(saved.exceptionOrNull() is UserInteractionBlockedException){
+      pending.removeAll{it.clientMessageId==p.clientMessageId}
+      savePending()
+      actionError="Сообщение не отправлено: общение с этим контактом недоступно."
+      continue
+     }
+     break
+    }
     val m=saved.getOrThrow()
     pending.removeAll{it.clientMessageId==p.clientMessageId};savePending()
     val merged=mergeChatMessages(msgs,listOf(m));msgs.clear();msgs.addAll(merged);persistHistory()
@@ -1243,12 +1317,14 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
      }
      TextButton(
       onClick=openAudioCall,
+      enabled=!blockedByMe&&!blockBusy,
       contentPadding=PaddingValues(horizontal=7.dp)
      ){
       Text("📞",color=LumoCyan,style=MaterialTheme.typography.titleLarge)
      }
      TextButton(
       onClick=openVideoCall,
+      enabled=!blockedByMe&&!blockBusy,
       contentPadding=PaddingValues(horizontal=7.dp)
      ){
       Text("🎥",color=LumoPink,style=MaterialTheme.typography.titleLarge)
@@ -1262,6 +1338,17 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
        if(!showSearch)searchText=""
       }){
        Text(if(showSearch)"×" else "⌕",color=LumoCyan,
+        style=MaterialTheme.typography.titleLarge)
+      }
+     }
+     if(blockSupported){
+      TextButton(
+       onClick={blockDialog=true},
+       enabled=!blockBusy,
+       contentPadding=PaddingValues(horizontal=7.dp)
+      ){
+       Text(if(blockedByMe)"🔓" else "⛔",
+        color=if(blockedByMe)LumoCyan else LumoPink,
         style=MaterialTheme.typography.titleLarge)
       }
      }
@@ -1291,6 +1378,12 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       Text(actionError,color=Color(0xFFFFDBE8),
        style=MaterialTheme.typography.bodySmall,modifier=Modifier.weight(1f))
       TextButton(onClick={actionError=""}){Text("×",color=Color.White)}
+     }
+    }
+    if(blockedByMe){
+     Box(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(16).padding(10.dp)){
+      Text("Контакт заблокирован. Сообщения, медиа и звонки отключены.",
+       color=Color(0xFFFFD5E4),style=MaterialTheme.typography.bodySmall)
      }
     }
     if(showSearch){
@@ -1524,7 +1617,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       }
      }
     }
-    MediaComposer(token,me,peer,allowSend=true){attached->
+    MediaComposer(token,me,peer,allowSend=!blockedByMe){attached->
      val merged=mergeChatMessages(msgs,listOf(attached))
      msgs.clear();msgs.addAll(merged);persistHistory()
     }
@@ -1552,14 +1645,16 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
      verticalAlignment=Alignment.Bottom
     ){
      OutlinedTextField(
-      value=input,onValueChange={input=it},placeholder={Text("Сообщение")},
+      value=input,onValueChange={input=it},
+      placeholder={Text(if(blockedByMe)"Контакт заблокирован" else "Сообщение")},
+      enabled=!blockedByMe,
       modifier=Modifier.weight(1f),maxLines=4,
       shape=RoundedCornerShape(22.dp)
      )
      Spacer(Modifier.width(7.dp))
      LumoNeonButton(
       text="➤",
-      enabled=input.isNotBlank() && input.trim().length<=4000,
+      enabled=!blockedByMe && input.isNotBlank() && input.trim().length<=4000,
       modifier=Modifier.width(56.dp),
       onClick={
        val original=replyTarget
@@ -1662,6 +1757,27 @@ object Api{
  fun updateMe(t:String,name:String,bio:String):Pair<User,Boolean>{val j=JSONObject().put("displayName",name).put("bio",bio);val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).patch(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful)error("Профиль: "+x.code);val o=JSONObject(x.body!!.string());return user(o) to o.has("bio")}}
  fun me(t:String):User{val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful)error("Сессия: "+x.code);return user(JSONObject(x.body!!.string()))}}
  fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
+ fun blockStatus(t:String,peerId:String):Boolean{
+  val request=Request.Builder().url(HTTP+"/api/blocks/"+peerId)
+   .header("Authorization","Bearer "+t).get().build()
+  c.newCall(request).execute().use{response->
+   val raw=response.body?.string().orEmpty()
+   if(response.code==401)throw SessionExpiredException()
+   if(!response.isSuccessful)error("Блокировка: "+response.code)
+   return runCatching{JSONObject(raw).optBoolean("blocked",false)}.getOrDefault(false)
+  }
+ }
+ fun setBlocked(t:String,peerId:String,blocked:Boolean):Boolean{
+  val builder=Request.Builder().url(HTTP+"/api/blocks/"+peerId)
+   .header("Authorization","Bearer "+t)
+  val request=if(blocked)builder.put("".toRequestBody(null)).build()
+   else builder.delete().build()
+  c.newCall(request).execute().use{response->
+   if(response.code==401)throw SessionExpiredException()
+   if(!response.isSuccessful)error("Блокировка: "+response.code)
+   return blocked
+  }
+ }
  fun conversations(t:String):List<Conversation>{
   val now=android.os.SystemClock.elapsedRealtime()
   if(now<conversationsFallbackUntilMs)return conversationsCompatibilityFallback(t)
@@ -1783,7 +1899,12 @@ object Api{
     )
    }
   }
-  if(result.first !in 200..299)error("Отправка: "+result.first)
+  if(result.first !in 200..299){
+   val code=runCatching{JSONObject(result.second).optString("error")}.getOrDefault("")
+   if(result.first==403 && code=="user_blocked")
+    throw UserInteractionBlockedException()
+   error("Отправка: "+result.first)
+  }
   return msg(JSONObject(result.second))
  }
  fun readMessages(t:String,ids:List<String>){
