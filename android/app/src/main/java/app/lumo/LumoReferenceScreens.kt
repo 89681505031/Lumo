@@ -26,14 +26,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val ReferenceBg = Color(0xFF050914)
-private val ReferencePanel = Color(0xFF0A1222)
-private val ReferencePanel2 = Color(0xFF101A31)
-private val ReferencePurple = Color(0xFF7C4DFF)
-private val ReferenceBlue = Color(0xFF21C8FF)
-private val ReferenceGreen = Color(0xFF20D47A)
-private val ReferenceMuted = Color(0xFF8D98AA)
-private val ReferenceLine = Color(0xFF1B2941)
+private val ReferenceBg = Color(0xFF0B141A)
+private val ReferencePanel = Color(0xFF111B21)
+private val ReferencePanel2 = Color(0xFF202C33)
+private val ReferencePurple = Color(0xFF25D366)
+private val ReferenceBlue = Color(0xFF25D366)
+private val ReferenceGreen = Color(0xFF25D366)
+private val ReferenceMuted = Color(0xFF8696A0)
+private val ReferenceLine = Color(0xFF202C33)
 
 @Composable
 fun LumoReferenceHome(
@@ -136,9 +136,9 @@ private fun LumoReferenceBottomBar(
         Triple("⠿","Ещё",4)
     )
     Surface(
-        color=Color(0xEE07101D),
+        color=Color(0xFF111B21),
         tonalElevation=0.dp,
-        shadowElevation=14.dp,
+        shadowElevation=0.dp,
         modifier=Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
@@ -157,16 +157,9 @@ private fun LumoReferenceBottomBar(
                     Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .clip(RoundedCornerShape(20.dp))
+                        .clip(RoundedCornerShape(18.dp))
                         .background(
-                            if(active)
-                                Brush.verticalGradient(
-                                    listOf(
-                                        ReferencePurple.copy(alpha=.45f),
-                                        ReferencePurple.copy(alpha=.10f)
-                                    )
-                                )
-                            else Brush.verticalGradient(listOf(Color.Transparent,Color.Transparent))
+                            if(active) Color(0xFF103B34) else Color.Transparent
                         )
                         .clickable{onSelect(index)}
                         .padding(vertical=5.dp),
@@ -858,14 +851,7 @@ private fun LumoReferenceCommunities(
                         Modifier
                             .size(72.dp)
                             .clip(RoundedCornerShape(18.dp))
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(
-                                        ReferenceBlue.copy(alpha=.42f),
-                                        ReferencePurple.copy(alpha=.55f)
-                                    )
-                                )
-                            ),
+                            .background(ReferencePanel2),
                         contentAlignment=Alignment.Center
                     ){
                         Text(item.third,style=MaterialTheme.typography.headlineMedium,color=Color.White)
@@ -971,14 +957,7 @@ private fun LumoReferenceSettingsRoot(
         Column(
             Modifier
                 .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            Color(0xFF091223),
-                            Color(0xFF050914)
-                        )
-                    )
-                )
+                .background(ReferenceBg)
                 .padding(horizontal=18.dp,vertical=16.dp),
             horizontalAlignment=Alignment.CenterHorizontally
         ){
@@ -1685,14 +1664,7 @@ private fun ReferenceActionCard(
         modifier
             .height(120.dp)
             .clip(RoundedCornerShape(22.dp))
-            .background(
-                Brush.linearGradient(
-                    listOf(
-                        ReferencePurple.copy(alpha=.72f),
-                        Color(0xFF102A65)
-                    )
-                )
-            )
+            .background(ReferencePanel2)
             .clickable(onClick=onClick)
             .padding(16.dp),
         verticalArrangement=Arrangement.Center,
