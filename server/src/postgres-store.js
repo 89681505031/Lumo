@@ -419,9 +419,19 @@ export const postgresStore = {
        returning message_id`,
       [messageId,userId,emoji]
     );
-    // Existing reaction is also a successful, idempotent PUT, but a
-    // nonexistent/unrelated message must not be treated as successful.
-    return result.rowCount>0 || await this.messageAccessible(messageId,userId);
+    if(result.rowCount>0)return true;
+    // Existing reaction is still an idempotent success, but blocked users may
+    // not create or re-affirm interaction on an old direct-message thread.
+    const peer=await dbQuery(
+      `select case when sender_id=$2 then recipient_id else sender_id end as peer_id
+       from messages
+       where id=$1 and deleted_at is null
+         and (sender_id=$2 or recipient_id=$2)`,
+      [messageId,userId]
+    );
+    const peerId=peer.rows[0]?.peer_id;
+    if(!peerId || await this.blockedBetween(userId,peerId))return false;
+    return true;
   },
   async removeReaction(messageId,userId,emoji) {
     if(!await this.messageAccessible(messageId,userId))return false;
