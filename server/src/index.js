@@ -229,7 +229,8 @@ app.get("/api/capabilities",(_req,res)=>res.json({
   callsReady:callSignalingReady(),
   turnReady:turnReady(),
   turnProvider:turnProvider(),
-  pushRegistration:hasDatabase
+  pushRegistration:hasDatabase,
+  sessionRevokeOthers:hasDatabase
 }));
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase,ok:false}; if(hasDatabase){try{database=await dbHealth()}catch(error){console.error("Database health check failed",error);database={configured:true,ok:false}}} const ok=database.configured===true&&database.ok===true; res.status(ok?200:503).json({ ok, service:"lumo-server", database }); });
@@ -292,6 +293,28 @@ app.post("/api/logout", auth, async (req, res) => {
     res.status(503).json({ error: "service_unavailable" });
   }
 });
+
+app.post(
+  "/api/sessions/revoke-others",
+  auth,
+  requireDatabase,
+  rateLimit({windowMs:60_000,max:10}),
+  async(req,res)=>{
+    try{
+      const revoked=await postgresStore.revokeOtherSessions(
+        req.user.id,
+        req.sessionToken
+      );
+      const active=sockets.get(req.user.id);
+      if(active?.sessionToken && active.sessionToken!==req.sessionToken)
+        active.close(1008,"Session revoked");
+      return res.json({revoked:revoked.length});
+    }catch(error){
+      console.error("Other session revocation failed",error);
+      return res.status(503).json({error:"service_unavailable"});
+    }
+  }
+);
 
 // Push registration is session-scoped and optional. Registration alone never
 // causes provider delivery; the cron worker is separately feature-gated.
