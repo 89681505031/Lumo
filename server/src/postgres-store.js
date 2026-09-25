@@ -141,6 +141,54 @@ export const postgresStore = {
     );
     return r.rows.map(mapMessage);
   },
+  async messagesPage(me,peer,{beforeId=null,limit=50}={}) {
+    if(beforeId){
+      const visibleCursor=await dbQuery(
+        `select 1 from messages
+         where id=$3 and (
+           (sender_id=$1 and recipient_id=$2)
+           or (sender_id=$2 and recipient_id=$1)
+         )`,
+        [me,peer,beforeId]
+      );
+      if(!visibleCursor.rowCount)return {error:"history_cursor_not_found"};
+    }
+    const take=Math.max(1,Math.min(100,Number(limit)||50));
+    // Only the UUID crosses the API boundary. PostgreSQL resolves the exact
+    // timestamp itself, preserving microseconds and using UUID as a stable
+    // equal-time tie breaker.
+    const r=await dbQuery(
+      `select m.*,left(reply.text,240) as reply_preview_text,
+              reply.sender_id as reply_preview_from
+       from messages m
+       left join messages reply on reply.id=m.reply_to_message_id
+       where (
+         (m.sender_id=$1 and m.recipient_id=$2)
+         or (m.sender_id=$2 and m.recipient_id=$1)
+       )
+       and (
+         $3::uuid is null
+         or (m.created_at,m.id) < (
+           select cursor.created_at,cursor.id
+           from messages cursor
+           where cursor.id=$3 and (
+             (cursor.sender_id=$1 and cursor.recipient_id=$2)
+             or (cursor.sender_id=$2 and cursor.recipient_id=$1)
+           )
+         )
+       )
+       order by m.created_at desc,m.id desc
+       limit $4`,
+      [me,peer,beforeId,take+1]
+    );
+    const hasMore=r.rows.length>take;
+    const selected=r.rows.slice(0,take);
+    const oldest=selected[selected.length-1]||null;
+    return {
+      messages:selected.slice().reverse().map(mapMessage),
+      next:hasMore&&oldest ? {id:oldest.id} : null
+    };
+  },
   async replyTarget(userId,peerId,messageId) {
     const r=await dbQuery(
       `select id,left(text,240) as text,sender_id from messages

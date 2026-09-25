@@ -52,6 +52,10 @@ export async function initDatabase() {
   await client.query(`create unique index if not exists messages_sender_client_id_uidx on messages(sender_id, client_message_id) where client_message_id is not null`);
   await client.query(`create index if not exists messages_sender_idx on messages(sender_id, created_at desc)`);
   await client.query(`create index if not exists messages_recipient_idx on messages(recipient_id, created_at desc)`);
+  await client.query(`create index if not exists messages_sender_recipient_history_idx
+    on messages(sender_id,recipient_id,created_at desc,id desc)`);
+  await client.query(`create index if not exists messages_recipient_sender_history_idx
+    on messages(recipient_id,sender_id,created_at desc,id desc)`);
   await client.query(`create table if not exists media_assets (
     id uuid primary key,
     owner_id uuid not null references users(id) on delete cascade,
