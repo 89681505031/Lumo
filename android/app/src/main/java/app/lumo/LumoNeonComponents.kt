@@ -128,10 +128,9 @@ fun LumoBottomNavigation(selected: Int, onSelect: (Int) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .background(Color(0xFF111B21))
-            .border(width = 1.dp, color = Color(0xFF202C33))
+            .background(Color(0xFF0B141A))
             .navigationBarsPadding()
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(horizontal = 14.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         names.forEachIndexed { index, label ->
@@ -139,27 +138,30 @@ fun LumoBottomNavigation(selected: Int, onSelect: (Int) -> Unit) {
             Column(
                 Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(14.dp))
+                    .clip(RoundedCornerShape(12.dp))
                     .clickable { onSelect(index) }
-                    .padding(vertical = 7.dp),
+                    .padding(vertical = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    if (active) {
-                        Box(
-                            Modifier
-                                .size(width = 48.dp, height = 30.dp)
-                                .background(Color(0xFF005C4B), RoundedCornerShape(15.dp))
-                        )
-                    }
+                Box(
+                    Modifier
+                        .height(26.dp)
+                        .width(44.dp)
+                        .then(
+                            if (active) Modifier.background(
+                                Color(0xFF005C4B),
+                                RoundedCornerShape(13.dp)
+                            ) else Modifier
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
                     LumoTabSymbol(index)
                 }
-                Spacer(Modifier.height(2.dp))
                 Text(
                     text = label,
                     color = if (active) Color.White else LumoInactive,
                     fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                    style = MaterialTheme.typography.labelMedium
+                    style = MaterialTheme.typography.labelSmall
                 )
             }
         }
@@ -185,12 +187,12 @@ fun LumoSearchField(
         leadingIcon = {
             Text(
                 "⌕",
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.titleLarge,
                 color = Color(0xFF8696A0)
             )
         },
         singleLine = true,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = OutlinedTextFieldDefaults.colors(
             focusedTextColor = Color.White,
             unfocusedTextColor = Color.White,
