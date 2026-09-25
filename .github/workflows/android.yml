@@ -57,7 +57,7 @@ jobs:
             echo "LUMO_SIGNED_RELEASE=true" >> "$GITHUB_ENV"
           else
             echo "LUMO_SIGNED_RELEASE=false" >> "$GITHUB_ENV"
-            echo "::notice::Persistent release-signing secrets are not configured; CI will use the verified deterministic Lumo 1.0.9 reconstruction path after building the unsigned APK."
+            echo "::notice::Persistent release-signing secrets are not configured; pull requests will validate an unsigned Lumo 1.0.10 APK, while production publication remains blocked."
           fi
 
       - name: Build Lumo 1.0.10 release APK
@@ -143,8 +143,8 @@ jobs:
             gh release create lumo-latest "$PUBLISH_APK" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "Lumo 1.0.9" \
-              --notes "versionCode=1009" \
+              --title "Lumo 1.0.10" \
+              --notes "versionCode=1010" \
               --latest
             exit 0
           fi
