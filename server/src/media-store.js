@@ -63,10 +63,15 @@ const storageEndpoint=(
 export const mediaReady=Boolean(
   storageBucket && storageRegion && storageAccessKeyId && storageSecretAccessKey
 );
+export const inlineMediaMaxBytes=4*1024*1024;
+export const inlineMediaReady=Boolean(pool) &&
+  process.env.MEDIA_INLINE_FALLBACK!=="false";
+export const mediaAvailable=mediaReady || inlineMediaReady;
 let client=null;
 const bucket=mediaReady?storageBucket:null;
 const MAX_UNCLAIMED_RESERVATIONS=8;
 const MAX_UNCLAIMED_RESERVED_BYTES=75*1024*1024;
+const MAX_INLINE_ACCOUNT_BYTES=75*1024*1024;
 function unreferencedRetentionDays(){
   const raw=String(process.env.MEDIA_UNREFERENCED_RETENTION_DAYS||"").trim();
   if(!raw)return null; // Explicit opt-in: never delete claimed media by default.
@@ -156,14 +161,14 @@ export function validateMedia({mime,bytes,filename}){
 }
 
 async function reserveAsset({
-  id,ownerId,recipientId=null,groupId=null,key,mime,filename,bytes
+  id,ownerId,recipientId=null,groupId=null,key,mime,filename,bytes,
+  storageMode="s3"
 }) {
   const conn=await pool.connect();
   let committed=false;
   try{
     await conn.query("begin");
-    // Serialize only this owner's outstanding reservations so concurrent
-    // initiation requests cannot race past quota checks.
+    // Serialize only this owner's reservations and inline quota accounting.
     await conn.query("select pg_advisory_xact_lock(hashtext($1))",[ownerId]);
     const usage=await conn.query(`
       select count(*)::integer as count,
@@ -178,11 +183,20 @@ async function reserveAsset({
     if(count>=MAX_UNCLAIMED_RESERVATIONS ||
        reserved+bytes>MAX_UNCLAIMED_RESERVED_BYTES)
       return {error:"media_quota_exceeded"};
+    if(storageMode==="inline"){
+      const total=await conn.query(`
+        select coalesce(sum(byte_length),0)::bigint as bytes
+        from media_assets
+        where owner_id=$1 and storage_mode='inline'`,[ownerId]);
+      if(Number(total.rows[0]?.bytes||0)+bytes>MAX_INLINE_ACCOUNT_BYTES)
+        return {error:"media_storage_quota_exceeded"};
+    }
     await conn.query(`
       insert into media_assets(
-        id,owner_id,recipient_id,group_id,object_key,mime,file_name,byte_length
-      ) values($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [id,ownerId,recipientId,groupId,key,mime,filename,bytes]);
+        id,owner_id,recipient_id,group_id,object_key,mime,file_name,byte_length,
+        storage_mode
+      ) values($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [id,ownerId,recipientId,groupId,key,mime,filename,bytes,storageMode]);
     await conn.query("commit");
     committed=true;
     return {ok:true};
@@ -190,6 +204,18 @@ async function reserveAsset({
     if(!committed)await conn.query("rollback").catch(()=>{});
     conn.release();
   }
+}
+
+async function deleteBackingObject(item){
+  if(item.storage_mode==="inline")return;
+  if(!mediaReady){
+    const error=new Error("S3 media storage unavailable");
+    error.code="media_unavailable";
+    throw error;
+  }
+  await client.send(new DeleteObjectCommand({
+    Bucket:bucket,Key:item.object_key
+  }));
 }
 
 function placeholder(mime,filename) {
@@ -203,30 +229,40 @@ export const mediaStore={
   async initiate(ownerId,recipientId,input){
     const checked=validateMedia(input);
     if(checked.error)return checked;
-    if(!mediaReady)return {error:"media_unavailable"};
+    if(!mediaAvailable)return {error:"media_unavailable"};
+    const storageMode=mediaReady?"s3":"inline";
+    if(storageMode==="inline" && checked.bytes>inlineMediaMaxBytes)
+      return {error:"inline_media_too_large"};
     const id=randomUUID();
-    const key=`private/${ownerId}/${id}`;
-    const upload=await createPresignedPost(client,{
-      Bucket:bucket,
-      Key:key,
-      Expires:300,
-      Fields:{"Content-Type":checked.mime},
-      Conditions:[
-        {"Content-Type":checked.mime},
-        ["content-length-range",1,allowedMimeSizes[checked.mime]]
-      ]
-    });
+    const key=storageMode==="s3"
+      ?`private/${ownerId}/${id}`
+      :`inline/${ownerId}/${id}`;
+    const upload=storageMode==="s3"
+      ?await createPresignedPost(client,{
+        Bucket:bucket,
+        Key:key,
+        Expires:300,
+        Fields:{"Content-Type":checked.mime},
+        Conditions:[
+          {"Content-Type":checked.mime},
+          ["content-length-range",1,allowedMimeSizes[checked.mime]]
+        ]
+      })
+      :null;
     const reserved=await reserveAsset({
       id,ownerId,recipientId,key,mime:checked.mime,
-      filename:checked.filename,bytes:checked.bytes
+      filename:checked.filename,bytes:checked.bytes,storageMode
     });
     if(reserved.error)return reserved;
     return {
       assetId:id,
-      uploadUrl:upload.url,
-      fields:upload.fields,
+      uploadMode:storageMode,
+      uploadUrl:upload?.url||null,
+      fields:upload?.fields||{},
       expiresIn:300,
-      maxBytes:allowedMimeSizes[checked.mime],
+      maxBytes:storageMode==="inline"
+        ?Math.min(allowedMimeSizes[checked.mime],inlineMediaMaxBytes)
+        :allowedMimeSizes[checked.mime],
       filename:checked.filename,
       mime:checked.mime
     };
@@ -235,30 +271,40 @@ export const mediaStore={
   async initiateGroup(ownerId,groupId,input){
     const checked=validateMedia(input);
     if(checked.error)return checked;
-    if(!mediaReady)return {error:"media_unavailable"};
+    if(!mediaAvailable)return {error:"media_unavailable"};
+    const storageMode=mediaReady?"s3":"inline";
+    if(storageMode==="inline" && checked.bytes>inlineMediaMaxBytes)
+      return {error:"inline_media_too_large"};
     const id=randomUUID();
-    const key=`private/${ownerId}/groups/${groupId}/${id}`;
-    const upload=await createPresignedPost(client,{
-      Bucket:bucket,
-      Key:key,
-      Expires:300,
-      Fields:{"Content-Type":checked.mime},
-      Conditions:[
-        {"Content-Type":checked.mime},
-        ["content-length-range",1,allowedMimeSizes[checked.mime]]
-      ]
-    });
+    const key=storageMode==="s3"
+      ?`private/${ownerId}/groups/${groupId}/${id}`
+      :`inline/${ownerId}/groups/${groupId}/${id}`;
+    const upload=storageMode==="s3"
+      ?await createPresignedPost(client,{
+        Bucket:bucket,
+        Key:key,
+        Expires:300,
+        Fields:{"Content-Type":checked.mime},
+        Conditions:[
+          {"Content-Type":checked.mime},
+          ["content-length-range",1,allowedMimeSizes[checked.mime]]
+        ]
+      })
+      :null;
     const reserved=await reserveAsset({
       id,ownerId,groupId,key,mime:checked.mime,
-      filename:checked.filename,bytes:checked.bytes
+      filename:checked.filename,bytes:checked.bytes,storageMode
     });
     if(reserved.error)return reserved;
     return {
       assetId:id,
-      uploadUrl:upload.url,
-      fields:upload.fields,
+      uploadMode:storageMode,
+      uploadUrl:upload?.url||null,
+      fields:upload?.fields||{},
       expiresIn:300,
-      maxBytes:allowedMimeSizes[checked.mime],
+      maxBytes:storageMode==="inline"
+        ?Math.min(allowedMimeSizes[checked.mime],inlineMediaMaxBytes)
+        :allowedMimeSizes[checked.mime],
       filename:checked.filename,
       mime:checked.mime
     };
@@ -272,10 +318,62 @@ export const mediaStore={
     return r.rows[0]||null;
   },
 
+  async storeInline(ownerId,id,mime,body){
+    if(!inlineMediaReady)return {error:"media_unavailable"};
+    if(!Buffer.isBuffer(body) || body.length<1)
+      return {error:"upload_mismatch"};
+    if(body.length>inlineMediaMaxBytes)
+      return {error:"inline_media_too_large"};
+    const conn=await pool.connect();
+    let committed=false;
+    try{
+      await conn.query("begin");
+      const selected=await conn.query(
+        "select * from media_assets where id=$1 and owner_id=$2 for update",
+        [id,ownerId]
+      );
+      const item=selected.rows[0];
+      if(!item)return {error:"media_not_found"};
+      if(item.storage_mode!=="inline")return {error:"upload_mode_mismatch"};
+      if(item.uploaded_at){
+        await conn.query("commit");
+        committed=true;
+        return {asset:assetPublic(item)};
+      }
+      if(new Date(item.expires_at).getTime()<=Date.now())
+        return {error:"upload_expired"};
+      if(String(mime||"").toLowerCase()!==item.mime ||
+         body.length!==Number(item.byte_length))
+        return {error:"upload_mismatch"};
+      const updated=await conn.query(`
+        update media_assets
+        set inline_bytes=$3, uploaded_at=now()
+        where id=$1 and owner_id=$2 and uploaded_at is null
+          and storage_mode='inline' and expires_at>now()
+        returning *`,[id,ownerId,body]);
+      if(!updated.rows[0])return {error:"upload_expired"};
+      await conn.query("commit");
+      committed=true;
+      return {asset:assetPublic(updated.rows[0])};
+    }finally{
+      if(!committed)await conn.query("rollback").catch(()=>{});
+      conn.release();
+    }
+  },
+
   async confirm(ownerId,id){
-    if(!mediaReady)return {error:"media_unavailable"};
+    if(!mediaAvailable)return {error:"media_unavailable"};
     const item=await this.owned(ownerId,id);
     if(!item)return {error:"media_not_found"};
+    if(item.storage_mode==="inline"){
+      if(item.uploaded_at && Buffer.isBuffer(item.inline_bytes) &&
+         item.inline_bytes.length===Number(item.byte_length))
+        return {asset:assetPublic(item)};
+      if(new Date(item.expires_at).getTime()<=Date.now())
+        return {error:"upload_expired"};
+      return {error:"upload_incomplete"};
+    }
+    if(!mediaReady)return {error:"media_unavailable"};
     if(item.uploaded_at)return {asset:assetPublic(item)};
     if(new Date(item.expires_at).getTime()<=Date.now())return {error:"upload_expired"};
     let object;
@@ -473,10 +571,10 @@ export const mediaStore={
   },
 
   async cleanupAbandoned(limit=100){
-    if(!mediaReady)return {error:"media_unavailable"};
+    if(!mediaAvailable)return {error:"media_unavailable"};
     const bounded=Math.max(1,Math.min(250,Math.floor(limit)));
     const candidates=await dbQuery(`
-      select id,object_key
+      select id,object_key,storage_mode
       from media_assets
       where expires_at<=now()
         and claimed_message_id is null
@@ -486,9 +584,7 @@ export const mediaStore={
     let deleted=0,failed=0;
     for(const item of candidates.rows){
       try{
-        await client.send(new DeleteObjectCommand({
-          Bucket:bucket,Key:item.object_key
-        }));
+        await deleteBackingObject(item);
         const removed=await dbQuery(`
           delete from media_assets
           where id=$1 and expires_at<=now()
@@ -504,12 +600,12 @@ export const mediaStore={
   },
 
   async cleanupUnreferenced(limit=100){
-    if(!mediaReady)return {error:"media_unavailable"};
+    if(!mediaAvailable)return {error:"media_unavailable"};
     const days=unreferencedRetentionDays();
     if(days===null)return {enabled:false,scanned:0,deleted:0,failed:0};
     const bounded=Math.max(1,Math.min(250,Math.floor(limit)));
     const candidates=await dbQuery(`
-      select a.id,a.object_key
+      select a.id,a.object_key,a.storage_mode
       from media_assets a
       where a.uploaded_at is not null
         and a.uploaded_at<=now()-make_interval(days=>$1)
@@ -526,15 +622,11 @@ export const mediaStore={
     let deleted=0,failed=0;
     for(const item of candidates.rows){
       try{
-        await client.send(new DeleteObjectCommand({
-          Bucket:bucket,Key:item.object_key
-        }));
+        await deleteBackingObject(item);
         const conn=await pool.connect();
         let committed=false;
         try{
           await conn.query("begin");
-          // Re-check eligibility under row lock. Deleted message tombstones keep
-          // their text/status, but no longer retain a dead attachment UUID.
           const locked=await conn.query(`
             select a.id from media_assets a
             where a.id=$1
@@ -588,28 +680,25 @@ export const mediaStore={
   },
 
   async cleanupGroupAssets(groupId){
-    if(!mediaReady)return {error:"media_unavailable"};
+    if(!mediaAvailable)return {error:"media_unavailable"};
     const items=await dbQuery(
-      "select id,object_key from media_assets where group_id=$1 order by id",
+      "select id,object_key,storage_mode from media_assets where group_id=$1 order by id",
       [groupId]
     );
     let deletedObjects=0;
     for(const item of items.rows){
       try{
-        await client.send(new DeleteObjectCommand({
-          Bucket:bucket,Key:item.object_key
-        }));
+        await deleteBackingObject(item);
         deletedObjects++;
       }catch(error){
         return {
-          error:"media_cleanup_failed",
+          error:error?.code==="media_unavailable"
+            ?"media_cleanup_unavailable":"media_cleanup_failed",
           deletedObjects,
           remaining:items.rowCount-deletedObjects
         };
       }
     }
-    // Group message media_id uses ON DELETE SET NULL; deleting these rows
-    // before deleting the group prevents the DB cascade from orphaning S3 data.
     const removed=await dbQuery(
       "delete from media_assets where group_id=$1 returning id",
       [groupId]
@@ -618,7 +707,7 @@ export const mediaStore={
   },
 
   async signedDownload(userId,id){
-    if(!mediaReady)return {error:"media_unavailable"};
+    if(!mediaAvailable)return {error:"media_unavailable"};
     const r=await dbQuery(`
       select distinct a.* from media_assets a
       left join messages m
@@ -638,6 +727,24 @@ export const mediaStore={
     );
     const item=r.rows[0];
     if(!item)return {error:"media_not_found"};
+    if(item.storage_mode==="inline"){
+      if(!Buffer.isBuffer(item.inline_bytes))
+        return {error:"media_not_found"};
+      await dbQuery("delete from media_download_tokens where expires_at<=now()");
+      const token=randomUUID();
+      await dbQuery(
+        "insert into media_download_tokens(token,asset_id) values($1,$2)",
+        [token,id]
+      );
+      return {
+        url:`/api/media/content/${token}`,
+        filename:item.file_name,
+        mime:item.mime,
+        bytes:Number(item.byte_length),
+        expiresIn:90
+      };
+    }
+    if(!mediaReady)return {error:"media_unavailable"};
     const url=await getSignedUrl(client,new GetObjectCommand({
       Bucket:bucket,
       Key:item.object_key,
@@ -651,14 +758,37 @@ export const mediaStore={
       bytes:Number(item.byte_length),
       expiresIn:90
     };
+  },
+
+  async inlineDownload(token){
+    if(!inlineMediaReady)return {error:"media_unavailable"};
+    const r=await dbQuery(`
+      select a.mime,a.file_name,a.byte_length,a.inline_bytes
+      from media_download_tokens t
+      join media_assets a on a.id=t.asset_id
+      where t.token=$1 and t.expires_at>now()
+        and a.storage_mode='inline'
+        and a.uploaded_at is not null
+      limit 1`,[token]);
+    const item=r.rows[0];
+    if(!item || !Buffer.isBuffer(item.inline_bytes))
+      return {error:"media_not_found"};
+    return {
+      body:item.inline_bytes,
+      filename:item.file_name,
+      mime:item.mime,
+      bytes:Number(item.byte_length)
+    };
   }
 };
+
+export function registerMediaCleanup(app){};
 
 export function registerMediaCleanup(app){
   app.get("/internal/media-cleanup",async(req,res)=>{
     res.set("Cache-Control","private, no-store");
     const secret=process.env.CRON_SECRET || "";
-    if(process.env.MEDIA_ENABLE_UPLOADS==="false" || !mediaReady ||
+    if(process.env.MEDIA_ENABLE_UPLOADS==="false" || !mediaAvailable ||
        Buffer.byteLength(secret)<32)
       return res.status(404).json({error:"feature_unavailable"});
     const provided=typeof req.headers.authorization==="string" &&
