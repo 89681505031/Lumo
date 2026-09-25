@@ -155,7 +155,10 @@ test("Postgres inline media fallback works without S3 and remains participant-on
 
     const publicGet=await fetch(base+link.json.url);
     assert.equal(publicGet.status,200);
-    assert.equal(publicGet.headers.get("content-type"),"text/plain");
+    assert.match(
+      publicGet.headers.get("content-type")||"",
+      /^text\/plain(?:;|$)/
+    );
     assert.deepEqual(Buffer.from(await publicGet.arrayBuffer()),bytes);
 
     const ranged=await fetch(base+link.json.url,{headers:{Range:"bytes=0-4"}});
