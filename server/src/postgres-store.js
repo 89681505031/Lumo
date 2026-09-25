@@ -77,6 +77,13 @@ export const postgresStore = {
   async revokeSession(userId,token) {
     await dbQuery("delete from sessions where user_id=$1 and token=$2",[userId,token]);
   },
+  async revokeOtherSessions(userId,currentToken) {
+    const r=await dbQuery(
+      "delete from sessions where user_id=$1 and token<>$2 returning token",
+      [userId,currentToken]
+    );
+    return r.rows.map(row=>row.token);
+  },
   async createUser({id,username,displayName,passwordHash,token}) {
     try {
       const r=await dbQuery(`with created as (
