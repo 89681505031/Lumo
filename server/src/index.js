@@ -9,6 +9,7 @@ import { hashPassword, verifyPassword, validPassword } from "./password.js";
 import { aiReady, completeLumoAi } from "./ai-provider.js";
 import {
   mediaReady, inlineMediaReady, mediaAvailable, inlineMediaMaxBytes,
+  inlineMediaChunkBytes, inlineMediaMaxAssetBytes,
   mediaStore, registerMediaCleanup
 } from "./media-store.js";
 import {
@@ -211,6 +212,9 @@ app.get("/api/capabilities",(_req,res)=>res.json({
   mediaInlineReady:inlineMediaReady,
   mediaMode:mediaReady?"s3":inlineMediaReady?"inline":"disabled",
   mediaInlineMaxBytes:inlineMediaReady?inlineMediaMaxBytes:null,
+  mediaInlineChunkBytes:inlineMediaReady?inlineMediaChunkBytes:null,
+  mediaInlineMaxAssetBytes:inlineMediaReady?inlineMediaMaxAssetBytes:null,
+  mediaInlineChunkedReady:inlineMediaReady,
   mediaUploadsEnabled:mediaEnabled,
   documentsReady:mediaEnabled,
   groupsReady:hasDatabase,
@@ -766,7 +770,8 @@ app.post("/api/groups/:id/media/init",auth,requireDatabase,rateLimit({windowMs:6
     const upload=await mediaStore.initiateGroup(req.user.id,req.params.id,{
       mime:req.body?.mime,
       bytes:req.body?.bytes,
-      filename:req.body?.filename
+      filename:req.body?.filename,
+      chunkedInline:req.body?.chunkedInline===true
     });
     return upload.error ? mediaError(res,upload.error) : res.status(201).json(upload);
   }catch(error){
@@ -843,9 +848,9 @@ app.post("/api/groups/:id/messages",auth,requireDatabase,rateLimit({windowMs:60_
   }
 });
 
-// Private attachments use a private S3-compatible bucket. Clients receive
-// short-lived signed upload/download requests only; storage credentials never
-// leave the server.
+// Private attachments prefer a private S3-compatible bucket. When it is absent,
+// bounded Postgres fallback uploads are available. Large fallback files use
+// authenticated fixed-size chunks and short-lived participant-only download tokens.
 function mediaError(res,error){
   const status={
     invalid_recipient_id:400,
@@ -860,6 +865,8 @@ function mediaError(res,error){
     upload_mismatch:409,
     upload_mode_mismatch:409,
     upload_incomplete:409,
+    invalid_media_chunk:400,
+    media_chunk_conflict:409,
     media_already_sent:409,
     client_message_id_conflict:409,
     upload_expired:410,
@@ -882,7 +889,8 @@ app.post("/api/media/init",auth,requireDatabase,rateLimit({windowMs:60_000,max:2
     const upload=await mediaStore.initiate(req.user.id,to,{
       mime:req.body?.mime,
       bytes:req.body?.bytes,
-      filename:req.body?.filename
+      filename:req.body?.filename,
+      chunkedInline:req.body?.chunkedInline===true
     });
     return upload.error ? mediaError(res,upload.error) : res.status(201).json(upload);
   }catch(error){
@@ -921,6 +929,27 @@ app.put("/api/media/:id/content",auth,requireDatabase,rateLimit({windowMs:60_000
     return result.error ? mediaError(res,result.error) : res.json(result.asset);
   }catch(error){
     console.error("Inline media upload failed",error?.name||"unknown");
+    return mediaError(res,"media_unavailable");
+  }
+});
+
+app.put("/api/media/:id/chunks/:index",auth,requireDatabase,rateLimit({windowMs:60_000,max:60}),async(req,res)=>{
+  if(!mediaEnabled)return mediaError(res,"media_unavailable");
+  if(!uuidPattern.test(req.params.id) ||
+     !/^(0|[1-9][0-9]?)$/.test(String(req.params.index)))
+    return mediaError(res,"invalid_media_chunk");
+  const index=Number(req.params.index);
+  const mime=String(req.headers["content-type"]||"")
+    .split(";")[0].trim().toLowerCase();
+  try{
+    const body=await readInlineMediaBody(req,inlineMediaChunkBytes);
+    if(body===null)return mediaError(res,"invalid_media_chunk");
+    const result=await mediaStore.storeInlineChunk(
+      req.user.id,req.params.id,index,mime,body
+    );
+    return result.error ? mediaError(res,result.error) : res.json(result);
+  }catch(error){
+    console.error("Chunked inline media upload failed",error?.name||"unknown");
     return mediaError(res,"media_unavailable");
   }
 });
@@ -1009,8 +1038,32 @@ async function serveInlineMediaToken(req,res){
   if(!uuidPattern.test(req.params.token))
     return res.status(404).json({error:"media_not_found"});
   try{
-    const result=await mediaStore.inlineDownload(req.params.token);
-    if(result.error)return res.status(404).json({error:"media_not_found"});
+    const rawRange=String(req.headers.range||"");
+    let start=null;
+    let end=null;
+    if(rawRange){
+      const match=/^bytes=(\d+)-(\d*)$/.exec(rawRange);
+      if(!match)
+        return res.status(416).set("Accept-Ranges","bytes").end();
+      start=Number(match[1]);
+      end=match[2]
+        ?Number(match[2])
+        :start+inlineMediaMaxBytes-1;
+      if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end))
+        return res.status(416).set("Accept-Ranges","bytes").end();
+    }
+    const result=await mediaStore.inlineDownload(req.params.token,{
+      start,end,head:req.method==="HEAD"
+    });
+    if(result.error){
+      if(["range_required","range_too_large","invalid_range"].includes(result.error)){
+        res.set("Accept-Ranges","bytes");
+        if(Number.isSafeInteger(result.bytes))
+          res.set("Content-Range",`bytes */${result.bytes}`);
+        return res.status(416).end();
+      }
+      return res.status(404).json({error:"media_not_found"});
+    }
     const safeName=result.filename.replace(/["\\\r\n]/g,"_");
     res.set({
       "Content-Type":result.mime,
@@ -1019,27 +1072,16 @@ async function serveInlineMediaToken(req,res){
       "Cache-Control":"private, no-store"
     });
     if(req.method==="HEAD"){
-      res.set("Content-Length",String(result.body.length));
+      res.set("Content-Length",String(result.bytes));
       return res.status(200).end();
     }
-    const range=String(req.headers.range||"");
-    const match=/^bytes=(\d*)-(\d*)$/.exec(range);
-    if(match){
-      let start=match[1]?Number(match[1]):0;
-      let end=match[2]?Number(match[2]):result.body.length-1;
-      if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||
-         start<0||end<start||start>=result.body.length)
-        return res.status(416).set(
-          "Content-Range",`bytes */${result.body.length}`
-        ).end();
-      end=Math.min(end,result.body.length-1);
-      const body=result.body.subarray(start,end+1);
+    if(result.partial){
       res.status(206);
       res.set({
-        "Content-Range":`bytes ${start}-${end}/${result.body.length}`,
-        "Content-Length":String(body.length)
+        "Content-Range":`bytes ${result.start}-${result.end}/${result.bytes}`,
+        "Content-Length":String(result.body.length)
       });
-      return res.end(body);
+      return res.end(result.body);
     }
     res.set("Content-Length",String(result.body.length));
     return res.status(200).end(result.body);
