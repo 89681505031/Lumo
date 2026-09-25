@@ -521,6 +521,14 @@ export const mediaStore={
       );
       const a=selected.rows[0];
       if(!a)return {error:"media_not_found"};
+      const blocked=await conn.query(
+        `select 1 from user_blocks
+         where (blocker_id=$1 and blocked_id=$2)
+            or (blocker_id=$2 and blocked_id=$1)
+         limit 1`,
+        [ownerId,a.recipient_id]
+      );
+      if(blocked.rowCount)return {error:"user_blocked"};
       if(!a.uploaded_at)return {error:"upload_incomplete"};
       if(new Date(a.expires_at).getTime()<=Date.now() && !a.claimed_message_id)
         return {error:"upload_expired"};
@@ -653,6 +661,14 @@ export const mediaStore={
       );
       const a=source.rows[0];
       if(!a)return {error:"media_not_found"};
+      const blocked=await conn.query(
+        `select 1 from user_blocks
+         where (blocker_id=$1 and blocked_id=$2)
+            or (blocker_id=$2 and blocked_id=$1)
+         limit 1`,
+        [userId,to]
+      );
+      if(blocked.rowCount)return {error:"user_blocked"};
       const text=(caption||("↪ "+placeholder(a.mime,a.file_name))).trim();
       const messageId=randomUUID();
       const inserted=await conn.query(
