@@ -220,6 +220,7 @@ app.get("/api/capabilities",(_req,res)=>res.json({
   groupsReady:hasDatabase,
   groupLinkedReplies:hasDatabase,
   groupSearch:hasDatabase,
+  directPagination:hasDatabase,
   groupPagination:hasDatabase,
   groupMessageEdit:hasDatabase,
   groupMessageDelete:hasDatabase,
@@ -1107,6 +1108,29 @@ app.get("/api/media/:id/download",auth,requireDatabase,rateLimit({windowMs:60_00
 
 app.get("/api/messages/capabilities",auth,(_req,res)=>{
   res.json({linkedReplies:true,messageEdit:true,messageDelete:true,messageSearch:true});
+});
+
+app.get("/api/messages/:peerId/page",auth,requireDatabase,rateLimit({windowMs:60_000,max:120}),async(req,res)=>{
+  const peerId=req.params.peerId;
+  if(!uuidPattern.test(peerId))
+    return res.status(400).json({error:"invalid_peer_id"});
+  const rawId=req.query.beforeId,rawLimit=req.query.limit;
+  const beforeId=rawId===undefined?null:rawId;
+  if(beforeId!==null &&
+     (typeof beforeId!=="string" || !uuidPattern.test(beforeId)))
+    return res.status(400).json({error:"invalid_history_cursor"});
+  const limit=rawLimit===undefined?50:Number(rawLimit);
+  if(!Number.isInteger(limit)||limit<1||limit>100)
+    return res.status(400).json({error:"invalid_history_limit"});
+  try{
+    const page=await postgresStore.messagesPage(req.user.id,peerId,{beforeId,limit});
+    if(page.error==="history_cursor_not_found")
+      return res.status(400).json({error:page.error});
+    return res.json(page);
+  }catch(error){
+    console.error("Direct history page failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
 });
 
 app.get("/api/messages/:peerId", auth, async (req, res) => {
