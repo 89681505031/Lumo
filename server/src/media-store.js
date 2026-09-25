@@ -64,6 +64,8 @@ export const mediaReady=Boolean(
   storageBucket && storageRegion && storageAccessKeyId && storageSecretAccessKey
 );
 export const inlineMediaMaxBytes=4*1024*1024;
+export const inlineMediaChunkBytes=3*1024*1024;
+export const inlineMediaMaxAssetBytes=Math.max(...Object.values(allowedMimeSizes));
 export const inlineMediaReady=Boolean(pool) &&
   process.env.MEDIA_INLINE_FALLBACK!=="false";
 export const mediaAvailable=mediaReady || inlineMediaReady;
@@ -175,7 +177,7 @@ async function reserveAsset({
     await conn.query(`
       delete from media_assets
       where owner_id=$1
-        and storage_mode='inline'
+        and storage_mode in ('inline','chunks')
         and expires_at<=now()
         and claimed_message_id is null
         and claimed_group_message_id is null`,[ownerId]);
@@ -196,7 +198,7 @@ async function reserveAsset({
       const total=await conn.query(`
         select coalesce(sum(byte_length),0)::bigint as bytes
         from media_assets
-        where owner_id=$1 and storage_mode='inline'`,[ownerId]);
+        where owner_id=$1 and storage_mode in ('inline','chunks')`,[ownerId]);
       if(Number(total.rows[0]?.bytes||0)+bytes>MAX_INLINE_ACCOUNT_BYTES)
         return {error:"media_storage_quota_exceeded"};
     }
@@ -216,7 +218,7 @@ async function reserveAsset({
 }
 
 async function deleteBackingObject(item){
-  if(item.storage_mode==="inline")return;
+  if(["inline","chunks"].includes(item.storage_mode))return;
   if(!mediaReady){
     const error=new Error("S3 media storage unavailable");
     error.code="media_unavailable";
@@ -239,13 +241,17 @@ export const mediaStore={
     const checked=validateMedia(input);
     if(checked.error)return checked;
     if(!mediaAvailable)return {error:"media_unavailable"};
-    const storageMode=mediaReady?"s3":"inline";
-    if(storageMode==="inline" && checked.bytes>inlineMediaMaxBytes)
+    const chunkedInline=input?.chunkedInline===true;
+    if(!mediaReady && checked.bytes>inlineMediaMaxBytes && !chunkedInline)
       return {error:"inline_media_too_large"};
+    const storageMode=mediaReady?"s3":
+      checked.bytes>inlineMediaMaxBytes?"chunks":"inline";
     const id=randomUUID();
     const key=storageMode==="s3"
       ?`private/${ownerId}/${id}`
-      :`inline/${ownerId}/${id}`;
+      :storageMode==="chunks"
+        ?`chunks/${ownerId}/${id}`
+        :`inline/${ownerId}/${id}`;
     const upload=storageMode==="s3"
       ?await createPresignedPost(client,{
         Bucket:bucket,
@@ -265,13 +271,14 @@ export const mediaStore={
     if(reserved.error)return reserved;
     return {
       assetId:id,
-      uploadMode:storageMode,
+      uploadMode:storageMode==="chunks"?"inline-chunks":storageMode,
       uploadUrl:upload?.url||null,
       fields:upload?.fields||{},
       expiresIn:300,
       maxBytes:storageMode==="inline"
         ?Math.min(allowedMimeSizes[checked.mime],inlineMediaMaxBytes)
         :allowedMimeSizes[checked.mime],
+      chunkBytes:storageMode==="chunks"?inlineMediaChunkBytes:null,
       filename:checked.filename,
       mime:checked.mime
     };
@@ -281,13 +288,17 @@ export const mediaStore={
     const checked=validateMedia(input);
     if(checked.error)return checked;
     if(!mediaAvailable)return {error:"media_unavailable"};
-    const storageMode=mediaReady?"s3":"inline";
-    if(storageMode==="inline" && checked.bytes>inlineMediaMaxBytes)
+    const chunkedInline=input?.chunkedInline===true;
+    if(!mediaReady && checked.bytes>inlineMediaMaxBytes && !chunkedInline)
       return {error:"inline_media_too_large"};
+    const storageMode=mediaReady?"s3":
+      checked.bytes>inlineMediaMaxBytes?"chunks":"inline";
     const id=randomUUID();
     const key=storageMode==="s3"
       ?`private/${ownerId}/groups/${groupId}/${id}`
-      :`inline/${ownerId}/groups/${groupId}/${id}`;
+      :storageMode==="chunks"
+        ?`chunks/${ownerId}/groups/${groupId}/${id}`
+        :`inline/${ownerId}/groups/${groupId}/${id}`;
     const upload=storageMode==="s3"
       ?await createPresignedPost(client,{
         Bucket:bucket,
@@ -307,13 +318,14 @@ export const mediaStore={
     if(reserved.error)return reserved;
     return {
       assetId:id,
-      uploadMode:storageMode,
+      uploadMode:storageMode==="chunks"?"inline-chunks":storageMode,
       uploadUrl:upload?.url||null,
       fields:upload?.fields||{},
       expiresIn:300,
       maxBytes:storageMode==="inline"
         ?Math.min(allowedMimeSizes[checked.mime],inlineMediaMaxBytes)
         :allowedMimeSizes[checked.mime],
+      chunkBytes:storageMode==="chunks"?inlineMediaChunkBytes:null,
       filename:checked.filename,
       mime:checked.mime
     };
@@ -358,12 +370,73 @@ export const mediaStore={
         update media_assets
         set inline_bytes=$3, uploaded_at=now()
         where id=$1 and owner_id=$2 and uploaded_at is null
-          and storage_mode='inline' and expires_at>now()
+          and storage_mode in ('inline','chunks') and expires_at>now()
         returning *`,[id,ownerId,body]);
       if(!updated.rows[0])return {error:"upload_expired"};
       await conn.query("commit");
       committed=true;
       return {asset:assetPublic(updated.rows[0])};
+    }finally{
+      if(!committed)await conn.query("rollback").catch(()=>{});
+      conn.release();
+    }
+  },
+
+  async storeInlineChunk(ownerId,id,index,mime,body){
+    if(!inlineMediaReady)return {error:"media_unavailable"};
+    if(!Number.isInteger(index) || index<0 || index>=16)
+      return {error:"invalid_media_chunk"};
+    if(!Buffer.isBuffer(body) || body.length<1 || body.length>inlineMediaChunkBytes)
+      return {error:"invalid_media_chunk"};
+    const conn=await pool.connect();
+    let committed=false;
+    try{
+      await conn.query("begin");
+      const selected=await conn.query(
+        "select * from media_assets where id=$1 and owner_id=$2 for update",
+        [id,ownerId]
+      );
+      const item=selected.rows[0];
+      if(!item)return {error:"media_not_found"};
+      if(item.storage_mode!=="chunks")return {error:"upload_mode_mismatch"};
+      if(item.uploaded_at){
+        await conn.query("commit");
+        committed=true;
+        return {asset:assetPublic(item)};
+      }
+      if(new Date(item.expires_at).getTime()<=Date.now())
+        return {error:"upload_expired"};
+      if(String(mime||"").toLowerCase()!==item.mime)
+        return {error:"upload_mismatch"};
+      const total=Number(item.byte_length);
+      const expectedChunks=Math.ceil(total/inlineMediaChunkBytes);
+      if(index>=expectedChunks)return {error:"invalid_media_chunk"};
+      const expectedLength=index===expectedChunks-1
+        ?total-inlineMediaChunkBytes*(expectedChunks-1)
+        :inlineMediaChunkBytes;
+      if(body.length!==expectedLength)return {error:"upload_mismatch"};
+
+      const inserted=await conn.query(
+        `insert into media_inline_chunks(asset_id,chunk_index,byte_length,body)
+         values($1,$2,$3,$4)
+         on conflict(asset_id,chunk_index) do nothing
+         returning chunk_index`,
+        [id,index,body.length,body]
+      );
+      if(!inserted.rowCount){
+        const existing=await conn.query(
+          "select byte_length,body from media_inline_chunks where asset_id=$1 and chunk_index=$2",
+          [id,index]
+        );
+        const row=existing.rows[0];
+        if(!row || Number(row.byte_length)!==body.length ||
+           !Buffer.isBuffer(row.body) || row.body.length!==body.length ||
+           !timingSafeEqual(row.body,body))
+          return {error:"media_chunk_conflict"};
+      }
+      await conn.query("commit");
+      committed=true;
+      return {index,bytes:body.length,expectedChunks};
     }finally{
       if(!committed)await conn.query("rollback").catch(()=>{});
       conn.release();
@@ -381,6 +454,37 @@ export const mediaStore={
       if(new Date(item.expires_at).getTime()<=Date.now())
         return {error:"upload_expired"};
       return {error:"upload_incomplete"};
+    }
+    if(item.storage_mode==="chunks"){
+      if(item.uploaded_at)return {asset:assetPublic(item)};
+      if(new Date(item.expires_at).getTime()<=Date.now())
+        return {error:"upload_expired"};
+      const expectedChunks=Math.ceil(
+        Number(item.byte_length)/inlineMediaChunkBytes
+      );
+      const chunks=await dbQuery(`
+        select count(*)::integer as count,
+               coalesce(sum(byte_length),0)::bigint as bytes,
+               coalesce(min(chunk_index),-1)::integer as min_index,
+               coalesce(max(chunk_index),-1)::integer as max_index
+        from media_inline_chunks where asset_id=$1`,[id]);
+      const summary=chunks.rows[0];
+      if(Number(summary?.count||0)!==expectedChunks ||
+         Number(summary?.bytes||0)!==Number(item.byte_length) ||
+         Number(summary?.min_index)!==0 ||
+         Number(summary?.max_index)!==expectedChunks-1)
+        return {error:"upload_incomplete"};
+      const updated=await dbQuery(
+        `update media_assets set uploaded_at=now()
+         where id=$1 and owner_id=$2 and uploaded_at is null
+           and storage_mode='chunks' and expires_at>now()
+         returning *`,
+        [id,ownerId]
+      );
+      const row=updated.rows[0]||(await this.owned(ownerId,id));
+      return row?.uploaded_at
+        ?{asset:assetPublic(row)}
+        :{error:"upload_expired"};
     }
     if(!mediaReady)return {error:"media_unavailable"};
     if(item.uploaded_at)return {asset:assetPublic(item)};
@@ -736,8 +840,8 @@ export const mediaStore={
     );
     const item=r.rows[0];
     if(!item)return {error:"media_not_found"};
-    if(item.storage_mode==="inline"){
-      if(!Buffer.isBuffer(item.inline_bytes))
+    if(["inline","chunks"].includes(item.storage_mode)){
+      if(item.storage_mode==="inline" && !Buffer.isBuffer(item.inline_bytes))
         return {error:"media_not_found"};
       await dbQuery("delete from media_download_tokens where expires_at<=now()");
       const token=randomUUID();
@@ -750,6 +854,9 @@ export const mediaStore={
         filename:item.file_name,
         mime:item.mime,
         bytes:Number(item.byte_length),
+        rangeRequired:item.storage_mode==="chunks" &&
+          Number(item.byte_length)>inlineMediaMaxBytes,
+        chunkBytes:item.storage_mode==="chunks"?inlineMediaChunkBytes:null,
         expiresIn:90
       };
     }
@@ -769,27 +876,65 @@ export const mediaStore={
     };
   },
 
-  async inlineDownload(token){
+  async inlineDownload(token,{start=null,end=null,head=false}={}){
     if(!inlineMediaReady)return {error:"media_unavailable"};
     const r=await dbQuery(`
-      select a.mime,a.file_name,a.byte_length,a.inline_bytes
+      select a.id,a.mime,a.file_name,a.byte_length,a.inline_bytes,a.storage_mode
       from media_download_tokens t
       join media_assets a on a.id=t.asset_id
       where t.token=$1 and t.expires_at>now()
-        and a.storage_mode='inline'
+        and a.storage_mode in ('inline','chunks')
         and a.uploaded_at is not null
       limit 1`,[token]);
     const item=r.rows[0];
-    if(!item || !Buffer.isBuffer(item.inline_bytes))
-      return {error:"media_not_found"};
-    return {
-      body:item.inline_bytes,
-      filename:item.file_name,
-      mime:item.mime,
-      bytes:Number(item.byte_length)
+    if(!item)return {error:"media_not_found"};
+    const total=Number(item.byte_length);
+    if(head)return {
+      body:null,filename:item.file_name,mime:item.mime,bytes:total,
+      storageMode:item.storage_mode
     };
-  }
-};
+    if(item.storage_mode==="inline"){
+      if(!Buffer.isBuffer(item.inline_bytes))
+        return {error:"media_not_found"};
+      const from=start==null?0:start;
+      const to=end==null?total-1:end;
+      if(from<0 || to<from || from>=total)
+        return {error:"invalid_range",bytes:total};
+      const boundedEnd=Math.min(to,total-1);
+      return {
+        body:item.inline_bytes.subarray(from,boundedEnd+1),
+        filename:item.file_name,mime:item.mime,bytes:total,
+        start:from,end:boundedEnd,partial:start!=null||end!=null
+      };
+    }
+
+    if(start==null || end==null)
+      return {error:"range_required",bytes:total};
+    if(start<0 || end<start || start>=total)
+      return {error:"invalid_range",bytes:total};
+    const boundedEnd=Math.min(end,total-1);
+    if(boundedEnd-start+1>inlineMediaMaxBytes)
+      return {error:"range_too_large",bytes:total};
+    const first=Math.floor(start/inlineMediaChunkBytes);
+    const last=Math.floor(boundedEnd/inlineMediaChunkBytes);
+    const chunks=await dbQuery(`
+      select chunk_index,body
+      from media_inline_chunks
+      where asset_id=$1 and chunk_index between $2 and $3
+      order by chunk_index asc`,[item.id,first,last]);
+    if(chunks.rowCount!==last-first+1 ||
+       chunks.rows.some((row,i)=>Number(row.chunk_index)!==first+i ||
+         !Buffer.isBuffer(row.body)))
+      return {error:"media_not_found"};
+    const combined=Buffer.concat(chunks.rows.map(row=>row.body));
+    const offset=start-first*inlineMediaChunkBytes;
+    const length=boundedEnd-start+1;
+    return {
+      body:combined.subarray(offset,offset+length),
+      filename:item.file_name,mime:item.mime,bytes:total,
+      start,end:boundedEnd,partial:true
+    };
+  }};
 
 export function registerMediaCleanup(app){
   app.get("/internal/media-cleanup",async(req,res)=>{
