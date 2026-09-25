@@ -700,27 +700,66 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
    dismissButton={TextButton(onClick={deleteTarget=null},enabled=!actionBusy){Text("Отмена")}}
   )
  }
- LumoBackdrop(Modifier.fillMaxSize()){Scaffold(containerColor=Color.Transparent,topBar={Surface(color=Color(0x882B43A0)){
-  Row(Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp),verticalAlignment=Alignment.CenterVertically){
-   TextButton(onClick=back){Text("‹ Назад")}
-   Column(Modifier.weight(1f)){
-    Text(detail?.group?.title?:initial.title,fontWeight=FontWeight.Bold)
-    Text((detail?.group?.memberCount?:initial.memberCount).toString()+" участников",
-     style=MaterialTheme.typography.bodySmall)
+ LumoBackdrop(Modifier.fillMaxSize()){Scaffold(
+ containerColor=Color.Transparent,
+ topBar={
+  Surface(color=Color(0xF207101A)){
+   Row(
+    Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=8.dp,vertical=7.dp),
+    verticalAlignment=Alignment.CenterVertically
+   ){
+    TextButton(
+     onClick=back,
+     contentPadding=PaddingValues(horizontal=7.dp,vertical=4.dp)
+    ){
+     Text("‹",color=Color.White,style=MaterialTheme.typography.headlineLarge)
+    }
+    LumoNeonAvatar(detail?.group?.title?:initial.title,size=44.dp)
+    Spacer(Modifier.width(10.dp))
+    Column(Modifier.weight(1f)){
+     Text(
+      detail?.group?.title?:initial.title,
+      fontWeight=FontWeight.Bold,
+      color=Color.White,
+      style=MaterialTheme.typography.titleMedium,
+      maxLines=1
+     )
+     Text(
+      (detail?.group?.memberCount?:initial.memberCount).toString()+" участников",
+      style=MaterialTheme.typography.bodySmall,
+      color=Color.White.copy(alpha=.68f),
+      maxLines=1
+     )
+    }
+    if(groupSearchEnabled){
+     TextButton(
+      onClick={
+       showSearch=!showSearch
+       searchText=""
+       searchResults=emptyList()
+       searchPerformed=false
+       searchError=""
+      },
+      contentPadding=PaddingValues(horizontal=8.dp)
+     ){
+      Text(if(showSearch)"×" else "⌕",color=LumoCyan,
+       style=MaterialTheme.typography.titleLarge)
+     }
+    }
+    if(detail?.group?.role in listOf("owner","admin")){
+     TextButton(
+      onClick={inviteDialog=true},
+      contentPadding=PaddingValues(horizontal=8.dp)
+     ){
+      Text("♙+",color=Color.White,style=MaterialTheme.typography.titleLarge)
+     }
+    }
+    Text("⋮",color=Color.White,style=MaterialTheme.typography.titleLarge,
+     modifier=Modifier.padding(horizontal=7.dp))
    }
-   if(groupSearchEnabled){
-    TextButton(onClick={
-     showSearch=!showSearch
-     searchText=""
-     searchResults=emptyList()
-     searchPerformed=false
-     searchError=""
-    }){Text(if(showSearch)"×" else "⌕",color=LumoCyan)}
-   }
-   if(detail?.group?.role in listOf("owner","admin"))
-    TextButton(onClick={inviteDialog=true}){Text("+ Люди")}
   }
- }}){pad->
+ }
+
   Column(Modifier.fillMaxSize().padding(pad)){
    if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error,
     modifier=Modifier.padding(10.dp))
