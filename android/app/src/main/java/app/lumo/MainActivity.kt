@@ -132,6 +132,23 @@ class MainActivity:ComponentActivity(){
 }
 
 @Composable fun Register(done:(String,User)->Unit){
+ var legacy by remember{mutableStateOf(!LumoPhoneAuth.configured)}
+ if(!legacy){
+  LumoPhoneRegister(onLegacy={legacy=true},done=done)
+ }else{
+  LegacyRegister(
+   done=done,
+   phoneAvailable=LumoPhoneAuth.configured,
+   onPhone={legacy=false}
+  )
+ }
+}
+
+@Composable fun LegacyRegister(
+ done:(String,User)->Unit,
+ phoneAvailable:Boolean,
+ onPhone:()->Unit
+){
  val scope=rememberCoroutineScope()
  var loginMode by remember{mutableStateOf(false)}
  var name by remember{mutableStateOf("")}
@@ -233,6 +250,14 @@ class MainActivity:ComponentActivity(){
     ){
      Text(if(loginMode)"Создать аккаунт" else "Войти",
       style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+    }
+    if(phoneAvailable){
+     Spacer(Modifier.height(8.dp))
+     TextButton(
+      onClick=onPhone,
+      enabled=!busy,
+      modifier=Modifier.align(Alignment.CenterHorizontally)
+     ){Text("Войти по номеру телефона",color=LumoCyan)}
     }
    }
   }
@@ -425,69 +450,7 @@ class MainActivity:ComponentActivity(){
 }
 
 @Composable fun People(token:String,open:(User)->Unit){
- var users by remember{mutableStateOf<List<User>>(emptyList())}
- var q by remember{mutableStateOf("")}
- var loading by remember{mutableStateOf(false)}
- var loadError by remember{mutableStateOf(false)}
- var retry by remember{mutableIntStateOf(0)}
- LaunchedEffect(token,q,retry){
-  loading=true;loadError=false;users=emptyList()
-  kotlinx.coroutines.delay(300)
-  runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.users(token,q)}}
-   .onSuccess{users=it}.onFailure{loadError=true}
-  loading=false
- }
- Column(Modifier.fillMaxSize()){
-  LumoSearchField(
-   value=q,onValueChange={q=it},placeholder="Поиск по имени или логину",
-   modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp)
-  )
-  if(loading)LinearProgressIndicator(Modifier.fillMaxWidth(),color=LumoCyan)
-  if(loadError){
-   Column(
-    Modifier.fillMaxWidth().padding(16.dp).lumoGlass(24).padding(20.dp),
-    horizontalAlignment=Alignment.CenterHorizontally
-   ){
-    Text("Не удалось загрузить пользователей",color=Color.White)
-    Spacer(Modifier.height(10.dp))
-    LumoNeonButton("Повторить",onClick={retry++},modifier=Modifier.fillMaxWidth())
-   }
-  }
-  if(!loading&&!loadError&&users.isEmpty()){
-   Box(Modifier.fillMaxWidth().padding(24.dp),contentAlignment=Alignment.Center){
-    Text(if(q.isBlank())"Пользователей пока нет" else "Ничего не найдено",
-     color=MaterialTheme.colorScheme.onSurfaceVariant)
-   }
-  }
-  LazyColumn(
-   Modifier.fillMaxSize(),
-   contentPadding=PaddingValues(horizontal=12.dp,vertical=8.dp),
-   verticalArrangement=Arrangement.spacedBy(9.dp)
-  ){
-   items(users,key={it.id}){u->
-    Row(
-     Modifier.fillMaxWidth().lumoGlass(22).clickable{open(u)}.padding(12.dp),
-     verticalAlignment=Alignment.CenterVertically
-    ){
-     LumoUserAvatar(token,u,size=52.dp)
-     Spacer(Modifier.width(14.dp))
-     Column(Modifier.weight(1f)){
-      Text(u.displayName,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleMedium,
-       color=Color.White,maxLines=1)
-      Spacer(Modifier.height(3.dp))
-      Text("@"+u.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
-      if(u.bio.isNotBlank())Text(
-       u.bio,maxLines=1,
-       style=MaterialTheme.typography.bodySmall,
-       color=MaterialTheme.colorScheme.onSurfaceVariant
-      )
-     }
-     Text("›",style=MaterialTheme.typography.headlineSmall,color=Color.White,
-      modifier=Modifier.padding(end=4.dp))
-    }
-   }
-  }
- }
+ SavedContactsPeople(token,open)
 }
 
 @Composable fun Profile(token:String,me:User,profileChanged:(User)->Unit,privacy:LumoPrivacy,openCalls:()->Unit,openAi:()->Unit,logout:()->Unit){
