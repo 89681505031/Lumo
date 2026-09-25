@@ -9,6 +9,7 @@ Lumo is a modern messaging application.
 - Real-time messaging over WebSocket
 - Message history
 - Delivery/read status foundation
+- User blocking for direct messages, media, reactions, calls, and group invitations
 - Android client foundation
 - Foreground chat-list refresh and HTTP fallback for realtime delays
 
