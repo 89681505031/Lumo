@@ -268,7 +268,7 @@ fun GroupsScreen(token:String,me:User,openGroup:(LumoGroup)->Unit){
     Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(23).clickable{openGroup(g)}.padding(14.dp),verticalAlignment=Alignment.CenterVertically){
      LumoNeonAvatar(g.title,size=52.dp)
      Spacer(Modifier.width(12.dp))
-     Column(Modifier.weight(1f)){
+     Column(Modifier.weight(1f).clickable{showMembers=true}){
       Text(g.title,fontWeight=FontWeight.SemiBold,color=Color.White)
       Text(if(g.lastMessage.isNotBlank())g.lastMessage else g.memberCount.toString()+" участников",
        maxLines=1,style=MaterialTheme.typography.bodySmall)
@@ -705,6 +705,79 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
    dismissButton={TextButton(onClick={deleteTarget=null},enabled=!actionBusy){Text("Отмена")}}
   )
  }
+ detail?.let{g->
+  if(showMembers){
+   AlertDialog(
+    onDismissRequest={showMembers=false},
+    title={Text(g.group.title)},
+    text={
+     Column(
+      Modifier
+       .fillMaxWidth()
+       .heightIn(max=520.dp)
+       .verticalScroll(rememberScrollState())
+     ){
+      Text(
+       g.group.memberCount.toString()+" участников",
+       color=MaterialTheme.colorScheme.onSurfaceVariant,
+       style=MaterialTheme.typography.bodySmall
+      )
+      Spacer(Modifier.height(12.dp))
+      g.members.forEach{m->
+       Row(
+        Modifier.fillMaxWidth().padding(vertical=5.dp),
+        verticalAlignment=Alignment.CenterVertically
+       ){
+        LumoNeonAvatar(m.displayName,size=38.dp)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)){
+         Text(m.displayName,color=Color.White,fontWeight=FontWeight.SemiBold)
+         Text(m.role,color=MaterialTheme.colorScheme.onSurfaceVariant,
+          style=MaterialTheme.typography.bodySmall)
+        }
+        if(g.group.role=="owner" && m.id!=me.id){
+         TextButton(
+          enabled=!actionBusy,
+          onClick={
+           actionBusy=true
+           scope.launch{
+            runCatching{withContext(Dispatchers.IO){
+             Api.groupRole(token,initial.id,m.id,if(m.role=="admin")"member" else "admin")
+            }}.onSuccess{reload()}.onFailure{error="Не удалось изменить роль"}
+            actionBusy=false
+           }
+          }
+         ){Text(if(m.role=="admin")"Снять" else "Админ")}
+        }
+        if((g.group.role=="owner"&&m.id!=me.id) ||
+          (g.group.role=="admin"&&m.role=="member"&&m.id!=me.id)){
+         TextButton(onClick={removeUser=m},enabled=!actionBusy){Text("×")}
+        }
+       }
+      }
+      HorizontalDivider(color=MaterialTheme.colorScheme.outline.copy(alpha=.4f))
+      if(g.group.role=="owner"){
+       TextButton(onClick={showMembers=false;deleteGroupDialog=true}){
+        Text("Удалить группу",color=MaterialTheme.colorScheme.error)
+       }
+      }else{
+       TextButton(onClick={
+        showMembers=false
+        val myself=g.members.firstOrNull{it.id==me.id}
+        if(myself!=null)removeUser=myself
+       }){
+        Text("Выйти из группы",color=MaterialTheme.colorScheme.error)
+       }
+      }
+     }
+    },
+    confirmButton={
+     TextButton(onClick={showMembers=false}){Text("Готово")}
+    }
+   )
+  }
+ }
+
  LumoBackdrop(Modifier.fillMaxSize()){Scaffold(
  containerColor=Color.Transparent,
  topBar={
@@ -769,39 +842,6 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
    if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error,
     modifier=Modifier.padding(10.dp))
    if(loading)LinearProgressIndicator(Modifier.fillMaxWidth())
-   detail?.let{g->
-    TextButton(onClick={showMembers=!showMembers}){
-     Text(if(showMembers)"Скрыть участников" else "Участники и управление")}
-    if(showMembers){
-     Column(Modifier.fillMaxWidth().padding(horizontal=12.dp)){
-      g.members.forEach{m->
-       Row(verticalAlignment=Alignment.CenterVertically){
-        Text(m.displayName+" · "+m.role,modifier=Modifier.weight(1f),
-         style=MaterialTheme.typography.bodySmall)
-        if(g.group.role=="owner" && m.id!=me.id){
-         TextButton(onClick={
-          actionBusy=true
-          scope.launch{
-           runCatching{withContext(Dispatchers.IO){
-            Api.groupRole(token,initial.id,m.id,if(m.role=="admin")"member" else "admin")
-           }}.onSuccess{reload()}.onFailure{error="Не удалось изменить роль"}
-           actionBusy=false
-          }
-         },enabled=!actionBusy){Text(if(m.role=="admin")"Снять админа" else "Админ")}
-        }
-        if((g.group.role=="owner"&&m.id!=me.id) ||
-          (g.group.role=="admin"&&m.role=="member"&&m.id!=me.id))
-         TextButton(onClick={removeUser=m},enabled=!actionBusy){Text("×")}
-       }
-      }
-      if(g.group.role=="owner")TextButton(onClick={deleteGroupDialog=true}){Text("Удалить группу")}
-      else TextButton(onClick={
-       val myself=g.members.firstOrNull{it.id==me.id}
-       if(myself!=null)removeUser=myself
-      }){Text("Выйти из группы")}
-     }
-    }
-   }
    if(showSearch){
     Column(
      Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp)
