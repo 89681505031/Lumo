@@ -242,7 +242,10 @@ fun GroupsScreen(token:String,me:User,openGroup:(LumoGroup)->Unit){
   )
  }
  Column(Modifier.fillMaxSize()){
-  Row(Modifier.fillMaxWidth().padding(16.dp).lumoGlass(24).padding(8.dp),verticalAlignment=Alignment.CenterVertically){
+  Row(
+   Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp),
+   verticalAlignment=Alignment.CenterVertically
+  ){
    Text("Мои группы",style=MaterialTheme.typography.titleLarge,color=Color.White,modifier=Modifier.weight(1f))
    LumoNeonButton("+ Группа",onClick={createDialog=true},enabled=serverSupported!=false)
   }
@@ -262,7 +265,11 @@ fun GroupsScreen(token:String,me:User,openGroup:(LumoGroup)->Unit){
    }
   }else LazyColumn(Modifier.fillMaxSize()){
    items(groups,key={it.id}){g->
-    Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(23).clickable{openGroup(g)}.padding(14.dp),verticalAlignment=Alignment.CenterVertically){
+    Row(
+     Modifier.fillMaxWidth().clickable{openGroup(g)}
+      .padding(horizontal=16.dp,vertical=11.dp),
+     verticalAlignment=Alignment.CenterVertically
+    ){
      LumoNeonAvatar(g.title,size=52.dp)
      Spacer(Modifier.width(12.dp))
      Column(Modifier.weight(1f)){
@@ -700,7 +707,7 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
    dismissButton={TextButton(onClick={deleteTarget=null},enabled=!actionBusy){Text("Отмена")}}
   )
  }
- LumoBackdrop(Modifier.fillMaxSize()){Scaffold(containerColor=Color.Transparent,topBar={Surface(color=Color(0x882B43A0)){
+ LumoBackdrop(Modifier.fillMaxSize()){Scaffold(containerColor=Color.Transparent,topBar={Surface(color=Color(0xFF202C33)){
   Row(Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp),verticalAlignment=Alignment.CenterVertically){
    TextButton(onClick=back){Text("‹ Назад")}
    Column(Modifier.weight(1f)){
@@ -715,7 +722,7 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
      searchResults=emptyList()
      searchPerformed=false
      searchError=""
-    }){Text(if(showSearch)"×" else "⌕",color=LumoCyan)}
+    }){Text(if(showSearch)"×" else "⌕",color=Color.White)}
    }
    if(detail?.group?.role in listOf("owner","admin"))
     TextButton(onClick={inviteDialog=true}){Text("+ Люди")}
@@ -811,8 +818,8 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
    LazyColumn(
     state=listState,
     modifier=Modifier.fillMaxWidth().weight(1f),
-    contentPadding=PaddingValues(12.dp),
-    verticalArrangement=Arrangement.spacedBy(10.dp)
+    contentPadding=PaddingValues(horizontal=8.dp,vertical=8.dp),
+    verticalArrangement=Arrangement.spacedBy(4.dp)
    ){
     if(!showSearch&&groupPaginationEnabled&&history.isNotEmpty()&&!olderDone){
      item(key="older-history"){
@@ -855,7 +862,11 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
           style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.Bold)
         }
         if(m.replyToMessageId.isNotBlank()){
-         Box(Modifier.fillMaxWidth().lumoGlass(13).padding(8.dp)){
+         Box(
+          Modifier.fillMaxWidth()
+           .background(Color(0x33000000),RoundedCornerShape(8.dp))
+           .padding(8.dp)
+         ){
           Column{
            val replyName=when{
             m.replyPreviewFrom==me.id->"Вы"
@@ -931,7 +942,7 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     if(replyPreview!=null){
      Row(
       Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=3.dp)
-       .lumoGlass(16).padding(horizontal=10.dp,vertical=6.dp),
+       .background(Color(0xFF202C33)).padding(horizontal=10.dp,vertical=6.dp),
       verticalAlignment=Alignment.CenterVertically
      ){
       Column(Modifier.weight(1f)){
@@ -950,7 +961,12 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
       TextButton(onClick={savePending(null);input="";replyTarget=null},enabled=!sending){Text("Не повторять")}
      }
     }
-    Row(Modifier.fillMaxWidth().imePadding().padding(8.dp).lumoGlass(23).padding(6.dp),verticalAlignment=Alignment.Bottom){
+    Row(
+     Modifier.fillMaxWidth().imePadding()
+      .background(Color(0xFF0B141A))
+      .padding(horizontal=7.dp,vertical=6.dp),
+     verticalAlignment=Alignment.Bottom
+    ){
      OutlinedTextField(input,{input=it.take(4000)},enabled=pending==null,modifier=Modifier.weight(1f),
       label={Text("Сообщение группе")},maxLines=4)
      Spacer(Modifier.width(8.dp))
