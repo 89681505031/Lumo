@@ -264,34 +264,28 @@ class MainActivity:ComponentActivity(){
  }
 }
 
-@Composable fun Home(token:String,me:User,open:(User)->Unit,openGroups:()->Unit,openCalls:()->Unit,openAi:()->Unit,profileChanged:(User)->Unit,privacy:LumoPrivacy,logout:()->Unit){
- var tab by remember{mutableIntStateOf(0)}
- LumoBackdrop(Modifier.fillMaxSize()){
-  Scaffold(
-   containerColor=Color.Transparent,
-   topBar={
-    Row(
-     Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=18.dp,vertical=12.dp),
-     verticalAlignment=Alignment.CenterVertically
-    ){
-     Text("Lumo",style=MaterialTheme.typography.headlineLarge,fontWeight=FontWeight.ExtraBold,color=Color.White)
-     Spacer(Modifier.weight(1f))
-     Box(Modifier.lumoGlass(22).clickable{tab=2}.padding(horizontal=15.dp,vertical=8.dp)){
-      Text(me.displayName,style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold,color=Color.White,maxLines=1)
-     }
-    }
-   },
-   bottomBar={LumoBottomNavigation(selected=tab,onSelect={tab=it})}
-  ){pad->
-   Box(Modifier.fillMaxSize().padding(pad)){
-    when(tab){
-     0->Chats(token,me,{tab=1},open,openGroups,openCalls,privacy)
-     1->People(token,open)
-     else->Profile(token,me,profileChanged,privacy,openCalls,openAi,logout)
-    }
-   }
-  }
- }
+@Composable fun Home(
+ token:String,
+ me:User,
+ open:(User)->Unit,
+ openGroups:()->Unit,
+ openCalls:()->Unit,
+ openAi:()->Unit,
+ profileChanged:(User)->Unit,
+ privacy:LumoPrivacy,
+ logout:()->Unit
+){
+ LumoReferenceHome(
+  token=token,
+  me=me,
+  openChat=open,
+  openGroups=openGroups,
+  openCalls=openCalls,
+  openAi=openAi,
+  profileChanged=profileChanged,
+  privacy=privacy,
+  logout=logout
+ )
 }
 
 @Composable fun Chats(
