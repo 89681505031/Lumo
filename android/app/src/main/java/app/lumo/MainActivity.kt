@@ -1211,7 +1211,12 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
          scope.launch{
           runCatching{
            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
-            Api.directHistoryPage(token,peer.id,oldest.id,100)
+            val page=Api.directHistoryPage(token,peer.id,oldest.id,100)
+            val unread=page.messages.filter{
+             it.from==peer.id&&it.readAt.isBlank()
+            }.map{it.id}
+            if(unread.isNotEmpty())runCatching{Api.readMessages(token,unread)}
+            page
            }
           }.onSuccess{page->
            val merged=mergeChatMessages(page.messages,msgs)
