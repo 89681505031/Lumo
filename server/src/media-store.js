@@ -170,6 +170,15 @@ async function reserveAsset({
     await conn.query("begin");
     // Serialize only this owner's reservations and inline quota accounting.
     await conn.query("select pg_advisory_xact_lock(hashtext($1))",[ownerId]);
+    // Inline fallback must not depend on a cron being configured. Expired,
+    // unclaimed rows are safe to drop: no message can reference them yet.
+    await conn.query(`
+      delete from media_assets
+      where owner_id=$1
+        and storage_mode='inline'
+        and expires_at<=now()
+        and claimed_message_id is null
+        and claimed_group_message_id is null`,[ownerId]);
     const usage=await conn.query(`
       select count(*)::integer as count,
              coalesce(sum(byte_length),0)::bigint as bytes
