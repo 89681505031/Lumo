@@ -40,8 +40,8 @@ android {
  }
  defaultConfig {
   applicationId="app.lumo"; minSdk=26; targetSdk=35
-  versionCode=(System.getenv("LUMO_VERSION_CODE")?.toIntOrNull() ?: 1008)
-  versionName=System.getenv("LUMO_VERSION_NAME")?.takeIf{it.isNotBlank()} ?: "1.0.8"
+  versionCode=(System.getenv("LUMO_VERSION_CODE")?.toIntOrNull() ?: 1009)
+  versionName=System.getenv("LUMO_VERSION_NAME")?.takeIf{it.isNotBlank()} ?: "1.0.9"
  }
  buildTypes {
   getByName("debug") {
@@ -70,6 +70,7 @@ dependencies {
  implementation("androidx.compose.animation:animation-core")
  implementation("com.squareup.okhttp3:okhttp:4.12.0")
  implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+ implementation("androidx.core:core-ktx:1.15.0")
  // Staging WebRTC audio transport; UI still requires explicit accepted call + mic permission + TURN.
  implementation("io.github.webrtc-sdk:android:150.7871.01")
 
