@@ -65,7 +65,16 @@ export async function initDatabase() {
     uploaded_at timestamptz,
     claimed_message_id uuid unique
   )`);
+  await client.query(`alter table media_assets add column if not exists storage_mode varchar(8) not null default 's3'`);
+  await client.query(`alter table media_assets add column if not exists inline_bytes bytea`);
   await client.query(`create index if not exists media_assets_owner_idx on media_assets(owner_id,created_at desc)`);
+  await client.query(`create table if not exists media_download_tokens (
+    token uuid primary key,
+    asset_id uuid not null references media_assets(id) on delete cascade,
+    expires_at timestamptz not null default (now() + interval '90 seconds'),
+    created_at timestamptz not null default now()
+  )`);
+  await client.query(`create index if not exists media_download_tokens_expiry_idx on media_download_tokens(expires_at)`);
   await client.query(`alter table messages add column if not exists media_id uuid references media_assets(id)`);
   await client.query(`create index if not exists messages_media_idx on messages(media_id) where media_id is not null`);
   // Safe to repeat on old databases. Reaction ownership is enforced by the API
@@ -305,6 +314,7 @@ export async function dbHealth() {
     to_regclass('sessions') as sessions_table,
     to_regclass('messages') as messages_table,
     to_regclass('media_assets') as media_assets_table,
+    to_regclass('media_download_tokens') as media_download_tokens_table,
     to_regclass('user_blocks') as user_blocks_table,
     to_regclass('calls') as calls_table,
     to_regclass('call_signals') as call_signals_table,
@@ -325,6 +335,10 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='media_assets' and column_name='group_id') as media_group_column,
     exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='media_assets' and column_name='storage_mode') as media_storage_mode_column,
+    exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='media_assets' and column_name='inline_bytes') as media_inline_bytes_column,
+    exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='password_hash') as password_column,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='bio') as bio_column,
@@ -343,5 +357,5 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.push_devices_table && row.push_outbox_table && row.group_reply_column && row.group_edited_column && row.group_deleted_column && row.group_reactions_table && row.group_media_column && row.media_group_column && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.media_download_tokens_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.push_devices_table && row.push_outbox_table && row.group_reply_column && row.group_edited_column && row.group_deleted_column && row.group_reactions_table && row.group_media_column && row.media_group_column && row.media_storage_mode_column && row.media_inline_bytes_column && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
 }

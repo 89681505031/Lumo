@@ -73,7 +73,7 @@ private data class PendingAttachment(
  val assetId:String,val clientId:String,val caption:String,val filename:String
 )
 private data class UploadTicket(
- val assetId:String,val uploadUrl:String,val fields:JSONObject
+ val assetId:String,val uploadUrl:String?,val fields:JSONObject,val mode:String
 )
 private data class MediaLink(val url:String,val mime:String,val filename:String,val bytes:Long)
 private fun verifiedType(mime:String)=when(mime.lowercase()){
@@ -147,7 +147,11 @@ private object MediaApi{
    val responseBody=res.body?.string().orEmpty()
    if(!res.isSuccessful){
     val reason=runCatching{JSONObject(responseBody).optString("error")}.getOrDefault("")
-    error("Медиа: HTTP "+res.code+" "+reason)
+    when(reason){
+     "inline_media_too_large"->error("Без внешнего хранилища размер вложения ограничен 4 МБ")
+     "media_storage_quota_exceeded"->error("Лимит встроенного хранилища Lumo исчерпан")
+     else->error("Медиа: HTTP "+res.code+" "+reason)
+    }
    }
    return JSONObject(responseBody)
   }
@@ -155,21 +159,24 @@ private object MediaApi{
  fun initiate(token:String,peerId:String,item:ChosenMedia):UploadTicket{
   val json=authorized(token,"/api/media/init","POST",JSONObject()
    .put("to",peerId).put("mime",item.mime).put("bytes",item.bytes).put("filename",item.filename))
-  return UploadTicket(json.getString("assetId"),json.getString("uploadUrl"),json.getJSONObject("fields"))
+  return UploadTicket(
+   json.getString("assetId"),
+   json.optString("uploadUrl").takeIf{it.isNotBlank()},
+   json.optJSONObject("fields")?:JSONObject(),
+   json.optString("uploadMode","s3")
+  )
  }
  fun initiateGroup(token:String,groupId:String,item:ChosenMedia):UploadTicket{
   val json=authorized(token,"/api/groups/"+groupId+"/media/init","POST",JSONObject()
    .put("mime",item.mime).put("bytes",item.bytes).put("filename",item.filename))
-  return UploadTicket(json.getString("assetId"),json.getString("uploadUrl"),json.getJSONObject("fields"))
+  return UploadTicket(
+   json.getString("assetId"),
+   json.optString("uploadUrl").takeIf{it.isNotBlank()},
+   json.optJSONObject("fields")?:JSONObject(),
+   json.optString("uploadMode","s3")
+  )
  }
- fun upload(context:Context,ticket:UploadTicket,item:ChosenMedia){
-  if(Uri.parse(ticket.uploadUrl).scheme!="https")error("Небезопасный адрес загрузки")
-  val form=MultipartBody.Builder().setType(MultipartBody.FORM)
-  val keys=ticket.fields.keys()
-  while(keys.hasNext()){
-   val key=keys.next()
-   form.addFormDataPart(key,ticket.fields.getString(key))
-  }
+ fun upload(context:Context,token:String,ticket:UploadTicket,item:ChosenMedia){
   val fileBody=object:RequestBody(){
    override fun contentType()=item.mime.toMediaType()
    override fun contentLength()=item.bytes
@@ -188,8 +195,34 @@ private object MediaApi{
     }
    }
   }
+  if(ticket.mode=="inline"){
+   val request=Request.Builder()
+    .url(Api.HTTP+"/api/media/"+ticket.assetId+"/content")
+    .header("Authorization","Bearer "+token)
+    .put(fileBody)
+    .build()
+   client.newCall(request).execute().use{response->
+    if(response.code==401)throw SessionExpiredException()
+    if(!response.isSuccessful){
+     val body=response.body?.string().orEmpty()
+     val reason=runCatching{JSONObject(body).optString("error")}.getOrDefault("")
+     if(reason=="inline_media_too_large")
+      error("Без внешнего хранилища размер вложения ограничен 4 МБ")
+     error("Сервер отклонил загрузку (HTTP "+response.code+")")
+    }
+   }
+   return
+  }
+  val uploadUrl=ticket.uploadUrl?:error("Сервер не выдал адрес загрузки")
+  if(Uri.parse(uploadUrl).scheme!="https")error("Небезопасный адрес загрузки")
+  val form=MultipartBody.Builder().setType(MultipartBody.FORM)
+  val keys=ticket.fields.keys()
+  while(keys.hasNext()){
+   val key=keys.next()
+   form.addFormDataPart(key,ticket.fields.getString(key))
+  }
   form.addFormDataPart("file",item.filename,fileBody)
-  client.newCall(Request.Builder().url(ticket.uploadUrl).post(form.build()).build()).execute().use{response->
+  client.newCall(Request.Builder().url(uploadUrl).post(form.build()).build()).execute().use{response->
    if(!response.isSuccessful)error("Хранилище отклонило загрузку (HTTP "+response.code+")")
   }
  }
@@ -244,7 +277,8 @@ private object MediaApi{
  }
  fun link(token:String,id:String):MediaLink{
   val json=authorized(token,"/api/media/"+id+"/download","GET")
-  val url=json.getString("url")
+  val rawUrl=json.getString("url")
+  val url=if(rawUrl.startsWith("/"))Api.HTTP+rawUrl else rawUrl
   if(Uri.parse(url).scheme!="https")error("Небезопасная ссылка на медиа")
   return MediaLink(url,json.getString("mime"),json.optString("filename","attachment"),json.optLong("bytes",0L))
  }
@@ -454,7 +488,7 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
      scope.launch{
       runCatching{withContext(Dispatchers.IO){
        val ticket=MediaApi.initiate(token,peer.id,source)
-       MediaApi.upload(context,ticket,source)
+       MediaApi.upload(context,token,ticket,source)
        MediaApi.complete(token,ticket.assetId)
        PendingAttachment(ticket.assetId,java.util.UUID.randomUUID().toString(),
         caption.trim(),source.filename)
@@ -748,7 +782,7 @@ fun GroupMediaComposer(
       scope.launch{
        runCatching{withContext(Dispatchers.IO){
         val ticket=MediaApi.initiateGroup(token,groupId,source)
-        MediaApi.upload(context,ticket,source)
+        MediaApi.upload(context,token,ticket,source)
         MediaApi.complete(token,ticket.assetId)
         PendingAttachment(
          ticket.assetId,java.util.UUID.randomUUID().toString(),
