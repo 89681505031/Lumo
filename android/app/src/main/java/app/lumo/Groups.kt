@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -268,7 +270,7 @@ fun GroupsScreen(token:String,me:User,openGroup:(LumoGroup)->Unit){
     Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(23).clickable{openGroup(g)}.padding(14.dp),verticalAlignment=Alignment.CenterVertically){
      LumoNeonAvatar(g.title,size=52.dp)
      Spacer(Modifier.width(12.dp))
-     Column(Modifier.weight(1f).clickable{showMembers=true}){
+     Column(Modifier.weight(1f)){
       Text(g.title,fontWeight=FontWeight.SemiBold,color=Color.White)
       Text(if(g.lastMessage.isNotBlank())g.lastMessage else g.memberCount.toString()+" участников",
        maxLines=1,style=MaterialTheme.typography.bodySmall)
@@ -794,7 +796,7 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     }
     LumoNeonAvatar(detail?.group?.title?:initial.title,size=44.dp)
     Spacer(Modifier.width(10.dp))
-    Column(Modifier.weight(1f)){
+    Column(Modifier.weight(1f).clickable{showMembers=true}){
      Text(
       detail?.group?.title?:initial.title,
       fontWeight=FontWeight.Bold,
