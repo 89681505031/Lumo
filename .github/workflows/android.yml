@@ -60,17 +60,17 @@ jobs:
             echo "::notice::Persistent release-signing secrets are not configured; CI will use the verified deterministic Lumo 1.0.8 reconstruction path after building the unsigned APK."
           fi
 
-      - name: Build Lumo 1.0.8 release APK
+      - name: Build Lumo 1.0.9 release APK
         env:
-          LUMO_VERSION_CODE: "1008"
-          LUMO_VERSION_NAME: "1.0.8"
+          LUMO_VERSION_CODE: "1009"
+          LUMO_VERSION_NAME: "1.0.9"
           LUMO_KEYSTORE_PASSWORD: ${{ secrets.LUMO_KEYSTORE_PASSWORD }}
           LUMO_KEY_ALIAS: ${{ secrets.LUMO_KEY_ALIAS }}
           LUMO_KEY_PASSWORD: ${{ secrets.LUMO_KEY_PASSWORD }}
         run: gradle assembleRelease
 
       - name: Recover verified signed Lumo 1.0.8 release
-        if: env.LUMO_SIGNED_RELEASE != 'true'
+        if: env.LUMO_SIGNED_RELEASE != 'true' && github.event_name != 'pull_request'
         shell: bash
         env:
           LUMO_EXPECTED_UNSIGNED_SHA256: "8a6b6d81350be08e2ec6673755d065ec86038483af1a32a4384082a514d2acef"
