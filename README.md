@@ -33,6 +33,11 @@ npm run dev
 
 Server defaults to http://localhost:3000.
 
+## Phone registration and saved contacts
+Lumo has an environment-gated Supabase Phone Auth bridge. Configure `SUPABASE_URL` and a client-safe `SUPABASE_PUBLISHABLE_KEY` on the server, enable Phone Auth plus an SMS provider in Supabase, then exchange the verified Supabase access token through `POST /api/auth/phone/exchange`. Lumo stores the Supabase user UUID and a SHA-256 fingerprint of the verified E.164 phone number; it does not store the raw phone number in the Lumo users table.
+
+Saved-contact discovery uses authenticated `POST /api/contacts/discover` with up to 500 SHA-256 phone fingerprints. It returns only registered Lumo accounts matching submitted fingerprints and hides blocked relationships. Contact names stay local to the Android device. Legacy username/password endpoints remain temporarily available so the currently signed production APK does not break before the phone-auth client is released.
+
 ## Account API
 Registration requires `POST /api/register` with `username`, `displayName`, and `password`. Passwords must be 10–128 characters (maximum 256 UTF-8 bytes); the database stores salted scrypt hashes, never plaintext passwords. Returning users can call `POST /api/login` with `username` and `password` to receive a fresh session token. Android offers both account creation and sign-in. Legacy accounts without a password hash cannot sign in with a password; an account-recovery or migration flow is still needed. Sessions expire 30 days after creation. Android signs out through `POST /api/logout`, which revokes the current session and disconnects its local WebSocket; if the server is unreachable, Android offers a clearly labelled device-only sign-out that cannot revoke the remote session. Authenticated clients can call `POST /api/sessions/revoke-others` to revoke every other active session for the same account while preserving the current session; related push-device registrations are removed by database cascade. Authenticated clients can also call `POST /api/account/password` with the current and new password; a successful change keeps the current session, revokes every other session, and invalidates the previous password. Android cloud/device backup rules exclude local session preferences and unsent message queues.
 
