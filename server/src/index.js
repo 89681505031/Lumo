@@ -231,7 +231,8 @@ app.get("/api/capabilities",(_req,res)=>res.json({
   turnProvider:turnProvider(),
   pushRegistration:hasDatabase,
   sessionRevokeOthers:hasDatabase,
-  passwordChange:hasDatabase
+  passwordChange:hasDatabase,
+  userBlocking:hasDatabase
 }));
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase,ok:false}; if(hasDatabase){try{database=await dbHealth()}catch(error){console.error("Database health check failed",error);database={configured:true,ok:false}}} const ok=database.configured===true&&database.ok===true; res.status(ok?200:503).json({ ok, service:"lumo-server", database }); });
@@ -559,6 +560,57 @@ app.post("/api/ai/chat", auth, rateLimit({windowMs:60_000,max:20}), async (req,r
 app.get("/api/users", auth, async (req, res) => {
   try { const q = String(req.query.q || "").toLowerCase(); if(q.length>50)return res.status(400).json({error:"invalid_query"}); if(hasDatabase) return res.json(await postgresStore.searchUsers(req.user.id,q)); res.json([...users.values()].filter(u => u.id !== req.user.id).filter(u => !q || u.username.includes(q) || u.displayName.toLowerCase().includes(q)).slice(0, 50).map(publicUser)); }
   catch(error){console.error("User search failed",error);res.status(503).json({error:"service_unavailable"});}
+});
+
+app.get("/api/blocks",auth,requireDatabase,async(req,res)=>{
+  try{
+    return res.json(await postgresStore.blockedUsers(req.user.id));
+  }catch(error){
+    console.error("Blocked user list failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.get("/api/blocks/:id",auth,requireDatabase,async(req,res)=>{
+  const peerId=req.params.id;
+  if(!sessionTokenPattern.test(peerId) || peerId===req.user.id)
+    return res.status(400).json({error:"invalid_user_id"});
+  try{
+    if(!await postgresStore.userExists(peerId))
+      return res.status(404).json({error:"user_not_found"});
+    return res.json({blocked:await postgresStore.blockedByMe(req.user.id,peerId)});
+  }catch(error){
+    console.error("Block status failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.put("/api/blocks/:id",auth,requireDatabase,rateLimit({windowMs:60_000,max:30}),async(req,res)=>{
+  const peerId=req.params.id;
+  if(!sessionTokenPattern.test(peerId) || peerId===req.user.id)
+    return res.status(400).json({error:"invalid_user_id"});
+  try{
+    const result=await postgresStore.blockUser(req.user.id,peerId);
+    if(result.error==="user_not_found")
+      return res.status(404).json({error:result.error});
+    return res.json({blocked:true});
+  }catch(error){
+    console.error("Block user failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
+});
+
+app.delete("/api/blocks/:id",auth,requireDatabase,rateLimit({windowMs:60_000,max:30}),async(req,res)=>{
+  const peerId=req.params.id;
+  if(!sessionTokenPattern.test(peerId) || peerId===req.user.id)
+    return res.status(400).json({error:"invalid_user_id"});
+  try{
+    await postgresStore.unblockUser(req.user.id,peerId);
+    return res.status(204).end();
+  }catch(error){
+    console.error("Unblock user failed",error);
+    return res.status(503).json({error:"service_unavailable"});
+  }
 });
 
 app.get("/api/conversations", auth, async (req, res) => {
@@ -940,6 +992,7 @@ function mediaError(res,error){
     media_quota_exceeded:429,
     media_storage_quota_exceeded:429,
     inline_media_too_large:413,
+    user_blocked:403,
     media_unavailable:503
   }[error] || 503;
   return res.status(status).json({error});
@@ -953,6 +1006,8 @@ app.post("/api/media/init",auth,requireDatabase,rateLimit({windowMs:60_000,max:2
   try{
     if(!await postgresStore.userExists(to))
       return mediaError(res,"recipient_not_found");
+    if(await postgresStore.blockedBetween(req.user.id,to))
+      return mediaError(res,"user_blocked");
     const upload=await mediaStore.initiate(req.user.id,to,{
       mime:req.body?.mime,
       bytes:req.body?.bytes,
@@ -1077,6 +1132,8 @@ app.post("/api/media/:id/forward",auth,requireDatabase,rateLimit({windowMs:60_00
   try{
     if(!await postgresStore.userExists(to))
       return mediaError(res,"recipient_not_found");
+    if(await postgresStore.blockedBetween(req.user.id,to))
+      return mediaError(res,"user_blocked");
     const result=await mediaStore.forward(
       req.user.id,
       req.params.id,
@@ -1344,6 +1401,8 @@ app.post("/api/messages", auth, requireDatabase, async (req,res)=>{
   try{
     if(!await postgresStore.userExists(to))
       return res.status(404).json({error:"recipient_not_found"});
+    if(await postgresStore.blockedBetween(req.user.id,to))
+      return res.status(403).json({error:"user_blocked"});
     const replyTarget=replyToMessageId
       ? await postgresStore.replyTarget(req.user.id,to,replyToMessageId)
       : null;
@@ -1372,6 +1431,8 @@ app.post("/api/messages", auth, requireDatabase, async (req,res)=>{
   }catch(error){
     if(error?.code==="CLIENT_MESSAGE_ID_CONFLICT")
       return res.status(409).json({error:"client_message_id_conflict"});
+    if(error?.code==="USER_BLOCKED")
+      return res.status(403).json({error:"user_blocked"});
     console.error("HTTP message send failed",error);
     return res.status(503).json({error:"service_unavailable"});
   }
@@ -1460,6 +1521,8 @@ wss.on("connection", async (ws, req) => {
       const recipientExists = hasDatabase ? await postgresStore.userExists(to) : users.has(to);
       if (sockets.get(userId) !== ws) return ws.close(1008, "Connection replaced");
       if (!recipientExists) return ws.send(JSON.stringify({type:"error",error:"recipient_not_found"}));
+      if(hasDatabase && await postgresStore.blockedBetween(userId,to))
+        return ws.send(JSON.stringify({type:"error",error:"user_blocked"}));
       if (!text) return ws.send(JSON.stringify({type:"error",error:"empty_message"}));
       if (text.length > 4000) return ws.send(JSON.stringify({type:"error",error:"message_too_long"}));
       const replyTarget=replyToMessageId
@@ -1510,7 +1573,7 @@ wss.on("connection", async (ws, req) => {
         }
       }
       ws.send(JSON.stringify({ type: "message", message }));
-    } catch (error) { console.error("WebSocket message handling failed",error); if(ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({ type: "error", error: error?.code==="CLIENT_MESSAGE_ID_CONFLICT" ? "client_message_id_conflict" : "service_unavailable" })); }
+    } catch (error) { console.error("WebSocket message handling failed",error); if(ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({ type: "error", error: error?.code==="CLIENT_MESSAGE_ID_CONFLICT" ? "client_message_id_conflict" : error?.code==="USER_BLOCKED" ? "user_blocked" : "service_unavailable" })); }
   });
   const clearSocket=()=>{if(sessionCheck)clearInterval(sessionCheck);if(sockets.get(userId)===ws)sockets.delete(userId);};
   ws.on("close",clearSocket);
