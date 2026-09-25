@@ -12,6 +12,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.Dp
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -129,11 +133,11 @@ private fun LumoReferenceBottomBar(
     onSelect:(Int)->Unit
 ){
     val tabs=listOf(
-        Triple("▰","Чаты",0),
-        Triple("⌕","Звонки",1),
-        Triple("◉","Статус",2),
-        Triple("♙","Сообщества",3),
-        Triple("⠿","Ещё",4)
+        Triple(Icons.Rounded.Chat,"Чаты",0),
+        Triple(Icons.Rounded.Call,"Звонки",1),
+        Triple(Icons.Rounded.RadioButtonChecked,"Статус",2),
+        Triple(Icons.Rounded.Group,"Сообщества",3),
+        Triple(Icons.Rounded.MoreVert,"Ещё",4)
     )
     Surface(
         color=Color(0xFF111B21),
@@ -157,25 +161,33 @@ private fun LumoReferenceBottomBar(
                     Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(
-                            if(active) Color(0xFF103B34) else Color.Transparent
-                        )
                         .clickable{onSelect(index)}
-                        .padding(vertical=5.dp),
+                        .padding(vertical=4.dp),
                     horizontalAlignment=Alignment.CenterHorizontally,
                     verticalArrangement=Arrangement.Center
                 ){
-                    Text(
-                        icon,
-                        color=if(active)Color.White else Color(0xFFB9C5DA),
-                        style=MaterialTheme.typography.titleLarge
-                    )
+                    Box(
+                        Modifier
+                            .width(54.dp)
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(15.dp))
+                            .background(if(active)Color(0xFF103B34) else Color.Transparent),
+                        contentAlignment=Alignment.Center
+                    ){
+                        Icon(
+                            imageVector=icon,
+                            contentDescription=label,
+                            tint=if(active)Color.White else Color(0xFFB9C5DA),
+                            modifier=Modifier.size(23.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(2.dp))
                     Text(
                         label,
                         color=if(active)Color.White else Color(0xFFB9C5DA),
                         style=MaterialTheme.typography.labelSmall,
-                        fontWeight=if(active)FontWeight.Bold else FontWeight.Medium
+                        fontWeight=if(active)FontWeight.Bold else FontWeight.Medium,
+                        maxLines=1
                     )
                 }
             }
@@ -1558,10 +1570,11 @@ private fun ReferenceSettingsRow(
             Modifier.width(48.dp),
             contentAlignment=Alignment.CenterStart
         ){
-            Text(
-                icon,
-                color=ReferenceMuted,
-                style=MaterialTheme.typography.titleLarge
+            Icon(
+                imageVector=referenceIcon(icon),
+                contentDescription=null,
+                tint=ReferenceMuted,
+                modifier=Modifier.size(24.dp)
             )
         }
         Column(Modifier.weight(1f)){
@@ -1634,20 +1647,59 @@ private fun ReferenceSectionTitle(
     )
 }
 
+private fun referenceIcon(token:String):ImageVector = when(token){
+    "⌕" -> Icons.Rounded.Search
+    "✎" -> Icons.Rounded.Edit
+    "⋮" -> Icons.Rounded.MoreVert
+    "+" -> Icons.Rounded.Add
+    "☎" -> Icons.Rounded.Call
+    "▣" -> Icons.Rounded.Videocam
+    "▦" -> Icons.Rounded.Event
+    "↗" -> Icons.Rounded.Link
+    "♙" -> Icons.Rounded.Person
+    "♙+" -> Icons.Rounded.PersonAdd
+    "⚿" -> Icons.Rounded.Key
+    "***" -> Icons.Rounded.Lock
+    "✉" -> Icons.Rounded.Email
+    "◇" -> Icons.Rounded.Security
+    "@" -> Icons.Rounded.AlternateEmail
+    "▭" -> Icons.Rounded.Storage
+    "◔" -> Icons.Rounded.DataUsage
+    "HD" -> Icons.Rounded.HighQuality
+    "▯" -> Icons.Rounded.PhoneAndroid
+    "⌁" -> Icons.Rounded.Wifi
+    "✈" -> Icons.Rounded.Flight
+    "▰" -> Icons.Rounded.Work
+    "✦" -> Icons.Rounded.Public
+    "◈" -> Icons.Rounded.SportsEsports
+    "◆" -> Icons.Rounded.DirectionsCar
+    "▶" -> Icons.Rounded.Movie
+    "ⓘ" -> Icons.Rounded.Info
+    "↗" -> Icons.Rounded.Link
+    "∞" -> Icons.Rounded.AccountCircle
+    "?" -> Icons.Rounded.HelpOutline
+    "♧" -> Icons.Rounded.Notifications
+    "⊕" -> Icons.Rounded.Language
+    "⚝" -> Icons.Rounded.Accessibility
+    "▤" -> Icons.Rounded.List
+    "▢" -> Icons.Rounded.Lock
+    else -> Icons.Rounded.Circle
+}
+
 @Composable
 private fun ReferenceIconButton(
     text:String,
     onClick:()->Unit
 ){
-    TextButton(
+    IconButton(
         onClick=onClick,
-        contentPadding=PaddingValues(7.dp),
-        modifier=Modifier.sizeIn(minWidth=42.dp,minHeight=42.dp)
+        modifier=Modifier.size(42.dp)
     ){
-        Text(
-            text,
-            color=Color.White,
-            style=MaterialTheme.typography.titleLarge
+        Icon(
+            imageVector=referenceIcon(text),
+            contentDescription=null,
+            tint=Color.White,
+            modifier=Modifier.size(24.dp)
         )
     }
 }
@@ -1670,7 +1722,7 @@ private fun ReferenceActionCard(
         verticalArrangement=Arrangement.Center,
         horizontalAlignment=Alignment.CenterHorizontally
     ){
-        Text(icon,color=Color.White,style=MaterialTheme.typography.headlineMedium)
+        Icon(referenceIcon(icon),contentDescription=null,tint=Color.White,modifier=Modifier.size(28.dp))
         Spacer(Modifier.height(8.dp))
         Text(title,color=Color.White,fontWeight=FontWeight.Bold)
         Text(subtitle,color=Color(0xFFD6DDF0),style=MaterialTheme.typography.bodySmall)
@@ -1692,7 +1744,7 @@ private fun ReferenceMiniAction(
             .padding(horizontal=13.dp,vertical=12.dp),
         verticalAlignment=Alignment.CenterVertically
     ){
-        Text(icon,color=Color.White)
+        Icon(referenceIcon(icon),contentDescription=null,tint=Color.White,modifier=Modifier.size(20.dp))
         Spacer(Modifier.width(9.dp))
         Text(title,color=Color(0xFFD6DDF0),style=MaterialTheme.typography.bodyMedium)
     }
