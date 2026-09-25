@@ -24,33 +24,33 @@ import androidx.compose.ui.unit.dp
  * the app does not need a risky logic rewrite, but render them as a restrained,
  * flat messenger design instead.
  */
-val LumoCyan = Color(0xFF4C8DFF)
-val LumoPink = Color(0xFF7C5CFF)
-val LumoViolet = Color(0xFF6B65F6)
-val LumoMuted = Color(0xFF9298A8)
+val LumoCyan = Color(0xFF00A884)
+val LumoPink = Color(0xFF25D366)
+val LumoViolet = Color(0xFF00A884)
+val LumoMuted = Color(0xFF8696A0)
 
 val LumoGradient = Brush.verticalGradient(
-    listOf(Color(0xFF0B0C10), Color(0xFF0B0C10))
+    listOf(Color(0xFF0B141A), Color(0xFF0B141A))
 )
 
 val LumoAvatarGradient = Brush.linearGradient(
-    listOf(Color(0xFF7E8DAA), Color(0xFF58667F))
+    listOf(Color(0xFF00A884), Color(0xFF008069))
 )
 
 private val lumoPalette = darkColorScheme(
-    primary = Color(0xFF4C8DFF),
+    primary = Color(0xFF00A884),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFF20345D),
+    primaryContainer = Color(0xFF005C4B),
     onPrimaryContainer = Color.White,
-    secondary = Color(0xFF8EA6D8),
+    secondary = Color(0xFF25D366),
     onSecondary = Color(0xFF111318),
-    background = Color(0xFF0B0C10),
+    background = Color(0xFF0B141A),
     onBackground = Color(0xFFF4F5F7),
-    surface = Color(0xFF15171C),
+    surface = Color(0xFF111B21),
     onSurface = Color(0xFFF4F5F7),
-    surfaceVariant = Color(0xFF1C1F26),
-    onSurfaceVariant = Color(0xFF9298A8),
-    outline = Color(0xFF30333B),
+    surfaceVariant = Color(0xFF202C33),
+    onSurfaceVariant = Color(0xFF8696A0),
+    outline = Color(0xFF374248),
     error = Color(0xFFFF6B78),
     onError = Color.White
 )
@@ -77,8 +77,8 @@ fun Modifier.lumoGlass(radius: Int = 24): Modifier {
             ambientColor = Color.Black.copy(alpha = .22f),
             spotColor = Color.Black.copy(alpha = .22f)
         )
-        .background(Color(0xFF15171C), shape)
-        .border(1.dp, Color(0xFF24272E), shape)
+        .background(Color(0xFF111B21), shape)
+        .border(1.dp, Color(0xFF202C33), shape)
 }
 
 /**
@@ -91,7 +91,7 @@ fun LumoBackdrop(
     content: @Composable BoxScope.() -> Unit
 ) {
     Box(
-        modifier = modifier.background(Color(0xFF0B0C10)),
+        modifier = modifier.background(Color(0xFF0B141A)),
         content = content
     )
 }
@@ -107,8 +107,8 @@ fun Modifier.lumoBubble(outgoing: Boolean): Modifier {
         bottomStart = if (outgoing) 20.dp else 6.dp,
         bottomEnd = if (outgoing) 6.dp else 20.dp
     )
-    val fill = if (outgoing) Color(0xFF315FAF) else Color(0xFF1C1F26)
-    val edge = if (outgoing) Color(0xFF3F73CC) else Color(0xFF252932)
+    val fill = if (outgoing) Color(0xFF005C4B) else Color(0xFF202C33)
+    val edge = if (outgoing) Color(0xFF005C4B) else Color(0xFF202C33)
     return this
         .background(fill, shape)
         .border(1.dp, edge, shape)
