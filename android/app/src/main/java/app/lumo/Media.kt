@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
+import androidx.core.content.FileProvider
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -73,9 +74,13 @@ private data class PendingAttachment(
  val assetId:String,val clientId:String,val caption:String,val filename:String
 )
 private data class UploadTicket(
- val assetId:String,val uploadUrl:String?,val fields:JSONObject,val mode:String
+ val assetId:String,val uploadUrl:String?,val fields:JSONObject,val mode:String,
+ val chunkBytes:Int=0
 )
-private data class MediaLink(val url:String,val mime:String,val filename:String,val bytes:Long)
+private data class MediaLink(
+ val url:String,val mime:String,val filename:String,val bytes:Long,
+ val rangeRequired:Boolean=false,val chunkBytes:Int=0
+)
 private fun verifiedType(mime:String)=when(mime.lowercase()){
  "image/jpg"->"image/jpeg"
  else->mime.lowercase()
@@ -158,25 +163,66 @@ private object MediaApi{
  }
  fun initiate(token:String,peerId:String,item:ChosenMedia):UploadTicket{
   val json=authorized(token,"/api/media/init","POST",JSONObject()
-   .put("to",peerId).put("mime",item.mime).put("bytes",item.bytes).put("filename",item.filename))
+   .put("to",peerId).put("mime",item.mime).put("bytes",item.bytes)
+   .put("filename",item.filename).put("chunkedInline",true))
   return UploadTicket(
    json.getString("assetId"),
    json.optString("uploadUrl").takeIf{it.isNotBlank()},
    json.optJSONObject("fields")?:JSONObject(),
-   json.optString("uploadMode","s3")
+   json.optString("uploadMode","s3"),
+   json.optInt("chunkBytes",0)
   )
  }
  fun initiateGroup(token:String,groupId:String,item:ChosenMedia):UploadTicket{
   val json=authorized(token,"/api/groups/"+groupId+"/media/init","POST",JSONObject()
-   .put("mime",item.mime).put("bytes",item.bytes).put("filename",item.filename))
+   .put("mime",item.mime).put("bytes",item.bytes)
+   .put("filename",item.filename).put("chunkedInline",true))
   return UploadTicket(
    json.getString("assetId"),
    json.optString("uploadUrl").takeIf{it.isNotBlank()},
    json.optJSONObject("fields")?:JSONObject(),
-   json.optString("uploadMode","s3")
+   json.optString("uploadMode","s3"),
+   json.optInt("chunkBytes",0)
   )
  }
  fun upload(context:Context,token:String,ticket:UploadTicket,item:ChosenMedia){
+  if(ticket.mode=="inline-chunks"){
+   val chunkSize=ticket.chunkBytes
+   if(chunkSize !in 1..4*1024*1024)
+    error("Сервер выдал неверный размер части")
+   item.open(context).use{input->
+    var remaining=item.bytes
+    var index=0
+    while(remaining>0){
+     val wanted=minOf(chunkSize.toLong(),remaining).toInt()
+     val bytes=ByteArray(wanted)
+     var offset=0
+     while(offset<wanted){
+      val count=input.read(bytes,offset,wanted-offset)
+      if(count<0)error("Размер выбранного файла изменился")
+      offset+=count
+     }
+     val body=bytes.toRequestBody(item.mime.toMediaType())
+     val request=Request.Builder()
+      .url(Api.HTTP+"/api/media/"+ticket.assetId+"/chunks/"+index)
+      .header("Authorization","Bearer "+token)
+      .put(body)
+      .build()
+     client.newCall(request).execute().use{response->
+      if(response.code==401)throw SessionExpiredException()
+      if(!response.isSuccessful){
+       val raw=response.body?.string().orEmpty()
+       val reason=runCatching{JSONObject(raw).optString("error")}.getOrDefault("")
+       error("Сервер отклонил часть "+(index+1)+" (HTTP "+response.code+" "+reason+")")
+      }
+     }
+     remaining-=wanted
+     index++
+    }
+    if(input.read()!=-1)error("Размер выбранного файла изменился")
+   }
+   return
+  }
   val fileBody=object:RequestBody(){
    override fun contentType()=item.mime.toMediaType()
    override fun contentLength()=item.bytes
@@ -280,7 +326,58 @@ private object MediaApi{
   val rawUrl=json.getString("url")
   val url=if(rawUrl.startsWith("/"))Api.HTTP+rawUrl else rawUrl
   if(Uri.parse(url).scheme!="https")error("Небезопасная ссылка на медиа")
-  return MediaLink(url,json.getString("mime"),json.optString("filename","attachment"),json.optLong("bytes",0L))
+  return MediaLink(
+   url,
+   json.getString("mime"),
+   json.optString("filename","attachment"),
+   json.optLong("bytes",0L),
+   json.optBoolean("rangeRequired",false),
+   json.optInt("chunkBytes",0)
+  )
+ }
+
+ fun cacheChunked(context:Context,assetId:String,link:MediaLink):File{
+  require(link.rangeRequired){"Range download is not required"}
+  require(link.bytes in 1..25L*1024*1024){"Неверный размер вложения"}
+  val step=(if(link.chunkBytes>0)link.chunkBytes else 3*1024*1024)
+   .coerceIn(1,4*1024*1024)
+  val safeName=link.filename.replace(Regex("[^\\p{L}\\p{N} ._()-]"),"_")
+   .take(80).ifBlank{"attachment"}
+  val dir=File(context.cacheDir,"attachments").apply{mkdirs()}
+  val target=File(dir,assetId+"-"+safeName)
+  if(target.isFile && target.length()==link.bytes)return target
+  val part=File(dir,assetId+".part")
+  if(part.exists())part.delete()
+  try{
+   part.outputStream().use{out->
+    var start=0L
+    while(start<link.bytes){
+     val end=minOf(start+step-1L,link.bytes-1L)
+     val request=Request.Builder().url(link.url)
+      .header("Range","bytes="+start+"-"+end)
+      .get().build()
+     client.newCall(request).execute().use{response->
+      if(response.code!=206)error("Сервер не поддержал частичную загрузку")
+      val expected=end-start+1L
+      val body=response.body?:error("Пустая часть вложения")
+      val bytes=body.bytes()
+      if(bytes.size.toLong()!=expected)error("Получена неполная часть вложения")
+      out.write(bytes)
+     }
+     start=end+1L
+    }
+   }
+   if(part.length()!=link.bytes)error("Вложение загружено не полностью")
+   if(target.exists()&&!target.delete())error("Не удалось обновить кэш вложения")
+   if(!part.renameTo(target)){
+    part.copyTo(target,overwrite=true)
+    part.delete()
+   }
+   return target
+  }catch(error:Throwable){
+   part.delete()
+   throw error
+  }
  }
 }
 
@@ -810,6 +907,22 @@ fun GroupMediaComposer(
 }
 
 
+private fun decodeImageBitmap(data:ByteArray):ImageBitmap{
+ if(data.size>8*1024*1024)error("Изображение слишком большое")
+ val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+ BitmapFactory.decodeByteArray(data,0,data.size,bounds)
+ if(bounds.outWidth<=0 || bounds.outHeight<=0 ||
+    bounds.outWidth.toLong()*bounds.outHeight.toLong()>100_000_000L)
+  error("Неподдерживаемое изображение")
+ val options=BitmapFactory.Options()
+ var scale=1
+ while(bounds.outWidth/scale>1600 || bounds.outHeight/scale>1600)scale*=2
+ options.inSampleSize=scale
+ val bitmap=BitmapFactory.decodeByteArray(data,0,data.size,options)
+   ?:error("Изображение повреждено")
+ return bitmap.asImageBitmap()
+}
+
 private fun fetchImageBitmap(url:String):ImageBitmap{
  val request=Request.Builder().url(url).get().build()
  Api.httpClient.newCall(request).execute().use{response->
@@ -829,20 +942,12 @@ private fun fetchImageBitmap(url:String):ImageBitmap{
    }
    output.toByteArray()
   }
-  val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
-  BitmapFactory.decodeByteArray(data,0,data.size,bounds)
-  if(bounds.outWidth<=0 || bounds.outHeight<=0 ||
-     bounds.outWidth.toLong()*bounds.outHeight.toLong()>100_000_000L)
-    error("Неподдерживаемое изображение")
-  val options=BitmapFactory.Options()
-  var scale=1
-  while(bounds.outWidth/scale>1600 || bounds.outHeight/scale>1600)scale*=2
-  options.inSampleSize=scale
-  val bitmap=BitmapFactory.decodeByteArray(data,0,data.size,options)
-    ?:error("Изображение повреждено")
-  return bitmap.asImageBitmap()
+  return decodeImageBitmap(data)
  }
 }
+
+private fun localMediaUri(context:Context,file:File):Uri=
+ FileProvider.getUriForFile(context,context.packageName+".files",file)
 
 @Composable
 fun MediaAttachmentButton(token:String,assetId:String){
@@ -895,14 +1000,23 @@ fun MediaAttachmentButton(token:String,assetId:String){
    busy=true
    error=""
    scope.launch{
-    runCatching{withContext(Dispatchers.IO){MediaApi.link(token,assetId)}}
-     .onSuccess{link->
+    runCatching{
+     withContext(Dispatchers.IO){
+      val link=MediaApi.link(token,assetId)
+      val cached=if(link.rangeRequired)
+       MediaApi.cacheChunked(context,assetId,link) else null
+      link to cached
+     }
+    }.onSuccess{result->
+      val link=result.first
+      val cached=result.second
       when{
        link.mime.startsWith("audio/")->{
         runCatching{
          player?.release()
          val mp=MediaPlayer()
-         mp.setDataSource(link.url)
+         if(cached!=null)mp.setDataSource(context,Uri.fromFile(cached))
+         else mp.setDataSource(link.url)
          mp.setOnPreparedListener{it.start();busy=false}
          mp.setOnCompletionListener{it.reset();it.release();if(player===it)player=null}
          mp.setOnErrorListener{it,_,_->it.release();if(player===it)player=null;busy=false;error="Не удалось воспроизвести аудио";true}
@@ -911,18 +1025,24 @@ fun MediaAttachmentButton(token:String,assetId:String){
         }.onFailure{error="Не удалось воспроизвести аудио";busy=false}
        }
        link.mime.startsWith("image/")->{
-        runCatching{withContext(Dispatchers.IO){fetchImageBitmap(link.url)}}
+        runCatching{
+         if(cached!=null)decodeImageBitmap(cached.readBytes())
+         else withContext(Dispatchers.IO){fetchImageBitmap(link.url)}
+        }
          .onSuccess{photo=it;showPhoto=true}
          .onFailure{error="Не удалось открыть фотографию"}
         busy=false
        }
-       link.mime=="video/mp4"->{videoUrl=link.url;busy=false}
+       link.mime=="video/mp4"->{
+        videoUrl=cached?.let{Uri.fromFile(it).toString()}?:link.url
+        busy=false
+       }
        link.mime in documentMimes.toSet()->{
-        val uri=Uri.parse(link.url)
+        val uri=cached?.let{localMediaUri(context,it)}?:Uri.parse(link.url)
         val intent=Intent(Intent.ACTION_VIEW).apply{
          setDataAndType(uri,link.mime)
-         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-         addCategory(Intent.CATEGORY_BROWSABLE)
+         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+         if(cached==null)addCategory(Intent.CATEGORY_BROWSABLE)
          putExtra(Intent.EXTRA_TITLE,link.filename)
         }
         runCatching{
@@ -935,7 +1055,7 @@ fun MediaAttachmentButton(token:String,assetId:String){
        else->{error="Неизвестный формат вложения";busy=false}
       }
      }
-     .onFailure{error="Не удалось открыть вложение";busy=false}
+     .onFailure{error=it.message?:"Не удалось открыть вложение";busy=false}
    }
   },enabled=!busy){Text(if(busy)"Загрузка..." else "↗ Открыть вложение")}
   if(error.isNotBlank())Text(error,color=MaterialTheme.colorScheme.error)
