@@ -87,6 +87,9 @@ test("Postgres inline media fallback works without S3 and remains participant-on
     assert.equal(caps.json.mediaInlineReady,true);
     assert.equal(caps.json.mediaMode,"inline");
     assert.equal(caps.json.mediaInlineMaxBytes,4*1024*1024);
+    assert.equal(caps.json.mediaInlineChunkBytes,3*1024*1024);
+    assert.equal(caps.json.mediaInlineMaxAssetBytes,25*1024*1024);
+    assert.equal(caps.json.mediaInlineChunkedReady,true);
     assert.equal(caps.json.groupAttachments,true);
 
     const alice=await register("ina");
@@ -102,6 +105,131 @@ test("Postgres inline media fallback works without S3 and remains participant-on
     });
     assert.equal(tooLarge.status,413);
     assert.equal(tooLarge.json.error,"inline_media_too_large");
+
+    const largeBytes=Buffer.alloc(4*1024*1024+123);
+    for(let i=0;i<largeBytes.length;i++)largeBytes[i]=i%251;
+    const chunkSize=3*1024*1024;
+    const chunked=await request("/api/media/init","POST",alice.token,{
+      to:bob.user.id,
+      mime:"image/jpeg",
+      bytes:largeBytes.length,
+      filename:"large.jpg",
+      chunkedInline:true
+    });
+    assert.equal(chunked.status,201);
+    assert.equal(chunked.json.uploadMode,"inline-chunks");
+    assert.equal(chunked.json.chunkBytes,chunkSize);
+    assert.equal(chunked.json.maxBytes,8*1024*1024);
+    assert.equal(chunked.json.uploadUrl,null);
+
+    const incomplete=await request(
+      "/api/media/"+chunked.json.assetId+"/complete","POST",alice.token
+    );
+    assert.equal(incomplete.status,409);
+    assert.equal(incomplete.json.error,"upload_incomplete");
+
+    const firstChunk=largeBytes.subarray(0,chunkSize);
+    const secondChunk=largeBytes.subarray(chunkSize);
+    const shortFirst=firstChunk.subarray(0,firstChunk.length-1);
+    const wrongSize=await request(
+      "/api/media/"+chunked.json.assetId+"/chunks/0","PUT",
+      alice.token,shortFirst,{"Content-Type":"image/jpeg"}
+    );
+    assert.equal(wrongSize.status,409);
+    assert.equal(wrongSize.json.error,"upload_mismatch");
+
+    const firstUpload=await request(
+      "/api/media/"+chunked.json.assetId+"/chunks/0","PUT",
+      alice.token,firstChunk,{"Content-Type":"image/jpeg"}
+    );
+    assert.equal(firstUpload.status,200);
+    assert.equal(firstUpload.json.index,0);
+    assert.equal(firstUpload.json.expectedChunks,2);
+
+    const replay=await request(
+      "/api/media/"+chunked.json.assetId+"/chunks/0","PUT",
+      alice.token,firstChunk,{"Content-Type":"image/jpeg"}
+    );
+    assert.equal(replay.status,200,"same chunk retry is idempotent");
+
+    const conflicting=Buffer.from(firstChunk);
+    conflicting[0]^=0xff;
+    const conflict=await request(
+      "/api/media/"+chunked.json.assetId+"/chunks/0","PUT",
+      alice.token,conflicting,{"Content-Type":"image/jpeg"}
+    );
+    assert.equal(conflict.status,409);
+    assert.equal(conflict.json.error,"media_chunk_conflict");
+
+    assert.equal((await request(
+      "/api/media/"+chunked.json.assetId+"/chunks/1","PUT",
+      alice.token,secondChunk,{"Content-Type":"image/jpeg"}
+    )).status,200);
+    assert.equal((await request(
+      "/api/media/"+chunked.json.assetId+"/complete","POST",alice.token
+    )).status,200);
+
+    const chunkedSent=await request(
+      "/api/media/"+chunked.json.assetId+"/send","POST",alice.token,{
+        clientMessageId:randomUUID(),
+        caption:"Large inline image"
+      }
+    );
+    assert.equal(chunkedSent.status,201);
+
+    const chunkedLink=await request(
+      "/api/media/"+chunked.json.assetId+"/download","GET",bob.token
+    );
+    assert.equal(chunkedLink.status,200);
+    assert.equal(chunkedLink.json.rangeRequired,true);
+    assert.equal(chunkedLink.json.chunkBytes,chunkSize);
+    assert.equal(chunkedLink.json.bytes,largeBytes.length);
+    assert.equal((await request(
+      "/api/media/"+chunked.json.assetId+"/download","GET",stranger.token
+    )).status,404);
+
+    const fullRejected=await fetch(base+chunkedLink.json.url);
+    assert.equal(fullRejected.status,416);
+    assert.equal(
+      fullRejected.headers.get("content-range"),
+      `bytes */${largeBytes.length}`
+    );
+
+    const chunkedHead=await fetch(base+chunkedLink.json.url,{method:"HEAD"});
+    assert.equal(chunkedHead.status,200);
+    assert.equal(
+      Number(chunkedHead.headers.get("content-length")),
+      largeBytes.length
+    );
+
+    const prefix=await fetch(base+chunkedLink.json.url,{
+      headers:{Range:"bytes=0-99"}
+    });
+    assert.equal(prefix.status,206);
+    assert.deepEqual(
+      Buffer.from(await prefix.arrayBuffer()),
+      largeBytes.subarray(0,100)
+    );
+
+    const crossStart=chunkSize-16;
+    const crossEnd=chunkSize+15;
+    const crossing=await fetch(base+chunkedLink.json.url,{
+      headers:{Range:`bytes=${crossStart}-${crossEnd}`}
+    });
+    assert.equal(crossing.status,206);
+    assert.equal(
+      crossing.headers.get("content-range"),
+      `bytes ${crossStart}-${crossEnd}/${largeBytes.length}`
+    );
+    assert.deepEqual(
+      Buffer.from(await crossing.arrayBuffer()),
+      largeBytes.subarray(crossStart,crossEnd+1)
+    );
+
+    const oversizedRange=await fetch(base+chunkedLink.json.url,{
+      headers:{Range:"bytes=0-4194304"}
+    });
+    assert.equal(oversizedRange.status,416);
 
     const init=await request("/api/media/init","POST",alice.token,{
       to:bob.user.id,
