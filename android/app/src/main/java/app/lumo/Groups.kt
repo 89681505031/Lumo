@@ -10,6 +10,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AttachFile
+import androidx.compose.material.icons.rounded.Send
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -349,6 +352,8 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
  var deleteTarget by remember(initial.id){mutableStateOf<LumoGroupMessage?>(null)}
  var replyTarget by remember(initial.id){mutableStateOf<LumoGroupMessage?>(null)}
  var showSearch by remember(initial.id){mutableStateOf(false)}
+ var showAttachments by remember(initial.id){mutableStateOf(false)}
+ var showMembers by remember(initial.id){mutableStateOf(false)}
  var searchText by remember(initial.id){mutableStateOf("")}
  var searchResults by remember(initial.id){mutableStateOf<List<LumoGroupMessage>>(emptyList())}
  var searchBusy by remember{mutableStateOf(false)}
@@ -765,7 +770,6 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
     modifier=Modifier.padding(10.dp))
    if(loading)LinearProgressIndicator(Modifier.fillMaxWidth())
    detail?.let{g->
-    var showMembers by remember{mutableStateOf(false)}
     TextButton(onClick={showMembers=!showMembers}){
      Text(if(showMembers)"Скрыть участников" else "Участники и управление")}
     if(showMembers){
@@ -953,16 +957,19 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
      }
     }
    }
-   GroupMediaComposer(
-    token=token,
-    me=me,
-    groupId=initial.id,
-    allowSend=!sending&&pending==null&&replyTarget==null&&!loading,
-    onSent={m->
-     history=(history.filterNot{it.id==m.id}+m).sortedBy{it.createdAt}
-     error=""
-    }
-   )
+   if(showAttachments){
+    GroupMediaComposer(
+     token=token,
+     me=me,
+     groupId=initial.id,
+     allowSend=!sending&&pending==null&&replyTarget==null&&!loading,
+     onSent={m->
+      history=(history.filterNot{it.id==m.id}+m).sortedBy{it.createdAt}
+      error=""
+      showAttachments=false
+     }
+    )
+   }
    Surface(color=Color.Transparent){
     val replyPreview=pending?.takeIf{it.replyToMessageId.isNotBlank()}?.let{
      Triple(it.replyToMessageId,it.replyPreviewText,it.replyPreviewFrom)
@@ -989,14 +996,36 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
       TextButton(onClick={savePending(null);input="";replyTarget=null},enabled=!sending){Text("Не повторять")}
      }
     }
-    Row(Modifier.fillMaxWidth().imePadding().padding(8.dp).lumoGlass(23).padding(6.dp),verticalAlignment=Alignment.Bottom){
-     OutlinedTextField(input,{input=it.take(4000)},enabled=pending==null,modifier=Modifier.weight(1f),
-      label={Text("Сообщение группе")},maxLines=4)
-     Spacer(Modifier.width(8.dp))
+    Row(
+     Modifier.fillMaxWidth().imePadding().background(Color(0xFF111B21))
+      .padding(horizontal=8.dp,vertical=7.dp),
+     verticalAlignment=Alignment.CenterVertically
+    ){
+     IconButton(
+      onClick={showAttachments=!showAttachments},
+      enabled=pending==null&&!sending,
+      modifier=Modifier.size(42.dp)
+     ){
+      Icon(Icons.Rounded.AttachFile,contentDescription="Вложения",
+       tint=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.size(24.dp))
+     }
+     OutlinedTextField(
+      input,{input=it.take(4000)},enabled=pending==null,
+      modifier=Modifier.weight(1f),placeholder={Text("Сообщение")},maxLines=4,
+      shape=RoundedCornerShape(24.dp),
+      colors=OutlinedTextFieldDefaults.colors(
+       focusedContainerColor=Color(0xFF202C33),
+       unfocusedContainerColor=Color(0xFF202C33),
+       focusedBorderColor=Color.Transparent,
+       unfocusedBorderColor=Color.Transparent
+      )
+     )
+     Spacer(Modifier.width(6.dp))
      val target=replyTarget
      val fallbackExtra=if(target!=null&&!groupLinkedReplies)
       ("↪ "+target.text.replace("\n"," ").take(120)+"\n").length else 0
-     Button(onClick={
+     IconButton(
+      onClick={
       val item=pending?:run{
        val selected=replyTarget
        val linked=groupLinkedReplies&&selected!=null
@@ -1023,10 +1052,13 @@ fun GroupRoom(token:String,me:User,initial:LumoGroup,back:()->Unit){
         .onFailure{error="Не удалось отправить сообщение; повторите с тем же идентификатором"}
        sending=false
       }
-     },enabled=!sending&&!loading&&(
+     },
+      enabled=!sending&&!loading&&(
        pending!=null || (input.trim().isNotEmpty()&&input.trim().length+fallbackExtra<=4000)
-      )){
-      Text(if(pending==null)"➤" else "↻")
+      ),
+      modifier=Modifier.size(48.dp).clip(CircleShape).background(LumoCyan)
+     ){
+      Icon(Icons.Rounded.Send,contentDescription="Отправить",tint=Color(0xFF061A10))
      }
     }
    }
