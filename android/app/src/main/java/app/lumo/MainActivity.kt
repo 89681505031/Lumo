@@ -1258,55 +1258,61 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
   Scaffold(
    containerColor=Color.Transparent,
    topBar={
-    Row(
-     Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=9.dp,vertical=8.dp)
-      .lumoGlass(22).padding(horizontal=5.dp,vertical=4.dp),
-     verticalAlignment=Alignment.CenterVertically
-    ){
-     TextButton(back){Text("‹",style=MaterialTheme.typography.headlineMedium,color=Color.White)}
-     LumoUserAvatar(token,peer,size=43.dp)
-     Spacer(Modifier.width(10.dp))
-     Column(Modifier.weight(1f)){
-      Text(peer.displayName,fontWeight=FontWeight.Bold,color=Color.White,
-       style=MaterialTheme.typography.titleMedium,maxLines=1)
-      Text("@"+peer.username,style=MaterialTheme.typography.labelMedium,
-       color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
-     }
-     TextButton(
-      onClick=openAudioCall,
-      enabled=!blockedByMe&&!blockBusy,
-      contentPadding=PaddingValues(horizontal=7.dp)
+    Surface(color=Color(0xFF111B21),tonalElevation=0.dp,shadowElevation=0.dp){
+     Row(
+      Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=6.dp,vertical=7.dp),
+      verticalAlignment=Alignment.CenterVertically
      ){
-      Text("📞",color=LumoCyan,style=MaterialTheme.typography.titleLarge)
-     }
-     TextButton(
-      onClick=openVideoCall,
-      enabled=!blockedByMe&&!blockBusy,
-      contentPadding=PaddingValues(horizontal=7.dp)
-     ){
-      Text("🎥",color=LumoPink,style=MaterialTheme.typography.titleLarge)
-     }
-     if(messageSearchEnabled){
-      TextButton(onClick={
-       showSearch=!showSearch
-       searchResults=emptyList()
-       searchPerformed=false
-       searchError=""
-       if(!showSearch)searchText=""
-      }){
-       Text(if(showSearch)"×" else "⌕",color=LumoCyan,
-        style=MaterialTheme.typography.titleLarge)
-      }
-     }
-     if(blockSupported){
       TextButton(
-       onClick={blockDialog=true},
-       enabled=!blockBusy,
+       onClick=back,
+       contentPadding=PaddingValues(horizontal=6.dp,vertical=2.dp)
+      ){
+       Text("←",style=MaterialTheme.typography.headlineMedium,color=Color.White)
+      }
+      LumoUserAvatar(token,peer,size=43.dp)
+      Spacer(Modifier.width(10.dp))
+      Column(Modifier.weight(1f)){
+       Text(peer.displayName,fontWeight=FontWeight.SemiBold,color=Color.White,
+        style=MaterialTheme.typography.titleMedium,maxLines=1)
+       Text("@"+peer.username,style=MaterialTheme.typography.labelMedium,
+        color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
+      }
+      TextButton(
+       onClick=openVideoCall,
+       enabled=!blockedByMe&&!blockBusy,
        contentPadding=PaddingValues(horizontal=7.dp)
       ){
-       Text(if(blockedByMe)"🔓" else "⛔",
-        color=if(blockedByMe)LumoCyan else LumoPink,
-        style=MaterialTheme.typography.titleLarge)
+       Text("▣",color=Color.White,style=MaterialTheme.typography.titleLarge)
+      }
+      TextButton(
+       onClick=openAudioCall,
+       enabled=!blockedByMe&&!blockBusy,
+       contentPadding=PaddingValues(horizontal=7.dp)
+      ){
+       Text("☎",color=Color.White,style=MaterialTheme.typography.titleLarge)
+      }
+      if(messageSearchEnabled){
+       TextButton(onClick={
+        showSearch=!showSearch
+        searchResults=emptyList()
+        searchPerformed=false
+        searchError=""
+        if(!showSearch)searchText=""
+       }){
+        Text(if(showSearch)"×" else "⌕",color=Color.White,
+         style=MaterialTheme.typography.titleLarge)
+       }
+      }
+      if(blockSupported){
+       TextButton(
+        onClick={blockDialog=true},
+        enabled=!blockBusy,
+        contentPadding=PaddingValues(horizontal=6.dp)
+       ){
+        Text(if(blockedByMe)"◌" else "⋮",
+         color=Color.White,
+         style=MaterialTheme.typography.titleLarge)
+       }
       }
      }
     }
