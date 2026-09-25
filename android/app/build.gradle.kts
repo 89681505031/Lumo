@@ -18,6 +18,11 @@ if (fcmRequested && !fcmConfigured)
 if (fcmConfigured) apply(plugin="com.google.gms.google-services")
 val httpForDebug = stagingBase ?: normalHttp
 val wsForDebug = httpForDebug.replaceFirst("https://", "wss://") + "/ws"
+val defaultSupabaseUrl = "https://vikqgvkjxceypozktvgd.supabase.co"
+val defaultSupabasePublishableKey = "sb_publishable_f7TQbu8r5DH4iWwZE30e0w_Xhq-cRHX"
+val supabaseUrl = System.getenv("LUMO_SUPABASE_URL")?.trim()?.trimEnd('/')?.takeIf{it.isNotBlank()} ?: defaultSupabaseUrl
+val supabasePublishableKey = System.getenv("LUMO_SUPABASE_PUBLISHABLE_KEY")?.trim()?.takeIf{it.isNotBlank()} ?: defaultSupabasePublishableKey
+fun buildConfigString(value:String)=value.replace("\\","\\\\").replace("\"","\\\"")
 val releaseSigningReady = listOf(
  System.getenv("LUMO_KEYSTORE_PATH"),
  System.getenv("LUMO_KEYSTORE_PASSWORD"),
@@ -40,8 +45,8 @@ android {
  }
  defaultConfig {
   applicationId="app.lumo"; minSdk=26; targetSdk=35
-  versionCode=(System.getenv("LUMO_VERSION_CODE")?.toIntOrNull() ?: 1009)
-  versionName=System.getenv("LUMO_VERSION_NAME")?.takeIf{it.isNotBlank()} ?: "1.0.9"
+  versionCode=(System.getenv("LUMO_VERSION_CODE")?.toIntOrNull() ?: 1010)
+  versionName=System.getenv("LUMO_VERSION_NAME")?.takeIf{it.isNotBlank()} ?: "1.0.10"
  }
  buildTypes {
   getByName("debug") {
@@ -49,6 +54,8 @@ android {
    buildConfigField("String","LUMO_HTTP_BASE","\"$httpForDebug\"")
    buildConfigField("String","LUMO_WS_BASE","\"$wsForDebug\"")
    buildConfigField("boolean","LUMO_FCM_CONFIGURED",fcmConfigured.toString())
+   buildConfigField("String","SUPABASE_URL","\""+buildConfigString(supabaseUrl)+"\"")
+   buildConfigField("String","SUPABASE_PUBLISHABLE_KEY","\""+buildConfigString(supabasePublishableKey)+"\"")
   }
   getByName("release") {
    isMinifyEnabled=false
@@ -56,6 +63,8 @@ android {
    buildConfigField("String","LUMO_HTTP_BASE","\"$normalHttp\"")
    buildConfigField("String","LUMO_WS_BASE","\"wss://lumo-gamma-seven.vercel.app/ws\"")
    buildConfigField("boolean","LUMO_FCM_CONFIGURED","false")
+   buildConfigField("String","SUPABASE_URL","\""+buildConfigString(supabaseUrl)+"\"")
+   buildConfigField("String","SUPABASE_PUBLISHABLE_KEY","\""+buildConfigString(supabasePublishableKey)+"\"")
   }
  }
  compileOptions { sourceCompatibility=JavaVersion.VERSION_17; targetCompatibility=JavaVersion.VERSION_17 }
@@ -66,11 +75,13 @@ dependencies {
  implementation(platform("androidx.compose:compose-bom:2025.01.01"))
  implementation("androidx.activity:activity-compose:1.10.0")
  implementation("androidx.compose.material3:material3")
+ implementation("androidx.compose.material:material-icons-extended")
  implementation("androidx.compose.ui:ui")
  implementation("androidx.compose.animation:animation-core")
  implementation("com.squareup.okhttp3:okhttp:4.12.0")
  implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
  implementation("androidx.core:core-ktx:1.15.0")
+ implementation("com.googlecode.libphonenumber:libphonenumber:9.0.39")
  // Staging WebRTC audio transport; UI still requires explicit accepted call + mic permission + TURN.
  implementation("io.github.webrtc-sdk:android:150.7871.01")
 

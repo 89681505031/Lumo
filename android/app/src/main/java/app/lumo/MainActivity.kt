@@ -26,6 +26,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AttachFile
+import androidx.compose.material.icons.rounded.Send
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +53,7 @@ data class Receipt(val messageId:String,val deliveredAt:String,val readAt:String
 data class PendingMessage(val clientMessageId:String,val text:String,val replyToMessageId:String="",val replyPreviewText:String="",val replyPreviewFrom:String="")
 private fun nullableJsonText(o:JSONObject,key:String):String=if(o.isNull(key))"" else o.optString(key)
 class SessionExpiredException:Exception("Сессия недействительна")
+class UserInteractionBlockedException:Exception("Общение с этим контактом недоступно.")
 
 class MainActivity:ComponentActivity(){
  override fun onCreate(b:Bundle?){super.onCreate(b);PushLifecycle.onAppStart(this);setContent{LumoTheme{App()}}}
@@ -131,6 +135,23 @@ class MainActivity:ComponentActivity(){
 }
 
 @Composable fun Register(done:(String,User)->Unit){
+ var legacy by remember{mutableStateOf(!LumoPhoneAuth.configured)}
+ if(!legacy){
+  LumoPhoneRegister(onLegacy={legacy=true},done=done)
+ }else{
+  LegacyRegister(
+   done=done,
+   phoneAvailable=LumoPhoneAuth.configured,
+   onPhone={legacy=false}
+  )
+ }
+}
+
+@Composable fun LegacyRegister(
+ done:(String,User)->Unit,
+ phoneAvailable:Boolean,
+ onPhone:()->Unit
+){
  val scope=rememberCoroutineScope()
  var loginMode by remember{mutableStateOf(false)}
  var name by remember{mutableStateOf("")}
@@ -233,39 +254,41 @@ class MainActivity:ComponentActivity(){
      Text(if(loginMode)"Создать аккаунт" else "Войти",
       style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
     }
+    if(phoneAvailable){
+     Spacer(Modifier.height(8.dp))
+     TextButton(
+      onClick=onPhone,
+      enabled=!busy,
+      modifier=Modifier.align(Alignment.CenterHorizontally)
+     ){Text("Войти по номеру телефона",color=LumoCyan)}
+    }
    }
   }
  }
 }
 
-@Composable fun Home(token:String,me:User,open:(User)->Unit,openGroups:()->Unit,openCalls:()->Unit,openAi:()->Unit,profileChanged:(User)->Unit,privacy:LumoPrivacy,logout:()->Unit){
- var tab by remember{mutableIntStateOf(0)}
- LumoBackdrop(Modifier.fillMaxSize()){
-  Scaffold(
-   containerColor=Color.Transparent,
-   topBar={
-    Row(
-     Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=18.dp,vertical=12.dp),
-     verticalAlignment=Alignment.CenterVertically
-    ){
-     Text("Lumo",style=MaterialTheme.typography.headlineLarge,fontWeight=FontWeight.ExtraBold,color=Color.White)
-     Spacer(Modifier.weight(1f))
-     Box(Modifier.lumoGlass(22).clickable{tab=2}.padding(horizontal=15.dp,vertical=8.dp)){
-      Text(me.displayName,style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold,color=Color.White,maxLines=1)
-     }
-    }
-   },
-   bottomBar={LumoBottomNavigation(selected=tab,onSelect={tab=it})}
-  ){pad->
-   Box(Modifier.fillMaxSize().padding(pad)){
-    when(tab){
-     0->Chats(token,me,{tab=1},open,openGroups,openCalls,privacy)
-     1->People(token,open)
-     else->Profile(token,me,profileChanged,privacy,openCalls,openAi,logout)
-    }
-   }
-  }
- }
+@Composable fun Home(
+ token:String,
+ me:User,
+ open:(User)->Unit,
+ openGroups:()->Unit,
+ openCalls:()->Unit,
+ openAi:()->Unit,
+ profileChanged:(User)->Unit,
+ privacy:LumoPrivacy,
+ logout:()->Unit
+){
+ LumoReferenceHome(
+  token=token,
+  me=me,
+  openChat=open,
+  openGroups=openGroups,
+  openCalls=openCalls,
+  openAi=openAi,
+  profileChanged=profileChanged,
+  privacy=privacy,
+  logout=logout
+ )
 }
 
 @Composable fun Chats(
@@ -424,69 +447,7 @@ class MainActivity:ComponentActivity(){
 }
 
 @Composable fun People(token:String,open:(User)->Unit){
- var users by remember{mutableStateOf<List<User>>(emptyList())}
- var q by remember{mutableStateOf("")}
- var loading by remember{mutableStateOf(false)}
- var loadError by remember{mutableStateOf(false)}
- var retry by remember{mutableIntStateOf(0)}
- LaunchedEffect(token,q,retry){
-  loading=true;loadError=false;users=emptyList()
-  kotlinx.coroutines.delay(300)
-  runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.users(token,q)}}
-   .onSuccess{users=it}.onFailure{loadError=true}
-  loading=false
- }
- Column(Modifier.fillMaxSize()){
-  LumoSearchField(
-   value=q,onValueChange={q=it},placeholder="Поиск по имени или логину",
-   modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp)
-  )
-  if(loading)LinearProgressIndicator(Modifier.fillMaxWidth(),color=LumoCyan)
-  if(loadError){
-   Column(
-    Modifier.fillMaxWidth().padding(16.dp).lumoGlass(24).padding(20.dp),
-    horizontalAlignment=Alignment.CenterHorizontally
-   ){
-    Text("Не удалось загрузить пользователей",color=Color.White)
-    Spacer(Modifier.height(10.dp))
-    LumoNeonButton("Повторить",onClick={retry++},modifier=Modifier.fillMaxWidth())
-   }
-  }
-  if(!loading&&!loadError&&users.isEmpty()){
-   Box(Modifier.fillMaxWidth().padding(24.dp),contentAlignment=Alignment.Center){
-    Text(if(q.isBlank())"Пользователей пока нет" else "Ничего не найдено",
-     color=MaterialTheme.colorScheme.onSurfaceVariant)
-   }
-  }
-  LazyColumn(
-   Modifier.fillMaxSize(),
-   contentPadding=PaddingValues(horizontal=12.dp,vertical=8.dp),
-   verticalArrangement=Arrangement.spacedBy(9.dp)
-  ){
-   items(users,key={it.id}){u->
-    Row(
-     Modifier.fillMaxWidth().lumoGlass(22).clickable{open(u)}.padding(12.dp),
-     verticalAlignment=Alignment.CenterVertically
-    ){
-     LumoUserAvatar(token,u,size=52.dp)
-     Spacer(Modifier.width(14.dp))
-     Column(Modifier.weight(1f)){
-      Text(u.displayName,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleMedium,
-       color=Color.White,maxLines=1)
-      Spacer(Modifier.height(3.dp))
-      Text("@"+u.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
-      if(u.bio.isNotBlank())Text(
-       u.bio,maxLines=1,
-       style=MaterialTheme.typography.bodySmall,
-       color=MaterialTheme.colorScheme.onSurfaceVariant
-      )
-     }
-     Text("›",style=MaterialTheme.typography.headlineSmall,color=Color.White,
-      modifier=Modifier.padding(end=4.dp))
-    }
-   }
-  }
- }
+ SavedContactsPeople(token,open)
 }
 
 @Composable fun Profile(token:String,me:User,profileChanged:(User)->Unit,privacy:LumoPrivacy,openCalls:()->Unit,openAi:()->Unit,logout:()->Unit){
@@ -501,6 +462,14 @@ class MainActivity:ComponentActivity(){
  var profileError by remember{mutableStateOf("")}
  var loggingOut by remember{mutableStateOf(false)}
  var logoutError by remember{mutableStateOf("")}
+ var revokingOthers by remember{mutableStateOf(false)}
+ var sessionSecurityText by remember{mutableStateOf("")}
+ var passwordDialog by remember{mutableStateOf(false)}
+ var currentPassword by remember{mutableStateOf("")}
+ var newPassword by remember{mutableStateOf("")}
+ var confirmPassword by remember{mutableStateOf("")}
+ var changingPassword by remember{mutableStateOf(false)}
+ var passwordError by remember{mutableStateOf("")}
  var update by remember{mutableStateOf<UpdateInfo?>(null)}
  var checking by remember{mutableStateOf(true)}
  var updateText by remember{mutableStateOf("Проверяем обновления…")}
@@ -671,6 +640,147 @@ class MainActivity:ComponentActivity(){
     }
    }
   }
+  Spacer(Modifier.height(16.dp))
+  Column(Modifier.fillMaxWidth().lumoGlass(25).padding(18.dp)){
+   Text("Безопасность аккаунта",style=MaterialTheme.typography.titleMedium,
+    fontWeight=FontWeight.Bold,color=Color.White)
+   Spacer(Modifier.height(6.dp))
+   Text("Можно завершить все другие входы в Lumo, не выходя с этого телефона.",
+    style=MaterialTheme.typography.bodySmall,
+    color=MaterialTheme.colorScheme.onSurfaceVariant)
+   Spacer(Modifier.height(12.dp))
+   OutlinedButton(
+    onClick={
+     revokingOthers=true;sessionSecurityText=""
+     scope.launch{
+      runCatching{
+       kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+        Api.revokeOtherSessions(token)
+       }
+      }.onSuccess{count->
+       sessionSecurityText=if(count>0)
+        "Завершено других сессий: "+count
+       else "Других активных сессий нет."
+      }.onFailure{error->
+       if(error is SessionExpiredException)logout()
+       else sessionSecurityText="Не удалось завершить другие сессии. Попробуйте позже."
+      }
+      revokingOthers=false
+     }
+    },
+    enabled=!revokingOthers,
+    modifier=Modifier.fillMaxWidth().heightIn(min=50.dp),
+    shape=RoundedCornerShape(24.dp),
+    border=androidx.compose.foundation.BorderStroke(1.dp,LumoCyan),
+    colors=ButtonDefaults.outlinedButtonColors(contentColor=Color.White)
+   ){
+    Text(if(revokingOthers)"Завершаем…" else "Выйти на других устройствах")
+   }
+   if(sessionSecurityText.isNotBlank()){
+    Text(sessionSecurityText,modifier=Modifier.padding(top=9.dp),
+     style=MaterialTheme.typography.bodySmall,
+     color=if(sessionSecurityText.startsWith("Не удалось"))
+      MaterialTheme.colorScheme.error else LumoCyan)
+   }
+   Spacer(Modifier.height(10.dp))
+   TextButton(
+    onClick={
+     currentPassword="";newPassword="";confirmPassword=""
+     passwordError="";passwordDialog=true
+    },
+    modifier=Modifier.align(Alignment.CenterHorizontally)
+   ){Text("Сменить пароль",color=Color.White)}
+  }
+  if(passwordDialog){
+   AlertDialog(
+    onDismissRequest={
+     if(!changingPassword){
+      passwordDialog=false
+      currentPassword="";newPassword="";confirmPassword="";passwordError=""
+     }
+    },
+    title={Text("Смена пароля")},
+    text={
+     Column{
+      Text("После смены пароля Lumo завершит все другие активные сессии.",
+       style=MaterialTheme.typography.bodySmall,
+       color=MaterialTheme.colorScheme.onSurfaceVariant)
+      Spacer(Modifier.height(12.dp))
+      OutlinedTextField(
+       value=currentPassword,
+       onValueChange={currentPassword=it;passwordError=""},
+       label={Text("Текущий пароль")},
+       singleLine=true,
+       visualTransformation=PasswordVisualTransformation(),
+       modifier=Modifier.fillMaxWidth()
+      )
+      Spacer(Modifier.height(8.dp))
+      OutlinedTextField(
+       value=newPassword,
+       onValueChange={newPassword=it.take(128);passwordError=""},
+       label={Text("Новый пароль")},
+       singleLine=true,
+       visualTransformation=PasswordVisualTransformation(),
+       modifier=Modifier.fillMaxWidth()
+      )
+      Spacer(Modifier.height(8.dp))
+      OutlinedTextField(
+       value=confirmPassword,
+       onValueChange={confirmPassword=it.take(128);passwordError=""},
+       label={Text("Повтори новый пароль")},
+       singleLine=true,
+       visualTransformation=PasswordVisualTransformation(),
+       modifier=Modifier.fillMaxWidth()
+      )
+      if(passwordError.isNotBlank())
+       Text(passwordError,color=MaterialTheme.colorScheme.error,
+        style=MaterialTheme.typography.bodySmall,
+        modifier=Modifier.padding(top=8.dp))
+     }
+    },
+    confirmButton={
+     TextButton(
+      enabled=!changingPassword,
+      onClick={
+       when{
+        currentPassword.isBlank()->passwordError="Введи текущий пароль."
+        newPassword.length<10->passwordError="Новый пароль должен быть не короче 10 символов."
+        newPassword!=confirmPassword->passwordError="Новые пароли не совпадают."
+        else->{
+         changingPassword=true;passwordError=""
+         scope.launch{
+          runCatching{
+           kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+            Api.changePassword(token,currentPassword,newPassword)
+           }
+          }.onSuccess{revoked->
+           sessionSecurityText=if(revoked>0)
+            "Пароль изменён. Завершено других сессий: "+revoked
+           else "Пароль изменён."
+           passwordDialog=false
+           currentPassword="";newPassword="";confirmPassword=""
+          }.onFailure{error->
+           if(error is SessionExpiredException)logout()
+           else passwordError=error.message ?: "Не удалось сменить пароль."
+          }
+          changingPassword=false
+         }
+        }
+       }
+      }
+     ){Text(if(changingPassword)"Сохраняем…" else "Сменить")}
+    },
+    dismissButton={
+     TextButton(
+      enabled=!changingPassword,
+      onClick={
+       passwordDialog=false
+       currentPassword="";newPassword="";confirmPassword="";passwordError=""
+      }
+     ){Text("Отмена")}
+    }
+   )
+  }
   Spacer(Modifier.height(18.dp))
   OutlinedButton(
    onClick={
@@ -767,7 +877,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    replyPreviewFrom=preferred.replyPreviewFrom.ifBlank{other.replyPreviewFrom}
   )
  }
- return merged.values.sortedBy{it.createdAt}
+ return merged.values.sortedWith(compareBy<Msg>{it.createdAt}.thenBy{it.id})
 }
 
 @Composable fun Chat(
@@ -781,6 +891,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  var activeMessage by remember(peer.id){mutableStateOf<Msg?>(null)}
  var forwardingMessage by remember(peer.id){mutableStateOf<Msg?>(null)}
  var replyTarget by remember(peer.id){mutableStateOf<Msg?>(null)}
+ var showAttachments by remember(peer.id){mutableStateOf(false)}
  var reactionsEnabled by remember(token,peer.id){mutableStateOf(false)}
  var aiEnabled by remember(token,peer.id){mutableStateOf(false)}
  var linkedRepliesEnabled by remember(token,peer.id){mutableStateOf(false)}
@@ -803,6 +914,13 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  var actionError by remember{mutableStateOf("")}
  var showingCachedHistory by remember(me.id,peer.id){mutableStateOf(false)}
  var networkHistoryLoaded by remember(me.id,peer.id){mutableStateOf(false)}
+ var directPaginationEnabled by remember(token,peer.id){mutableStateOf(false)}
+ var olderHistoryBusy by remember(peer.id){mutableStateOf(false)}
+ var olderHistoryDone by remember(peer.id){mutableStateOf(false)}
+ var blockSupported by remember(token,peer.id){mutableStateOf(false)}
+ var blockedByMe by remember(token,peer.id){mutableStateOf(false)}
+ var blockBusy by remember(peer.id){mutableStateOf(false)}
+ var blockDialog by remember(peer.id){mutableStateOf(false)}
  LaunchedEffect(token,peer.id) {
   reactionsEnabled=runCatching {
    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){LumoReactionApi.enabled(token)}
@@ -821,6 +939,21 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
   messageEditEnabled=mutationCaps.first
   messageDeleteEnabled=mutationCaps.second
   messageSearchEnabled=mutationCaps.third
+  directPaginationEnabled=runCatching {
+   kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+    Api.directPaginationSupported(token)
+   }
+  }.getOrDefault(false)
+  runCatching {
+   kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+    Api.blockStatus(token,peer.id)
+   }
+  }.onSuccess{
+   blockSupported=true
+   blockedByMe=it
+  }.onFailure{
+   blockSupported=false
+  }
  }
  LaunchedEffect(token,peer.id,reactionsEnabled,reactionRefresh) {
   if(reactionsEnabled) while(true) {
@@ -874,6 +1007,14 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    if(migrated)queuePrefs.edit().remove(queueKey).apply()
   }
  }
+ LaunchedEffect(blockedByMe){
+  if(blockedByMe){
+   pending.clear()
+   savePending()
+   input=""
+   replyTarget=null
+  }
+ }
  fun persistHistory(){
   val snapshot=msgs.toList()
   scope.launch{
@@ -897,8 +1038,8 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
   }
  }
  DisposableEffect(peer.id){
-  scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{fresh->historyError=false;networkHistoryLoaded=true;showingCachedHistory=false;val merged=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(merged);persistHistory();val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}}
-  fun syncHistory(){scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.history(token,peer.id)}}.onSuccess{fresh->historyError=false;networkHistoryLoaded=true;showingCachedHistory=false;val byId=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(byId);persistHistory();val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->scope.launch{if(m.from==peer.id||m.to==peer.id){if(m.from==me.id&&m.clientMessageId.isNotBlank()){pending.removeAll{it.clientMessageId==m.clientMessageId};savePending()};val existing=msgs.indexOfFirst{it.id==m.id};if(existing>=0){msgs[existing]=mergeChatMessages(listOf(msgs[existing]),listOf(m)).first()}else msgs.add(m);persistHistory();if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}}},{r->scope.launch{val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=old.deliveredAt.ifBlank{r.deliveredAt},readAt=old.readAt.ifBlank{r.readAt});persistHistory()}}},{e->scope.launch{socketError=when(e){"service_unavailable"->"Сервер временно недоступен. Переподключаемся…";"recipient_not_found"->"Получатель больше не найден.";"message_too_long"->"Сообщение слишком длинное.";"empty_message"->"Пустое сообщение не отправлено.";"client_message_id_conflict"->"Конфликт повторной отправки. Сообщение сохранено.";"invalid_client_message_id"->"Ошибка идентификатора сообщения.";"invalid_recipient_id"->"Некорректный получатель.";"invalid_reply_message_id"->"Некорректный ответ на сообщение.";"reply_message_not_found"->"Исходное сообщение для ответа больше недоступно.";"invalid_server_message"->"Получен некорректный ответ сервера.";"cannot_message_self"->"Нельзя отправить сообщение самому себе." ;else->"Не удалось отправить сообщение"};if(e=="service_unavailable"){connected=false;ws?.close(1012,"retry")}}},{scope.launch{connected=true;socketError="";for(p in pending.toList()){val payload=JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId);if(p.replyToMessageId.isNotBlank())payload.put("replyToMessageId",p.replyToMessageId);val sent=ws?.send(payload.toString())==true;if(!sent){connected=false;ws?.close(1012,"retry");break}};syncHistory()}},{scope.launch{if(generation==socketGeneration){connected=false;kotlinx.coroutines.delay(2000);if(generation==socketGeneration)connect()}}})};connect()
+  scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.directHistoryWindow(token,peer.id,100).messages}}.onSuccess{fresh->historyError=false;networkHistoryLoaded=true;showingCachedHistory=false;val merged=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(merged);persistHistory();val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}}
+  fun syncHistory(){scope.launch{runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.directHistoryWindow(token,peer.id,100).messages}}.onSuccess{fresh->historyError=false;networkHistoryLoaded=true;showingCachedHistory=false;val byId=mergeChatMessages(msgs,fresh);msgs.clear();msgs.addAll(byId);persistHistory();val unread=fresh.filter{m->m.from==peer.id&&m.readAt.isBlank()}.map{m->m.id};if(unread.isNotEmpty())ws?.send(JSONObject().put("type","read").put("ids",JSONArray(unread)).toString())}.onFailure{historyError=true;if(msgs.isNotEmpty())showingCachedHistory=true}}};fun connect(){val generation=++socketGeneration;ws=Api.socket(token,{m->scope.launch{if(m.from==peer.id||m.to==peer.id){if(m.from==me.id&&m.clientMessageId.isNotBlank()){pending.removeAll{it.clientMessageId==m.clientMessageId};savePending()};val existing=msgs.indexOfFirst{it.id==m.id};if(existing>=0){msgs[existing]=mergeChatMessages(listOf(msgs[existing]),listOf(m)).first()}else msgs.add(m);persistHistory();if(m.from==peer.id)ws?.send(JSONObject().put("type","read").put("ids",JSONArray().put(m.id)).toString())}}},{r->scope.launch{val i=msgs.indexOfFirst{it.id==r.messageId};if(i>=0){val old=msgs[i];msgs[i]=old.copy(deliveredAt=old.deliveredAt.ifBlank{r.deliveredAt},readAt=old.readAt.ifBlank{r.readAt});persistHistory()}}},{e->scope.launch{socketError=when(e){"service_unavailable"->"Сервер временно недоступен. Переподключаемся…";"recipient_not_found"->"Получатель больше не найден.";"message_too_long"->"Сообщение слишком длинное.";"empty_message"->"Пустое сообщение не отправлено.";"client_message_id_conflict"->"Конфликт повторной отправки. Сообщение сохранено.";"invalid_client_message_id"->"Ошибка идентификатора сообщения.";"invalid_recipient_id"->"Некорректный получатель.";"invalid_reply_message_id"->"Некорректный ответ на сообщение.";"reply_message_not_found"->"Исходное сообщение для ответа больше недоступно.";"invalid_server_message"->"Получен некорректный ответ сервера.";"cannot_message_self"->"Нельзя отправить сообщение самому себе.";"user_blocked"->"Общение с этим контактом недоступно.";else->"Не удалось отправить сообщение"};if(e=="user_blocked"){pending.clear();savePending();actionError="Сообщение не отправлено: общение с этим контактом недоступно."};if(e=="service_unavailable"){connected=false;ws?.close(1012,"retry")}}},{scope.launch{connected=true;socketError="";for(p in pending.toList()){val payload=JSONObject().put("type","message").put("to",peer.id).put("text",p.text).put("clientMessageId",p.clientMessageId);if(p.replyToMessageId.isNotBlank())payload.put("replyToMessageId",p.replyToMessageId);val sent=ws?.send(payload.toString())==true;if(!sent){connected=false;ws?.close(1012,"retry");break}};syncHistory()}},{scope.launch{if(generation==socketGeneration){connected=false;kotlinx.coroutines.delay(2000);if(generation==socketGeneration)connect()}}})};connect()
   onDispose{socketGeneration++;ws?.close(1000,"bye")}
  }
  // A message can be replied to or explicitly copied to another contact on
@@ -1036,22 +1177,73 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    onDismiss={forwardingMessage=null}
   )
  }
+ if(blockDialog){
+  val nextBlocked=!blockedByMe
+  AlertDialog(
+   onDismissRequest={if(!blockBusy)blockDialog=false},
+   title={Text(if(nextBlocked)"Заблокировать контакт?" else "Разблокировать контакт?")},
+   text={Text(
+    if(nextBlocked)
+     "После блокировки личные сообщения, файлы, реакции и звонки между вами будут недоступны. История переписки останется."
+    else "После разблокировки вы снова сможете обмениваться сообщениями и звонками."
+   )},
+   confirmButton={
+    TextButton(
+     enabled=!blockBusy,
+     onClick={
+      blockBusy=true
+      scope.launch{
+       runCatching{
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+         Api.setBlocked(token,peer.id,nextBlocked)
+        }
+       }.onSuccess{
+        blockedByMe=nextBlocked
+        if(nextBlocked){
+         pending.clear();savePending()
+         input="";replyTarget=null
+        }
+        blockDialog=false
+        actionError=if(nextBlocked)"Контакт заблокирован." else "Контакт разблокирован."
+       }.onFailure{error->
+        if(error is SessionExpiredException)back()
+        else actionError="Не удалось изменить блокировку. Проверь соединение."
+       }
+       blockBusy=false
+      }
+     }
+    ){Text(if(blockBusy)"Сохраняем…" else if(nextBlocked)"Заблокировать" else "Разблокировать")}
+   },
+   dismissButton={
+    TextButton(onClick={blockDialog=false},enabled=!blockBusy){Text("Отмена")}
+   }
+  )
+ }
  // Reconcile through PostgreSQL-backed HTTP because Vercel peers may use different function instances.
  LaunchedEffect(token,peer.id){
   while(true){
    kotlinx.coroutines.delay(5000)
+   if(blockedByMe)continue
    // Retry unacknowledged messages even if the socket looks connected:
    // HTTP and WebSocket share the same PostgreSQL idempotency key.
    for(p in pending.toList()){
     if(pending.none{it.clientMessageId==p.clientMessageId})continue
     val saved=runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){Api.sendMessage(token,peer.id,p)}}
-    if(saved.isFailure)break
+    if(saved.isFailure){
+     if(saved.exceptionOrNull() is UserInteractionBlockedException){
+      pending.removeAll{it.clientMessageId==p.clientMessageId}
+      savePending()
+      actionError="Сообщение не отправлено: общение с этим контактом недоступно."
+      continue
+     }
+     break
+    }
     val m=saved.getOrThrow()
     pending.removeAll{it.clientMessageId==p.clientMessageId};savePending()
     val merged=mergeChatMessages(msgs,listOf(m));msgs.clear();msgs.addAll(merged);persistHistory()
    }
    val refreshed=runCatching{kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
-    val fresh=Api.history(token,peer.id)
+    val fresh=Api.directHistoryWindow(token,peer.id,100).messages
     val unread=fresh.filter{it.from==peer.id&&it.readAt.isBlank()}.map{it.id}
     if(unread.isNotEmpty())runCatching{Api.readMessages(token,unread)}
     fresh
@@ -1070,42 +1262,61 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
   Scaffold(
    containerColor=Color.Transparent,
    topBar={
-    Row(
-     Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=9.dp,vertical=8.dp)
-      .lumoGlass(22).padding(horizontal=5.dp,vertical=4.dp),
-     verticalAlignment=Alignment.CenterVertically
-    ){
-     TextButton(back){Text("‹",style=MaterialTheme.typography.headlineMedium,color=Color.White)}
-     LumoUserAvatar(token,peer,size=43.dp)
-     Spacer(Modifier.width(10.dp))
-     Column(Modifier.weight(1f)){
-      Text(peer.displayName,fontWeight=FontWeight.Bold,color=Color.White,
-       style=MaterialTheme.typography.titleMedium,maxLines=1)
-      Text("@"+peer.username,style=MaterialTheme.typography.labelMedium,
-       color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
-     }
-     TextButton(
-      onClick=openAudioCall,
-      contentPadding=PaddingValues(horizontal=7.dp)
+    Surface(color=Color(0xFF111B21),tonalElevation=0.dp,shadowElevation=0.dp){
+     Row(
+      Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=6.dp,vertical=7.dp),
+      verticalAlignment=Alignment.CenterVertically
      ){
-      Text("📞",color=LumoCyan,style=MaterialTheme.typography.titleLarge)
-     }
-     TextButton(
-      onClick=openVideoCall,
-      contentPadding=PaddingValues(horizontal=7.dp)
-     ){
-      Text("🎥",color=LumoPink,style=MaterialTheme.typography.titleLarge)
-     }
-     if(messageSearchEnabled){
-      TextButton(onClick={
-       showSearch=!showSearch
-       searchResults=emptyList()
-       searchPerformed=false
-       searchError=""
-       if(!showSearch)searchText=""
-      }){
-       Text(if(showSearch)"×" else "⌕",color=LumoCyan,
-        style=MaterialTheme.typography.titleLarge)
+      TextButton(
+       onClick=back,
+       contentPadding=PaddingValues(horizontal=6.dp,vertical=2.dp)
+      ){
+       Text("←",style=MaterialTheme.typography.headlineMedium,color=Color.White)
+      }
+      LumoUserAvatar(token,peer,size=43.dp)
+      Spacer(Modifier.width(10.dp))
+      Column(Modifier.weight(1f)){
+       Text(peer.displayName,fontWeight=FontWeight.SemiBold,color=Color.White,
+        style=MaterialTheme.typography.titleMedium,maxLines=1)
+       Text("@"+peer.username,style=MaterialTheme.typography.labelMedium,
+        color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
+      }
+      TextButton(
+       onClick=openVideoCall,
+       enabled=!blockedByMe&&!blockBusy,
+       contentPadding=PaddingValues(horizontal=7.dp)
+      ){
+       Text("▣",color=Color.White,style=MaterialTheme.typography.titleLarge)
+      }
+      TextButton(
+       onClick=openAudioCall,
+       enabled=!blockedByMe&&!blockBusy,
+       contentPadding=PaddingValues(horizontal=7.dp)
+      ){
+       Text("☎",color=Color.White,style=MaterialTheme.typography.titleLarge)
+      }
+      if(messageSearchEnabled){
+       TextButton(onClick={
+        showSearch=!showSearch
+        searchResults=emptyList()
+        searchPerformed=false
+        searchError=""
+        if(!showSearch)searchText=""
+       }){
+        Text(if(showSearch)"×" else "⌕",color=Color.White,
+         style=MaterialTheme.typography.titleLarge)
+       }
+      }
+      if(blockSupported){
+       TextButton(
+        onClick={blockDialog=true},
+        enabled=!blockBusy,
+        contentPadding=PaddingValues(horizontal=6.dp)
+       ){
+        Text(if(blockedByMe)"◌" else "⋮",
+         color=Color.White,
+         style=MaterialTheme.typography.titleLarge)
+       }
       }
      }
     }
@@ -1134,6 +1345,12 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       Text(actionError,color=Color(0xFFFFDBE8),
        style=MaterialTheme.typography.bodySmall,modifier=Modifier.weight(1f))
       TextButton(onClick={actionError=""}){Text("×",color=Color.White)}
+     }
+    }
+    if(blockedByMe){
+     Box(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp).lumoGlass(16).padding(10.dp)){
+      Text("Контакт заблокирован. Сообщения, медиа и звонки отключены.",
+       color=Color(0xFFFFD5E4),style=MaterialTheme.typography.bodySmall)
      }
     }
     if(showSearch){
@@ -1192,6 +1409,40 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
      contentPadding=PaddingValues(horizontal=13.dp,vertical=14.dp),
      verticalArrangement=Arrangement.spacedBy(11.dp)
     ){
+     if(!showSearch&&directPaginationEnabled&&msgs.isNotEmpty()&&!olderHistoryDone){
+      item(key="older-direct-history"){
+       OutlinedButton(
+        enabled=!olderHistoryBusy,
+        modifier=Modifier.fillMaxWidth(),
+        onClick={
+         val oldest=msgs.firstOrNull()?:return@OutlinedButton
+         olderHistoryBusy=true
+         scope.launch{
+          runCatching{
+           kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+            val page=Api.directHistoryPage(token,peer.id,oldest.id,100)
+            val unread=page.messages.filter{
+             it.from==peer.id&&it.readAt.isBlank()
+            }.map{it.id}
+            if(unread.isNotEmpty())runCatching{Api.readMessages(token,unread)}
+            page
+           }
+          }.onSuccess{page->
+           val merged=mergeChatMessages(page.messages,msgs)
+           msgs.clear();msgs.addAll(merged)
+           if(page.messages.isEmpty()||!page.hasMore)olderHistoryDone=true
+           persistHistory()
+          }.onFailure{
+           actionError="Не удалось загрузить ранние сообщения. Проверь соединение."
+          }
+          olderHistoryBusy=false
+         }
+        }
+       ){
+        Text(if(olderHistoryBusy)"Загрузка…" else "Показать ранние сообщения")
+       }
+      }
+     }
      items(visibleMessages,key={it.id}){m->
       val own=m.from==me.id
       Row(
@@ -1333,9 +1584,12 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       }
      }
     }
-    MediaComposer(token,me,peer,allowSend=true){attached->
-     val merged=mergeChatMessages(msgs,listOf(attached))
-     msgs.clear();msgs.addAll(merged);persistHistory()
+    if(showAttachments){
+     MediaComposer(token,me,peer,allowSend=!blockedByMe){attached->
+      val merged=mergeChatMessages(msgs,listOf(attached))
+      msgs.clear();msgs.addAll(merged);persistHistory()
+      showAttachments=false
+     }
     }
     replyTarget?.let { original ->
      Row(
@@ -1356,20 +1610,35 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
      }
     }
     Row(
-     Modifier.fillMaxWidth().imePadding().padding(horizontal=11.dp,vertical=8.dp)
-      .lumoGlass(30).padding(7.dp),
-     verticalAlignment=Alignment.Bottom
+     Modifier.fillMaxWidth().imePadding().background(Color(0xFF111B21))
+      .padding(horizontal=8.dp,vertical=7.dp),
+     verticalAlignment=Alignment.CenterVertically
     ){
+     IconButton(
+      onClick={showAttachments=!showAttachments},
+      enabled=!blockedByMe,
+      modifier=Modifier.size(42.dp)
+     ){
+      Icon(Icons.Rounded.AttachFile,contentDescription="Вложения",
+       tint=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.size(24.dp))
+     }
      OutlinedTextField(
-      value=input,onValueChange={input=it},placeholder={Text("Сообщение")},
+      value=input,onValueChange={input=it},
+      placeholder={Text(if(blockedByMe)"Контакт заблокирован" else "Сообщение")},
+      enabled=!blockedByMe,
       modifier=Modifier.weight(1f),maxLines=4,
-      shape=RoundedCornerShape(22.dp)
+      shape=RoundedCornerShape(24.dp),
+      colors=OutlinedTextFieldDefaults.colors(
+       focusedContainerColor=Color(0xFF202C33),
+       unfocusedContainerColor=Color(0xFF202C33),
+       focusedBorderColor=Color.Transparent,
+       unfocusedBorderColor=Color.Transparent
+      )
      )
-     Spacer(Modifier.width(7.dp))
-     LumoNeonButton(
-      text="➤",
-      enabled=input.isNotBlank() && input.trim().length<=4000,
-      modifier=Modifier.width(56.dp),
+     Spacer(Modifier.width(6.dp))
+     IconButton(
+      enabled=!blockedByMe && input.isNotBlank() && input.trim().length<=4000,
+      modifier=Modifier.size(48.dp).clip(CircleShape).background(LumoCyan),
       onClick={
        val original=replyTarget
        val useLinked=linkedRepliesEnabled && original!=null
@@ -1398,7 +1667,9 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
         replyTarget=null
        }
       }
-     )
+     ){
+      Icon(Icons.Rounded.Send,contentDescription="Отправить",tint=Color(0xFF061A10))
+     }
     }
    }
   }
@@ -1434,9 +1705,64 @@ object Api{
    if(!response.isSuccessful)error("Выход: "+response.code)
   }
  }
+ fun revokeOtherSessions(t:String):Int{
+  val request=Request.Builder().url(HTTP+"/api/sessions/revoke-others")
+   .header("Authorization","Bearer "+t).post("".toRequestBody(null)).build()
+  c.newCall(request).execute().use{response->
+   val raw=response.body?.string().orEmpty()
+   if(response.code==401)throw SessionExpiredException()
+   if(!response.isSuccessful)error("Сессии: "+response.code)
+   return runCatching{JSONObject(raw).optInt("revoked",0)}.getOrDefault(0)
+  }
+ }
+ fun changePassword(t:String,current:String,replacement:String):Int{
+  val body=JSONObject()
+   .put("currentPassword",current)
+   .put("newPassword",replacement)
+   .toString().toRequestBody("application/json".toMediaType())
+  val request=Request.Builder().url(HTTP+"/api/account/password")
+   .header("Authorization","Bearer "+t).post(body).build()
+  c.newCall(request).execute().use{response->
+   val raw=response.body?.string().orEmpty()
+   if(response.code==401)throw SessionExpiredException()
+   if(!response.isSuccessful){
+    val code=runCatching{JSONObject(raw).optString("error")}.getOrDefault("")
+    error(when(code){
+     "invalid_new_password"->"Новый пароль должен содержать от 10 до 128 символов."
+     "current_password_incorrect"->"Текущий пароль указан неверно."
+     "password_unchanged"->"Новый пароль совпадает с текущим."
+     "password_changed_elsewhere"->"Пароль уже был изменён в другой сессии. Войди заново."
+     else->if(response.code==404)"Сервер пока не поддерживает смену пароля."
+      else "Не удалось сменить пароль (HTTP "+response.code+")."
+    })
+   }
+   return runCatching{JSONObject(raw).optInt("revoked",0)}.getOrDefault(0)
+  }
+ }
  fun updateMe(t:String,name:String,bio:String):Pair<User,Boolean>{val j=JSONObject().put("displayName",name).put("bio",bio);val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).patch(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful)error("Профиль: "+x.code);val o=JSONObject(x.body!!.string());return user(o) to o.has("bio")}}
  fun me(t:String):User{val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful)error("Сессия: "+x.code);return user(JSONObject(x.body!!.string()))}}
  fun users(t:String,q:String):List<User>{val url=(HTTP+"/api/users").toHttpUrl().newBuilder().addQueryParameter("q",q).build();val r=Request.Builder().url(url).header("Authorization","Bearer "+t).build();c.newCall(r).execute().use{x->if(!x.isSuccessful)error("Поиск: "+x.code);val a=JSONArray(x.body!!.string());return(0 until a.length()).map{user(a.getJSONObject(it))}}}
+ fun blockStatus(t:String,peerId:String):Boolean{
+  val request=Request.Builder().url(HTTP+"/api/blocks/"+peerId)
+   .header("Authorization","Bearer "+t).get().build()
+  c.newCall(request).execute().use{response->
+   val raw=response.body?.string().orEmpty()
+   if(response.code==401)throw SessionExpiredException()
+   if(!response.isSuccessful)error("Блокировка: "+response.code)
+   return runCatching{JSONObject(raw).optBoolean("blocked",false)}.getOrDefault(false)
+  }
+ }
+ fun setBlocked(t:String,peerId:String,blocked:Boolean):Boolean{
+  val builder=Request.Builder().url(HTTP+"/api/blocks/"+peerId)
+   .header("Authorization","Bearer "+t)
+  val request=if(blocked)builder.put("".toRequestBody(null)).build()
+   else builder.delete().build()
+  c.newCall(request).execute().use{response->
+   if(response.code==401)throw SessionExpiredException()
+   if(!response.isSuccessful)error("Блокировка: "+response.code)
+   return blocked
+  }
+ }
  fun conversations(t:String):List<Conversation>{
   val now=android.os.SystemClock.elapsedRealtime()
   if(now<conversationsFallbackUntilMs)return conversationsCompatibilityFallback(t)
@@ -1558,7 +1884,12 @@ object Api{
     )
    }
   }
-  if(result.first !in 200..299)error("Отправка: "+result.first)
+  if(result.first !in 200..299){
+   val code=runCatching{JSONObject(result.second).optString("error")}.getOrDefault("")
+   if(result.first==403 && code=="user_blocked")
+    throw UserInteractionBlockedException()
+   error("Отправка: "+result.first)
+  }
   return msg(JSONObject(result.second))
  }
  fun readMessages(t:String,ids:List<String>){

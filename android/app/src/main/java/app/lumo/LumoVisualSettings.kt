@@ -75,64 +75,63 @@ fun lumoSpaceColors(theme:LumoVisualTheme):List<Color> = when(theme){
 @Composable
 fun LumoAppearanceControls(){
     val appearance=LocalLumoAppearance.current
-    Column(Modifier.fillMaxWidth().lumoGlass(26).padding(16.dp)){
-        Text("Оформление",fontWeight=FontWeight.Bold,
-            style=MaterialTheme.typography.titleMedium,color=Color.White)
-        Spacer(Modifier.height(4.dp))
-        Text("Выбери фон Lumo. Настройки сохраняются на устройстве.",
-            style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(13.dp))
-        LumoVisualTheme.values().toList().chunked(2).forEach{pair->
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(9.dp)){
-                pair.forEach{item->
-                    val selected=appearance.theme==item
-                    val shape=RoundedCornerShape(17.dp)
-                    Column(
-                        Modifier.weight(1f).border(
-                            if(selected)2.dp else 1.dp,
-                            if(selected)LumoCyan else Color(0xFF7896D8),shape
-                        ).background(Brush.linearGradient(lumoSpaceColors(item)),shape)
-                            .clickable{appearance.chooseTheme(item)}
-                            .padding(horizontal=11.dp,vertical=12.dp),
-                        horizontalAlignment=Alignment.CenterHorizontally
-                    ){
-                        Box(
-                            Modifier.size(35.dp).background(
-                                if(item==LumoVisualTheme.MINIMAL)
-                                    Brush.linearGradient(listOf(Color(0xFF263456),Color(0xFF162341)))
-                                else LumoAvatarGradient,
-                                RoundedCornerShape(11.dp)
-                            )
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text(item.title,color=Color.White,
-                            style=MaterialTheme.typography.labelMedium)
-                        if(selected)Text("✓ Выбрано",color=LumoCyan,
-                            style=MaterialTheme.typography.labelSmall)
-                    }
-                }
-            }
-            Spacer(Modifier.height(9.dp))
-        }
-        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF0B141A))
+            .padding(horizontal=18.dp,vertical=14.dp)
+    ){
+        Text(
+            "Оформление",
+            fontWeight=FontWeight.Bold,
+            style=MaterialTheme.typography.titleMedium,
+            color=Color(0xFFE9EDEF)
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Тёмная тема Lumo",
+            color=Color(0xFFE9EDEF),
+            style=MaterialTheme.typography.bodyLarge
+        )
+        Text(
+            "Единый плоский интерфейс без стекла и неоновых эффектов.",
+            style=MaterialTheme.typography.bodySmall,
+            color=Color(0xFF8696A0)
+        )
+        Spacer(Modifier.height(16.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment=Alignment.CenterVertically
+        ){
             Column(Modifier.weight(1f)){
-                Text("Мерцание звёзд",color=Color.White)
-                Text("Медленная анимация фона",style=MaterialTheme.typography.bodySmall,
-                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Анимация",color=Color(0xFFE9EDEF))
+                Text(
+                    "Анимировать элементы интерфейса",
+                    style=MaterialTheme.typography.bodySmall,
+                    color=Color(0xFF8696A0)
+                )
             }
             Switch(
                 checked=appearance.animated,
-                onCheckedChange=appearance::updateAnimationEnabled,
-                enabled=!appearance.lowPower && appearance.theme!=LumoVisualTheme.MINIMAL
+                onCheckedChange=appearance::updateAnimationEnabled
             )
         }
-        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment=Alignment.CenterVertically
+        ){
             Column(Modifier.weight(1f)){
-                Text("Экономия батареи",color=Color.White)
-                Text("Без анимации и крупных планет",style=MaterialTheme.typography.bodySmall,
-                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Экономия батареи",color=Color(0xFFE9EDEF))
+                Text(
+                    "Уменьшить фоновые визуальные эффекты",
+                    style=MaterialTheme.typography.bodySmall,
+                    color=Color(0xFF8696A0)
+                )
             }
-            Switch(checked=appearance.lowPower,onCheckedChange=appearance::updateLowPowerMode)
+            Switch(
+                checked=appearance.lowPower,
+                onCheckedChange=appearance::updateLowPowerMode
+            )
         }
     }
 }
