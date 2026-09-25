@@ -70,7 +70,7 @@ jobs:
         run: gradle assembleRelease
 
       - name: Recover verified signed Lumo 1.0.9 release
-        if: env.LUMO_SIGNED_RELEASE != 'true'
+        if: env.LUMO_SIGNED_RELEASE != 'true' && github.event_name != 'pull_request'
         shell: bash
         env:
           LUMO_EXPECTED_UNSIGNED_SHA256: "eecf468fa115873ffa8002fd52053e4367d0e493ec667623e8306ae86b9e5152"
@@ -149,6 +149,14 @@ jobs:
         with:
           name: lumo-release-unsigned-apk
           path: android/app/build/outputs/apk/release/app-release-unsigned.apk
+
+      - name: Require signed release on main
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && env.LUMO_SIGNED_RELEASE != 'true'
+        shell: bash
+        run: |
+          echo "::error::Production main build has no verified signed release APK. Refusing publication."
+          exit 1
+
 
       - name: Publish signed APK to lumo-latest
         if: github.ref == 'refs/heads/main' && github.event_name == 'push' && env.LUMO_SIGNED_RELEASE == 'true'
