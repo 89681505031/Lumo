@@ -26,6 +26,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AttachFile
+import androidx.compose.material.icons.rounded.Send
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -888,6 +891,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
  var activeMessage by remember(peer.id){mutableStateOf<Msg?>(null)}
  var forwardingMessage by remember(peer.id){mutableStateOf<Msg?>(null)}
  var replyTarget by remember(peer.id){mutableStateOf<Msg?>(null)}
+ var showAttachments by remember(peer.id){mutableStateOf(false)}
  var reactionsEnabled by remember(token,peer.id){mutableStateOf(false)}
  var aiEnabled by remember(token,peer.id){mutableStateOf(false)}
  var linkedRepliesEnabled by remember(token,peer.id){mutableStateOf(false)}
@@ -1580,9 +1584,12 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       }
      }
     }
-    MediaComposer(token,me,peer,allowSend=!blockedByMe){attached->
-     val merged=mergeChatMessages(msgs,listOf(attached))
-     msgs.clear();msgs.addAll(merged);persistHistory()
+    if(showAttachments){
+     MediaComposer(token,me,peer,allowSend=!blockedByMe){attached->
+      val merged=mergeChatMessages(msgs,listOf(attached))
+      msgs.clear();msgs.addAll(merged);persistHistory()
+      showAttachments=false
+     }
     }
     replyTarget?.let { original ->
      Row(
@@ -1603,22 +1610,35 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
      }
     }
     Row(
-     Modifier.fillMaxWidth().imePadding().padding(horizontal=11.dp,vertical=8.dp)
-      .lumoGlass(30).padding(7.dp),
-     verticalAlignment=Alignment.Bottom
+     Modifier.fillMaxWidth().imePadding().background(Color(0xFF111B21))
+      .padding(horizontal=8.dp,vertical=7.dp),
+     verticalAlignment=Alignment.CenterVertically
     ){
+     IconButton(
+      onClick={showAttachments=!showAttachments},
+      enabled=!blockedByMe,
+      modifier=Modifier.size(42.dp)
+     ){
+      Icon(Icons.Rounded.AttachFile,contentDescription="Вложения",
+       tint=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.size(24.dp))
+     }
      OutlinedTextField(
       value=input,onValueChange={input=it},
       placeholder={Text(if(blockedByMe)"Контакт заблокирован" else "Сообщение")},
       enabled=!blockedByMe,
       modifier=Modifier.weight(1f),maxLines=4,
-      shape=RoundedCornerShape(22.dp)
+      shape=RoundedCornerShape(24.dp),
+      colors=OutlinedTextFieldDefaults.colors(
+       focusedContainerColor=Color(0xFF202C33),
+       unfocusedContainerColor=Color(0xFF202C33),
+       focusedBorderColor=Color.Transparent,
+       unfocusedBorderColor=Color.Transparent
+      )
      )
-     Spacer(Modifier.width(7.dp))
-     LumoNeonButton(
-      text="➤",
+     Spacer(Modifier.width(6.dp))
+     IconButton(
       enabled=!blockedByMe && input.isNotBlank() && input.trim().length<=4000,
-      modifier=Modifier.width(56.dp),
+      modifier=Modifier.size(48.dp).clip(CircleShape).background(LumoCyan),
       onClick={
        val original=replyTarget
        val useLinked=linkedRepliesEnabled && original!=null
@@ -1647,7 +1667,9 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
         replyTarget=null
        }
       }
-     )
+     ){
+      Icon(Icons.Rounded.Send,contentDescription="Отправить",tint=Color(0xFF061A10))
+     }
     }
    }
   }
