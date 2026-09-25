@@ -96,17 +96,11 @@ fun Api.directHistoryWindow(
     peerId:String,
     limit:Int=100
 ):LumoDirectHistoryWindow {
-    val supported=runCatching{directPaginationSupported(token)}.getOrElse{
-        if(it is SessionExpiredException)throw it
-        false
-    }
-    if(supported){
-        try{
-            val page=directHistoryPage(token,peerId,null,limit)
-            return LumoDirectHistoryWindow(page.messages,true,page.hasMore)
-        }catch(error:DirectPaginationUnavailableException){
-            // Capability and route can briefly disagree during a rolling deploy.
-        }
+    try{
+        val page=directHistoryPage(token,peerId,null,limit)
+        return LumoDirectHistoryWindow(page.messages,true,page.hasMore)
+    }catch(error:DirectPaginationUnavailableException){
+        // Older servers do not expose the paginated route.
     }
     return LumoDirectHistoryWindow(
         messages=history(token,peerId),
