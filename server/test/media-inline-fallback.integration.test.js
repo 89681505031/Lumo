@@ -177,6 +177,40 @@ test("Postgres inline media fallback works without S3 and remains participant-on
     );
     assert.equal((await fetch(base+link.json.url)).status,404);
 
+    // Inline fallback must reclaim expired unclaimed bytes even when no cron
+    // secret/scheduler is configured.
+    const abandonedBytes=Buffer.from("abandoned inline media");
+    const abandoned=await request("/api/media/init","POST",alice.token,{
+      to:bob.user.id,
+      mime:"text/plain",
+      bytes:abandonedBytes.length,
+      filename:"abandoned.txt"
+    });
+    assert.equal(abandoned.status,201);
+    assert.equal((await request(
+      "/api/media/"+abandoned.json.assetId+"/content","PUT",alice.token,
+      abandonedBytes,{"Content-Type":"text/plain"}
+    )).status,200);
+    await db.query(
+      "update media_assets set expires_at=now()-interval '1 second' where id=$1",
+      [abandoned.json.assetId]
+    );
+    const afterExpiry=await request("/api/media/init","POST",alice.token,{
+      to:bob.user.id,
+      mime:"text/plain",
+      bytes:1,
+      filename:"after-expiry.txt"
+    });
+    assert.equal(afterExpiry.status,201);
+    assert.equal(
+      Number((await db.query(
+        "select count(*) from media_assets where id=$1",
+        [abandoned.json.assetId]
+      )).rows[0].count),
+      0,
+      "next reservation lazily removes expired unclaimed inline bytes"
+    );
+
     const group=await request("/api/groups","POST",alice.token,{title:"Inline group"});
     assert.equal(group.status,201);
     assert.equal((await request(
