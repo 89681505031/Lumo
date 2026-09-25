@@ -143,6 +143,70 @@ export const postgresStore = {
     return r.rows.map(mapUser);
   },
   async userExists(id) { const r=await dbQuery("select 1 from users where id=$1",[id]); return r.rowCount>0; },
+  async blockedBetween(firstId,secondId) {
+    const r=await dbQuery(
+      `select 1 from user_blocks
+       where (blocker_id=$1 and blocked_id=$2)
+          or (blocker_id=$2 and blocked_id=$1)
+       limit 1`,
+      [firstId,secondId]
+    );
+    return r.rowCount>0;
+  },
+  async blockedByMe(userId,peerId) {
+    const r=await dbQuery(
+      "select 1 from user_blocks where blocker_id=$1 and blocked_id=$2",
+      [userId,peerId]
+    );
+    return r.rowCount>0;
+  },
+  async blockedUsers(userId) {
+    const r=await dbQuery(
+      `select u.id,u.username,u.display_name,u.bio,
+              (u.avatar_bytes is not null) as has_avatar,u.avatar_updated_at
+       from user_blocks b
+       join users u on u.id=b.blocked_id
+       where b.blocker_id=$1
+       order by b.created_at desc,u.id`,
+      [userId]
+    );
+    return r.rows.map(mapUser);
+  },
+  async blockUser(userId,peerId) {
+    const client=await pool.connect();
+    let committed=false;
+    try{
+      await client.query("begin");
+      const peer=await client.query("select 1 from users where id=$1",[peerId]);
+      if(!peer.rowCount)return {error:"user_not_found"};
+      await client.query(
+        `insert into user_blocks(blocker_id,blocked_id)
+         values($1,$2) on conflict(blocker_id,blocked_id) do nothing`,
+        [userId,peerId]
+      );
+      await client.query(
+        `update calls set status='ended',updated_at=now()
+         where status in ('ringing','accepted') and (
+           (caller_id=$1 and callee_id=$2)
+           or (caller_id=$2 and callee_id=$1)
+         )`,
+        [userId,peerId]
+      );
+      await client.query("commit");
+      committed=true;
+      return {blocked:true};
+    }finally{
+      if(!committed)await client.query("rollback").catch(()=>{});
+      client.release();
+    }
+  },
+  async unblockUser(userId,peerId) {
+    await dbQuery(
+      "delete from user_blocks where blocker_id=$1 and blocked_id=$2",
+      [userId,peerId]
+    );
+    return {blocked:false};
+  },
   async conversations(me) { const r=await dbQuery(`select distinct on (x.peer_id) x.peer_id, u.username, u.display_name, u.bio, (u.avatar_bytes is not null) as has_avatar, u.avatar_updated_at, x.text, x.created_at from (select case when m.sender_id=$1 then m.recipient_id else m.sender_id end peer_id,m.text,m.created_at from messages m where m.sender_id=$1 or m.recipient_id=$1) x join users u on u.id=x.peer_id order by x.peer_id,x.created_at desc`,[me]); return r.rows.map(x=>({peer:{id:x.peer_id,username:x.username,displayName:x.display_name,bio:x.bio||"",hasAvatar:Boolean(x.has_avatar),avatarVersion:x.avatar_updated_at?.toISOString?.()||x.avatar_updated_at||""},lastMessage:x.text,lastAt:x.created_at?.toISOString?.()||x.created_at})).sort((a,b)=>String(b.lastAt).localeCompare(String(a.lastAt))); },
   async setAvatar(userId,mime,bytes) {
     const r=await dbQuery(
@@ -244,6 +308,11 @@ export const postgresStore = {
     return row ? {id:row.id,text:row.text,from:row.sender_id} : null;
   },
   async saveMessage(m) {
+    if(await this.blockedBetween(m.from,m.to)){
+      const error=new Error("user_blocked");
+      error.code="USER_BLOCKED";
+      throw error;
+    }
     const replyTo=m.replyToMessageId || null;
     if(m.clientMessageId){
       const inserted=await dbQuery(
@@ -336,6 +405,16 @@ export const postgresStore = {
        select m.id,$2,$3 from messages m
        where m.id=$1 and m.deleted_at is null
          and (m.sender_id=$2 or m.recipient_id=$2)
+         and not exists (
+           select 1 from user_blocks b
+           where (
+             b.blocker_id=$2 and
+             b.blocked_id=case when m.sender_id=$2 then m.recipient_id else m.sender_id end
+           ) or (
+             b.blocked_id=$2 and
+             b.blocker_id=case when m.sender_id=$2 then m.recipient_id else m.sender_id end
+           )
+         )
        on conflict (message_id,user_id,emoji) do nothing
        returning message_id`,
       [messageId,userId,emoji]
