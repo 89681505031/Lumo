@@ -24,11 +24,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-private val LumoControl = Color(0xFF4C8DFF)
-private val LumoCard = Color(0xFF15171C)
-private val LumoField = Color(0xFF181A20)
-private val LumoDivider = Color(0xFF292C34)
-private val LumoInactive = Color(0xFF8E94A3)
+private val LumoControl = Color(0xFF00A884)
+private val LumoCard = Color(0xFF111B21)
+private val LumoField = Color(0xFF202C33)
+private val LumoDivider = Color(0xFF2A3942)
+private val LumoInactive = Color(0xFF8696A0)
 
 @Composable
 fun LumoNeonButton(
@@ -128,8 +128,8 @@ fun LumoBottomNavigation(selected: Int, onSelect: (Int) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .background(Color(0xFF101116))
-            .border(width = 1.dp, color = Color(0xFF1D2026))
+            .background(Color(0xFF111B21))
+            .border(width = 1.dp, color = Color(0xFF202C33))
             .navigationBarsPadding()
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -149,7 +149,7 @@ fun LumoBottomNavigation(selected: Int, onSelect: (Int) -> Unit) {
                         Box(
                             Modifier
                                 .size(width = 48.dp, height = 30.dp)
-                                .background(Color(0xFF20345D), RoundedCornerShape(15.dp))
+                                .background(Color(0xFF005C4B), RoundedCornerShape(15.dp))
                         )
                     }
                     LumoTabSymbol(index)
@@ -179,14 +179,14 @@ fun LumoSearchField(
         placeholder = {
             Text(
                 placeholder,
-                color = Color(0xFF868C9A)
+                color = Color(0xFF8696A0)
             )
         },
         leadingIcon = {
             Text(
                 "⌕",
                 style = MaterialTheme.typography.headlineMedium,
-                color = Color(0xFF9AA0AD)
+                color = Color(0xFF8696A0)
             )
         },
         singleLine = true,
