@@ -250,8 +250,11 @@ class MainActivity:ComponentActivity(){
     ){
      Text("Lumo",style=MaterialTheme.typography.headlineLarge,fontWeight=FontWeight.ExtraBold,color=Color.White)
      Spacer(Modifier.weight(1f))
-     Box(Modifier.lumoGlass(22).clickable{tab=2}.padding(horizontal=15.dp,vertical=8.dp)){
-      Text(me.displayName,style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold,color=Color.White,maxLines=1)
+     Box(
+      Modifier.size(38.dp).clip(CircleShape).background(Color(0xFF00A884)).clickable{tab=2},
+      contentAlignment=Alignment.Center
+     ){
+      Text(me.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Bold,color=Color.White,maxLines=1)
      }
     }
    },
@@ -395,12 +398,12 @@ class MainActivity:ComponentActivity(){
    )
    LazyColumn(
     modifier=Modifier.fillMaxSize(),
-    contentPadding=PaddingValues(horizontal=12.dp,vertical=8.dp),
-    verticalArrangement=Arrangement.spacedBy(10.dp)
+    contentPadding=PaddingValues(horizontal=8.dp,vertical=2.dp),
+    verticalArrangement=Arrangement.spacedBy(0.dp)
    ){
     items(filtered,key={it.peer.id}){chat->
      Row(
-      Modifier.fillMaxWidth().lumoGlass(22).clickable{open(chat.peer)}.padding(12.dp),
+      Modifier.fillMaxWidth().clickable{open(chat.peer)}.padding(horizontal=8.dp,vertical=11.dp),
       verticalAlignment=Alignment.CenterVertically
      ){
       LumoUserAvatar(token,chat.peer,size=54.dp)
@@ -460,12 +463,12 @@ class MainActivity:ComponentActivity(){
   }
   LazyColumn(
    Modifier.fillMaxSize(),
-   contentPadding=PaddingValues(horizontal=12.dp,vertical=8.dp),
-   verticalArrangement=Arrangement.spacedBy(9.dp)
+   contentPadding=PaddingValues(horizontal=8.dp,vertical=2.dp),
+   verticalArrangement=Arrangement.spacedBy(0.dp)
   ){
    items(users,key={it.id}){u->
     Row(
-     Modifier.fillMaxWidth().lumoGlass(22).clickable{open(u)}.padding(12.dp),
+     Modifier.fillMaxWidth().clickable{open(u)}.padding(horizontal=8.dp,vertical=11.dp),
      verticalAlignment=Alignment.CenterVertically
     ){
      LumoUserAvatar(token,u,size=52.dp)
