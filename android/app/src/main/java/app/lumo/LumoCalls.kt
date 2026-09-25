@@ -349,14 +349,16 @@ fun LumoCallsLab(
                     LinearProgressIndicator(Modifier.fillMaxWidth(),color=LumoCyan)
                 }
                 false->{
-                    Column(
-                        Modifier.fillMaxWidth().padding(16.dp).lumoGlass(24).padding(18.dp),
-                        horizontalAlignment=Alignment.CenterHorizontally
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=12.dp),
+                        verticalAlignment=Alignment.CenterVertically
                     ){
-                        Text("Сервис звонков пока недоступен на сервере. После обновления нажмите «Проверить снова».",
-                            color=Color.White)
-                        Spacer(Modifier.height(10.dp))
-                        LumoNeonButton("Проверить снова",onClick={refresh++})
+                        Text(
+                            "Сервис звонков пока недоступен",
+                            color=Color(0xFF8696A0),
+                            modifier=Modifier.weight(1f)
+                        )
+                        TextButton(onClick={refresh++}){Text("Проверить",color=LumoCyan)}
                     }
                 }
                 true->{
@@ -377,12 +379,11 @@ fun LumoCallsLab(
                         }
                         if(active.isEmpty()){
                             item{
-                                Box(
-                                    Modifier.fillMaxWidth().lumoGlass(22).padding(14.dp)
-                                ){
-                                    Text("Активных приглашений нет.",
-                                        color=MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
+                                Text(
+                                    "Активных вызовов нет",
+                                    color=Color(0xFF8696A0),
+                                    modifier=Modifier.padding(vertical=8.dp)
+                                )
                             }
                         }
                         items(active,key={it.id}){call->
@@ -390,7 +391,7 @@ fun LumoCallsLab(
                             val otherId=if(incoming)call.callerId else call.calleeId
                             val person=people.firstOrNull{it.id==otherId}
                             Column(
-                                Modifier.fillMaxWidth().lumoGlass(23).padding(14.dp)
+                                Modifier.fillMaxWidth().padding(vertical=8.dp)
                             ){
                                 Row(verticalAlignment=Alignment.CenterVertically){
                                     LumoNeonAvatar(person?.displayName?:"L",size=44.dp)
@@ -413,14 +414,14 @@ fun LumoCallsLab(
                                 Spacer(Modifier.height(10.dp))
                                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                                     if(incoming&&call.status=="ringing"){
-                                        LumoNeonButton(
-                                            "Принять",
+                                        Button(
                                             onClick={perform(call.id+"a"){
                                                 Api.callClient.respond(token,call.id,"accept")
                                             }},
                                             enabled=busy==null,
-                                            modifier=Modifier.weight(1f)
-                                        )
+                                            modifier=Modifier.weight(1f),
+                                            shape=RoundedCornerShape(14.dp)
+                                        ){Text("Принять")}
                                         OutlinedButton(
                                             onClick={perform(call.id+"d"){
                                                 Api.callClient.respond(token,call.id,"decline")
@@ -477,7 +478,7 @@ fun LumoCallsLab(
                         }
                         items(people.take(40),key={it.id}){person->
                             Row(
-                                Modifier.fillMaxWidth().lumoGlass(22).padding(12.dp),
+                                Modifier.fillMaxWidth().padding(vertical=8.dp),
                                 verticalAlignment=Alignment.CenterVertically
                             ){
                                 LumoNeonAvatar(person.displayName,size=42.dp)
@@ -500,8 +501,12 @@ fun LumoCallsLab(
                                         Api.callClient.invite(token,person.id,"video")
                                     }},
                                     enabled=busy==null
-                                ){Text("Видео",color=LumoPink)}
+                                ){Text("Видео",color=LumoCyan)}
                             }
+                            HorizontalDivider(
+                                color=Color(0xFF17252D),
+                                modifier=Modifier.padding(start=52.dp)
+                            )
                         }
                     }
                 }
