@@ -782,8 +782,6 @@ export const mediaStore={
   }
 };
 
-export function registerMediaCleanup(app){};
-
 export function registerMediaCleanup(app){
   app.get("/internal/media-cleanup",async(req,res)=>{
     res.set("Cache-Control","private, no-store");
