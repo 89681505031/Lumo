@@ -97,8 +97,8 @@ export const postgresStore = {
     try{
       await client.query("begin");
       const changed=await client.query(
-        "update users set password_hash=$4 where id=$1 and password_hash=$3 returning id",
-        [userId,currentToken,expectedHash,newHash]
+        "update users set password_hash=$3 where id=$1 and password_hash=$2 returning id",
+        [userId,expectedHash,newHash]
       );
       if(!changed.rowCount){
         await client.query("rollback");
