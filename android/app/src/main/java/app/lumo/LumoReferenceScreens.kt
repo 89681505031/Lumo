@@ -1413,7 +1413,7 @@ private fun LumoReferenceStorage(
                 "Голосовые сообщения всегда скачиваются автоматически.",
                 color=ReferenceMuted,
                 style=MaterialTheme.typography.bodyMedium,
-                modifier=Modifier.padding(horizontal=22.dp,bottom=6.dp)
+                modifier=Modifier.padding(horizontal=22.dp).padding(bottom=6.dp)
             )
             SettingsSection{
                 ReferenceSettingsRow("▯","Мобильный трафик","Фото"){}
