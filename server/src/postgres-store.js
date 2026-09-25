@@ -74,6 +74,108 @@ export const postgresStore = {
   async createSession(userId,token) {
     await dbQuery("insert into sessions(token,user_id) values($1,$2)",[token,userId]);
   },
+  async exchangeSupabasePhoneIdentity({
+    supabaseUserId,phoneHash,displayName,username,userId,token
+  }) {
+    const client=await pool.connect();
+    let committed=false;
+    try{
+      await client.query("begin");
+      await client.query(
+        "select pg_advisory_xact_lock(hashtext($1))",
+        [phoneHash]
+      );
+      const existing=await client.query(
+        `select id,username,display_name,bio,
+                (avatar_bytes is not null) as has_avatar,avatar_updated_at,
+                phone_hash
+         from users
+         where supabase_user_id=$1
+         for update`,
+        [supabaseUserId]
+      );
+      if(existing.rows[0]){
+        const row=existing.rows[0];
+        if(row.phone_hash!==phoneHash){
+          const collision=await client.query(
+            "select id from users where phone_hash=$1 and id<>$2 limit 1",
+            [phoneHash,row.id]
+          );
+          if(collision.rowCount){
+            await client.query("rollback");
+            return {error:"identity_conflict"};
+          }
+          await client.query(
+            "update users set phone_hash=$2 where id=$1",
+            [row.id,phoneHash]
+          );
+          row.phone_hash=phoneHash;
+        }
+        await client.query(
+          "insert into sessions(token,user_id) values($1,$2)",
+          [token,row.id]
+        );
+        await client.query("commit");
+        committed=true;
+        return {user:mapUser(row),token,isNew:false};
+      }
+      const phoneOwner=await client.query(
+        "select id from users where phone_hash=$1 limit 1 for update",
+        [phoneHash]
+      );
+      if(phoneOwner.rowCount){
+        await client.query("rollback");
+        return {error:"identity_conflict"};
+      }
+      if(!displayName){
+        await client.query("rollback");
+        return {error:"profile_required"};
+      }
+      const created=await client.query(
+        `insert into users(
+          id,username,display_name,supabase_user_id,phone_hash
+        ) values($1,$2,$3,$4,$5)
+        returning id,username,display_name,bio,
+          false as has_avatar,null::timestamptz as avatar_updated_at`,
+        [userId,username,displayName,supabaseUserId,phoneHash]
+      );
+      await client.query(
+        "insert into sessions(token,user_id) values($1,$2)",
+        [token,userId]
+      );
+      await client.query("commit");
+      committed=true;
+      return {user:mapUser(created.rows[0]),token,isNew:true};
+    }catch(error){
+      await client.query("rollback").catch(()=>{});
+      throw error;
+    }finally{
+      if(!committed)await client.query("rollback").catch(()=>{});
+      client.release();
+    }
+  },
+  async discoverPhoneContacts(userId,hashes) {
+    if(!hashes.length)return [];
+    const r=await dbQuery(
+      `select u.id,u.username,u.display_name,u.bio,
+              (u.avatar_bytes is not null) as has_avatar,u.avatar_updated_at,
+              u.phone_hash
+       from users u
+       where u.id<>$1
+         and u.phone_hash=any($2::text[])
+         and not exists (
+           select 1 from user_blocks b
+           where (b.blocker_id=$1 and b.blocked_id=u.id)
+              or (b.blocker_id=u.id and b.blocked_id=$1)
+         )
+       order by u.display_name,u.id`,
+      [userId,hashes]
+    );
+    return r.rows.map(row=>({
+      contactHash:row.phone_hash,
+      user:mapUser(row)
+    }));
+  },
   async revokeSession(userId,token) {
     await dbQuery("delete from sessions where user_id=$1 and token=$2",[userId,token]);
   },
