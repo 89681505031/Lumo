@@ -17,6 +17,9 @@ import {
 } from "./call-signaling.js";
 import { registerCallCleanup } from "./call-cleanup.js";
 import { registerPushDispatch } from "./push-outbox.js";
+import {
+  supabasePhoneAuthReady,verifySupabasePhoneToken
+} from "./supabase-auth.js";
 
 if (hasDatabase) { try { await initDatabase(); console.log("Lumo PostgreSQL schema ready"); } catch (error) { console.error("Lumo PostgreSQL initialization failed", error); } }
 const mediaEnabled=mediaAvailable && process.env.MEDIA_ENABLE_UPLOADS!=="false";
@@ -232,7 +235,9 @@ app.get("/api/capabilities",(_req,res)=>res.json({
   pushRegistration:hasDatabase,
   sessionRevokeOthers:hasDatabase,
   passwordChange:hasDatabase,
-  userBlocking:hasDatabase
+  userBlocking:hasDatabase,
+  phoneAuth:hasDatabase&&supabasePhoneAuthReady(),
+  contactDiscovery:hasDatabase
 }));
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase,ok:false}; if(hasDatabase){try{database=await dbHealth()}catch(error){console.error("Database health check failed",error);database={configured:true,ok:false}}} const ok=database.configured===true&&database.ok===true; res.status(ok?200:503).json({ ok, service:"lumo-server", database }); });
@@ -243,6 +248,58 @@ registerCallCleanup(app);
 registerPushDispatch(app);
 registerMediaCleanup(app);
 app.use("/api/calls",callRouter(auth));
+
+app.post(
+  "/api/auth/phone/exchange",
+  requireDatabase,
+  rateLimit({windowMs:15*60_000,max:20}),
+  async(req,res)=>{
+    if(!supabasePhoneAuthReady())
+      return res.status(503).json({error:"phone_auth_unavailable"});
+    const accessToken=req.body?.accessToken;
+    const requestedName=typeof req.body?.displayName==="string"
+      ?req.body.displayName.trim():"";
+    if(requestedName.length>50)
+      return res.status(400).json({error:"invalid_profile"});
+    try{
+      const identity=await verifySupabasePhoneToken(accessToken);
+      if(!identity)
+        return res.status(401).json({error:"invalid_phone_session"});
+      const phoneHash=createHash("sha256").update(identity.phone).digest("hex");
+      const token=randomUUID();
+      const username="p"+createHash("sha256")
+        .update(identity.id).digest("hex").slice(0,23);
+      const result=await postgresStore.exchangeSupabasePhoneIdentity({
+        supabaseUserId:identity.id,
+        phoneHash,
+        displayName:requestedName,
+        username,
+        userId:randomUUID(),
+        token
+      });
+      if(result.error==="profile_required")
+        return res.status(409).json({error:"profile_required"});
+      if(result.error==="identity_conflict")
+        return res.status(409).json({error:"phone_identity_conflict"});
+      return res.status(result.isNew?201:200).json({
+        token:result.token,
+        user:publicUser(result.user),
+        isNew:result.isNew
+      });
+    }catch(error){
+      if(error?.code==="SUPABASE_AUTH_UNAVAILABLE")
+        return res.status(503).json({error:"phone_auth_unavailable"});
+      if(error?.code==="SUPABASE_AUTH_UPSTREAM"){
+        console.error("Supabase phone auth upstream unavailable",error?.status||error?.name||"unknown");
+        return res.status(502).json({error:"phone_auth_upstream_unavailable"});
+      }
+      if(error?.code==="23505")
+        return res.status(409).json({error:"phone_identity_conflict"});
+      console.error("Phone session exchange failed",error);
+      return res.status(503).json({error:"service_unavailable"});
+    }
+  }
+);
 
 app.post("/api/register", requireDatabase, rateLimit({windowMs:60_000,max:10}), async (req, res) => {
   try {
@@ -556,6 +613,33 @@ app.post("/api/ai/chat", auth, rateLimit({windowMs:60_000,max:20}), async (req,r
     return res.status(502).json({error:"ai_provider_unavailable"});
   }
 });
+
+app.post(
+  "/api/contacts/discover",
+  auth,
+  requireDatabase,
+  rateLimit({windowMs:60_000,max:20}),
+  async(req,res)=>{
+    const raw=req.body?.hashes;
+    if(!Array.isArray(raw) || raw.length>500)
+      return res.status(400).json({error:"invalid_contact_hashes"});
+    const hashes=[...new Set(raw.map(value=>
+      typeof value==="string"?value.toLowerCase():""
+    ))];
+    if(hashes.some(value=>!/^[0-9a-f]{64}$/.test(value)))
+      return res.status(400).json({error:"invalid_contact_hashes"});
+    try{
+      const matches=await postgresStore.discoverPhoneContacts(req.user.id,hashes);
+      return res.json(matches.map(match=>({
+        contactHash:match.contactHash,
+        user:publicUser(match.user)
+      })));
+    }catch(error){
+      console.error("Contact discovery failed",error);
+      return res.status(503).json({error:"service_unavailable"});
+    }
+  }
+);
 
 app.get("/api/users", auth, async (req, res) => {
   try { const q = String(req.query.q || "").toLowerCase(); if(q.length>50)return res.status(400).json({error:"invalid_query"}); if(hasDatabase) return res.json(await postgresStore.searchUsers(req.user.id,q)); res.json([...users.values()].filter(u => u.id !== req.user.id).filter(u => !q || u.username.includes(q) || u.displayName.toLowerCase().includes(q)).slice(0, 50).map(publicUser)); }

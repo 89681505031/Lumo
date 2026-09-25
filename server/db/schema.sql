@@ -11,6 +11,10 @@ alter table users add column if not exists bio varchar(160) not null default '';
 alter table users add column if not exists avatar_mime varchar(32);
 alter table users add column if not exists avatar_bytes bytea;
 alter table users add column if not exists avatar_updated_at timestamptz;
+alter table users add column if not exists supabase_user_id uuid;
+alter table users add column if not exists phone_hash varchar(64);
+create unique index if not exists users_supabase_user_uidx on users(supabase_user_id) where supabase_user_id is not null;
+create unique index if not exists users_phone_hash_uidx on users(phone_hash) where phone_hash is not null;
 create table if not exists sessions (
   token uuid primary key,
   user_id uuid not null references users(id) on delete cascade,
