@@ -57,46 +57,49 @@ jobs:
             echo "LUMO_SIGNED_RELEASE=true" >> "$GITHUB_ENV"
           else
             echo "LUMO_SIGNED_RELEASE=false" >> "$GITHUB_ENV"
-            echo "::notice::Persistent release-signing secrets are not configured; CI will use the verified deterministic Lumo 1.0.8 reconstruction path after building the unsigned APK."
+            echo "::notice::Persistent release-signing secrets are not configured; CI will use the verified deterministic Lumo 1.0.9 reconstruction path after building the unsigned APK."
           fi
 
-      - name: Build Lumo 1.0.8 release APK
+      - name: Build Lumo 1.0.9 release APK
         env:
-          LUMO_VERSION_CODE: "1008"
-          LUMO_VERSION_NAME: "1.0.8"
+          LUMO_VERSION_CODE: "1009"
+          LUMO_VERSION_NAME: "1.0.9"
           LUMO_KEYSTORE_PASSWORD: ${{ secrets.LUMO_KEYSTORE_PASSWORD }}
           LUMO_KEY_ALIAS: ${{ secrets.LUMO_KEY_ALIAS }}
           LUMO_KEY_PASSWORD: ${{ secrets.LUMO_KEY_PASSWORD }}
         run: gradle assembleRelease
 
-      - name: Recover verified signed Lumo 1.0.8 release
+      - name: Recover verified signed Lumo 1.0.9 release
         if: env.LUMO_SIGNED_RELEASE != 'true'
         shell: bash
         env:
-          LUMO_EXPECTED_UNSIGNED_SHA256: "8a6b6d81350be08e2ec6673755d065ec86038483af1a32a4384082a514d2acef"
-          LUMO_EXPECTED_SIGNED_SHA256: "0d5bdbaa6b48b848adc8b19b0dda8f1a0a91003464cf5dbb837a61acd919d75a"
-          LUMO_EXPECTED_PATCH_XZ_SHA256: "f9636242d94132ba1d2bd87eaae6ac46c112bce2f61bf74b3cf14309cb512f2b"
-          LUMO_EXPECTED_PATCH_ZST_SHA256: "3c641af08ce552a2c1c5866684c064a4c18087b36e4ff27660b8ae5637607811"
+          LUMO_EXPECTED_UNSIGNED_SHA256: "eecf468fa115873ffa8002fd52053e4367d0e493ec667623e8306ae86b9e5152"
+          LUMO_EXPECTED_SIGNED_SHA256: "01407c41f88d32d7382b8e9cf6235ee6a22723ca2c7f7b6d66995cb7d957bee6"
+          LUMO_EXPECTED_PATCH_XZ_SHA256: "c6cc34ae5917fd61801e06c95bdd6d8738248cbb86cd009c245aa453188651be"
+          LUMO_EXPECTED_PATCH_ZST_SHA256: "01f8c277033be753cd6c35008eb78bce2e07161a538da71ba8056d46ad3271f7"
         run: |
           set -euo pipefail
           UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
           SIGNED="app/build/outputs/apk/release/app-release.apk"
-          PATCH_B64="signing/lumo-1.0.8-signature.patch.zst.xz.b64"
-          PATCH_XZ="$RUNNER_TEMP/lumo-1.0.8-signature.patch.zst.xz"
-          PATCH_ZST="$RUNNER_TEMP/lumo-1.0.8-signature.patch.zst"
+          PATCH_B64="$RUNNER_TEMP/lumo-1.0.9-signature.patch.zst.xz.b64"
+          PATCH_XZ="$RUNNER_TEMP/lumo-1.0.9-signature.patch.zst.xz"
+          PATCH_ZST="$RUNNER_TEMP/lumo-1.0.9-signature.patch.zst"
 
           test -f "$UNSIGNED"
-          test -f "$PATCH_B64"
+          for PART in signing/lumo-1.0.9-signature.patch.part{00..03}; do
+            test -s "$PART"
+          done
           command -v xz >/dev/null
           command -v zstd >/dev/null
 
           ACTUAL_UNSIGNED="$(sha256sum "$UNSIGNED" | awk '{print $1}')"
           if [ "$ACTUAL_UNSIGNED" != "$LUMO_EXPECTED_UNSIGNED_SHA256" ]; then
-            echo "::error::Unsigned Lumo 1.0.8 APK is not byte-for-byte reproducible. Refusing signature reconstruction."
+            echo "::error::Unsigned Lumo 1.0.9 APK is not byte-for-byte reproducible. Refusing signature reconstruction."
             echo "::error::Expected $LUMO_EXPECTED_UNSIGNED_SHA256 but got $ACTUAL_UNSIGNED"
             exit 1
           fi
 
+          cat signing/lumo-1.0.9-signature.patch.part{00..03} > "$PATCH_B64"
           base64 --decode "$PATCH_B64" > "$PATCH_XZ"
           echo "$LUMO_EXPECTED_PATCH_XZ_SHA256  $PATCH_XZ" | sha256sum --check -
           xz --decompress --stdout "$PATCH_XZ" > "$PATCH_ZST"
@@ -106,7 +109,7 @@ jobs:
           zstd --quiet --decompress --patch-from="$UNSIGNED" "$PATCH_ZST" -o "$SIGNED"
           echo "$LUMO_EXPECTED_SIGNED_SHA256  $SIGNED" | sha256sum --check -
           echo "LUMO_SIGNED_RELEASE=true" >> "$GITHUB_ENV"
-          echo "Verified deterministic Lumo 1.0.8 signed APK reconstruction complete."
+          echo "Verified deterministic Lumo 1.0.9 signed APK reconstruction complete."
 
       - name: Verify release signature
         if: env.LUMO_SIGNED_RELEASE == 'true'
@@ -160,15 +163,15 @@ jobs:
           if gh release view lumo-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit lumo-latest \
               --repo "$GITHUB_REPOSITORY" \
-              --title "Lumo 1.0.8" \
-              --notes "versionCode=1008" \
+              --title "Lumo 1.0.9" \
+              --notes "versionCode=1009" \
               --latest
           else
             gh release create lumo-latest "$PUBLISH_APK" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "Lumo 1.0.8" \
-              --notes "versionCode=1008" \
+              --title "Lumo 1.0.9" \
+              --notes "versionCode=1009" \
               --latest
             exit 0
           fi
