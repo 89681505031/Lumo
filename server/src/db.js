@@ -25,6 +25,10 @@ export async function initDatabase() {
   await client.query(`alter table users add column if not exists avatar_mime varchar(32)`);
   await client.query(`alter table users add column if not exists avatar_bytes bytea`);
   await client.query(`alter table users add column if not exists avatar_updated_at timestamptz`);
+  await client.query(`alter table users add column if not exists supabase_user_id uuid`);
+  await client.query(`alter table users add column if not exists phone_hash varchar(64)`);
+  await client.query(`create unique index if not exists users_supabase_user_uidx on users(supabase_user_id) where supabase_user_id is not null`);
+  await client.query(`create unique index if not exists users_phone_hash_uidx on users(phone_hash) where phone_hash is not null`);
   await client.query(`create table if not exists sessions (
     token uuid primary key,
     user_id uuid not null references users(id) on delete cascade,
@@ -361,6 +365,10 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='users' and column_name='avatar_updated_at') as avatar_updated_column,
     exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='users' and column_name='supabase_user_id') as supabase_user_column,
+    exists(select 1 from information_schema.columns
+      where table_schema=current_schema() and table_name='users' and column_name='phone_hash') as phone_hash_column,
+    exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='messages' and column_name='reply_to_message_id') as reply_column,
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='messages' and column_name='edited_at') as edited_column,
@@ -371,5 +379,5 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.media_download_tokens_table && row.media_inline_chunks_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.push_devices_table && row.push_outbox_table && row.group_reply_column && row.group_edited_column && row.group_deleted_column && row.group_reactions_table && row.group_media_column && row.media_group_column && row.media_storage_mode_column && row.media_inline_bytes_column && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.media_download_tokens_table && row.media_inline_chunks_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.push_devices_table && row.push_outbox_table && row.group_reply_column && row.group_edited_column && row.group_deleted_column && row.group_reactions_table && row.group_media_column && row.media_group_column && row.media_storage_mode_column && row.media_inline_bytes_column && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.supabase_user_column && row.phone_hash_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
 }
