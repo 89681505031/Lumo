@@ -1267,15 +1267,9 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
            Spacer(Modifier.width(5.dp))
            Text(
             if(m.readAt.isNotBlank())"✓✓" else if(m.deliveredAt.isNotBlank())"✓✓" else "✓",
-            color=if(m.readAt.isNotBlank())LumoCyan else Color.White.copy(alpha=.75f),
+            color=if(m.readAt.isNotBlank())Color(0xFF53BDEB) else Color.White.copy(alpha=.75f),
             style=MaterialTheme.typography.labelSmall
            )
-          }
-          if(m.deletedAt.isBlank()){
-           Spacer(Modifier.width(5.dp))
-           TextButton(onClick={activeMessage=m},contentPadding=PaddingValues(horizontal=7.dp)){
-            Text("⋯",color=LumoCyan,style=MaterialTheme.typography.titleMedium)
-           }
           }
          }
         }
@@ -1310,11 +1304,12 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       key={"pending-"+it.clientMessageId}
      ){p->
       Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
-       Box(Modifier.widthIn(max=290.dp).lumoBubble(true).padding(horizontal=14.dp,vertical=10.dp)){
+       Box(Modifier.widthIn(max=310.dp).lumoBubble(true).padding(horizontal=10.dp,vertical=7.dp)){
         Column{
          if(p.replyToMessageId.isNotBlank()){
           Box(
-           Modifier.fillMaxWidth().lumoGlass(14)
+           Modifier.fillMaxWidth()
+            .background(Color(0x33000000),RoundedCornerShape(8.dp))
             .clickable{
              val index=msgs.indexOfFirst{it.id==p.replyToMessageId}
              if(index>=0)scope.launch{listState.animateScrollToItem(index)}
@@ -1331,8 +1326,12 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
           Spacer(Modifier.height(6.dp))
          }
          Text(p.text,color=Color.White)
-         Text("Отправляется…",color=Color.White.copy(alpha=.7f),
-          style=MaterialTheme.typography.labelSmall)
+         Row(Modifier.align(Alignment.End),verticalAlignment=Alignment.CenterVertically){
+          Text("Отправляется…",color=Color(0xFF8696A0),
+           style=MaterialTheme.typography.labelSmall)
+          Spacer(Modifier.width(4.dp))
+          Text("◷",color=Color(0xFF8696A0),style=MaterialTheme.typography.labelSmall)
+         }
         }
        }
       }
