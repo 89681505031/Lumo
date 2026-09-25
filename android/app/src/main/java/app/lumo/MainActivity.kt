@@ -1074,8 +1074,9 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
    containerColor=Color.Transparent,
    topBar={
     Row(
-     Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=9.dp,vertical=8.dp)
-      .lumoGlass(22).padding(horizontal=5.dp,vertical=4.dp),
+     Modifier.fillMaxWidth().statusBarsPadding()
+      .background(Color(0xFF202C33))
+      .padding(horizontal=4.dp,vertical=5.dp),
      verticalAlignment=Alignment.CenterVertically
     ){
      TextButton(back){Text("‹",style=MaterialTheme.typography.headlineMedium,color=Color.White)}
@@ -1091,13 +1092,13 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
       onClick=openAudioCall,
       contentPadding=PaddingValues(horizontal=7.dp)
      ){
-      Text("📞",color=LumoCyan,style=MaterialTheme.typography.titleLarge)
+      Text("☎",color=Color.White,style=MaterialTheme.typography.titleLarge)
      }
      TextButton(
       onClick=openVideoCall,
       contentPadding=PaddingValues(horizontal=7.dp)
      ){
-      Text("🎥",color=LumoPink,style=MaterialTheme.typography.titleLarge)
+      Text("▣",color=Color.White,style=MaterialTheme.typography.titleLarge)
      }
      if(messageSearchEnabled){
       TextButton(onClick={
@@ -1107,7 +1108,7 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
        searchError=""
        if(!showSearch)searchText=""
       }){
-       Text(if(showSearch)"×" else "⌕",color=LumoCyan,
+       Text(if(showSearch)"×" else "⌕",color=Color.White,
         style=MaterialTheme.typography.titleLarge)
       }
      }
@@ -1192,8 +1193,8 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
     LazyColumn(
      state=listState,
      modifier=Modifier.weight(1f).fillMaxWidth(),
-     contentPadding=PaddingValues(horizontal=13.dp,vertical=14.dp),
-     verticalArrangement=Arrangement.spacedBy(11.dp)
+     contentPadding=PaddingValues(horizontal=8.dp,vertical=8.dp),
+     verticalArrangement=Arrangement.spacedBy(4.dp)
     ){
      items(visibleMessages,key={it.id}){m->
       val own=m.from==me.id
@@ -1202,16 +1203,17 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
        horizontalArrangement=if(own)Arrangement.End else Arrangement.Start,
        verticalAlignment=Alignment.Bottom
       ){
-       if(!own){
-        LumoUserAvatar(token,peer,size=30.dp)
-        Spacer(Modifier.width(7.dp))
-       }
        Column(horizontalAlignment=if(own)Alignment.End else Alignment.Start){
-        Box(Modifier.widthIn(max=290.dp).lumoBubble(own).padding(horizontal=14.dp,vertical=10.dp)){
+        Box(
+         Modifier.widthIn(max=310.dp).lumoBubble(own)
+          .clickable(enabled=m.deletedAt.isBlank()){activeMessage=m}
+          .padding(horizontal=10.dp,vertical=7.dp)
+        ){
          Column {
           if(m.replyToMessageId.isNotBlank()){
           Box(
-           Modifier.fillMaxWidth().lumoGlass(14)
+           Modifier.fillMaxWidth()
+            .background(Color(0x33000000),RoundedCornerShape(8.dp))
             .clickable{
              val index=visibleMessages.indexOfFirst{it.id==m.replyToMessageId}
              if(index>=0)scope.launch{listState.animateScrollToItem(index)}
@@ -1342,8 +1344,9 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
     }
     replyTarget?.let { original ->
      Row(
-      Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=5.dp)
-       .lumoGlass(18).padding(horizontal=12.dp,vertical=6.dp),
+      Modifier.fillMaxWidth()
+       .background(Color(0xFF202C33))
+       .padding(horizontal=14.dp,vertical=7.dp),
       verticalAlignment=Alignment.CenterVertically
      ){
       Column(Modifier.weight(1f)){
@@ -1359,49 +1362,63 @@ fun mergeChatMessages(current:List<Msg>,incoming:List<Msg>):List<Msg>{
      }
     }
     Row(
-     Modifier.fillMaxWidth().imePadding().padding(horizontal=11.dp,vertical=8.dp)
-      .lumoGlass(30).padding(7.dp),
+     Modifier.fillMaxWidth().imePadding()
+      .background(Color(0xFF0B141A))
+      .padding(horizontal=7.dp,vertical=6.dp),
      verticalAlignment=Alignment.Bottom
     ){
      OutlinedTextField(
-      value=input,onValueChange={input=it},placeholder={Text("Сообщение")},
+      value=input,onValueChange={input=it},
+      placeholder={Text("Сообщение",color=Color(0xFF8696A0))},
       modifier=Modifier.weight(1f),maxLines=4,
-      shape=RoundedCornerShape(22.dp)
+      shape=RoundedCornerShape(24.dp),
+      colors=OutlinedTextFieldDefaults.colors(
+       focusedTextColor=Color.White,
+       unfocusedTextColor=Color.White,
+       focusedBorderColor=Color.Transparent,
+       unfocusedBorderColor=Color.Transparent,
+       cursorColor=LumoCyan,
+       focusedContainerColor=Color(0xFF202C33),
+       unfocusedContainerColor=Color(0xFF202C33)
+      )
      )
      Spacer(Modifier.width(7.dp))
-     LumoNeonButton(
-      text="➤",
-      enabled=input.isNotBlank() && input.trim().length<=4000,
-      modifier=Modifier.width(56.dp),
-      onClick={
-       val original=replyTarget
-       val useLinked=linkedRepliesEnabled && original!=null
-       val quote=if(!useLinked)original?.let{
-        "↪ "+(if(it.text.isBlank())"Вложение" else it.text)
-         .replace("\n"," ").take(120)+"\n"
-       }.orEmpty() else ""
-       val text=quote+input.trim()
-       if(text.isNotBlank()&&text.length<=4000){
-        val p=PendingMessage(
-         clientMessageId=java.util.UUID.randomUUID().toString(),
-         text=text,
-         replyToMessageId=if(useLinked)original?.id.orEmpty() else "",
-         replyPreviewText=if(useLinked)(original?.text?.ifBlank{"Вложение"}?:"").take(240) else "",
-         replyPreviewFrom=if(useLinked)original?.from.orEmpty() else ""
-        )
-        pending.add(p);savePending()
-        if(connected){
-         val payload=JSONObject().put("type","message").put("to",peer.id)
-          .put("text",p.text).put("clientMessageId",p.clientMessageId)
-         if(p.replyToMessageId.isNotBlank())payload.put("replyToMessageId",p.replyToMessageId)
-         val sent=ws?.send(payload.toString())==true
-         if(!sent){connected=false;ws?.close(1012,"retry")}
+     val canSend=input.isNotBlank() && input.trim().length<=4000
+     Box(
+      Modifier.size(50.dp).clip(CircleShape)
+       .background(if(canSend)LumoCyan else Color(0xFF374248))
+       .clickable(enabled=canSend){
+        val original=replyTarget
+        val useLinked=linkedRepliesEnabled && original!=null
+        val quote=if(!useLinked)original?.let{
+         "↪ "+(if(it.text.isBlank())"Вложение" else it.text)
+          .replace("\n"," ").take(120)+"\n"
+        }.orEmpty() else ""
+        val text=quote+input.trim()
+        if(text.isNotBlank()&&text.length<=4000){
+         val p=PendingMessage(
+          clientMessageId=java.util.UUID.randomUUID().toString(),
+          text=text,
+          replyToMessageId=if(useLinked)original?.id.orEmpty() else "",
+          replyPreviewText=if(useLinked)(original?.text?.ifBlank{"Вложение"}?:"").take(240) else "",
+          replyPreviewFrom=if(useLinked)original?.from.orEmpty() else ""
+         )
+         pending.add(p);savePending()
+         if(connected){
+          val payload=JSONObject().put("type","message").put("to",peer.id)
+           .put("text",p.text).put("clientMessageId",p.clientMessageId)
+          if(p.replyToMessageId.isNotBlank())payload.put("replyToMessageId",p.replyToMessageId)
+          val sent=ws?.send(payload.toString())==true
+          if(!sent){connected=false;ws?.close(1012,"retry")}
+         }
+         input=""
+         replyTarget=null
         }
-        input=""
-        replyTarget=null
-       }
-      }
-     )
+       },
+      contentAlignment=Alignment.Center
+     ){
+      Text("➤",color=Color.White,style=MaterialTheme.typography.titleLarge)
+     }
     }
    }
   }
