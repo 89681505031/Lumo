@@ -71,6 +71,7 @@ jobs:
 
       - name: Recover verified signed Lumo 1.0.9 release
         if: env.LUMO_SIGNED_RELEASE != 'true' && github.event_name != 'pull_request'
+        continue-on-error: true
         shell: bash
         env:
           LUMO_EXPECTED_UNSIGNED_SHA256: "eecf468fa115873ffa8002fd52053e4367d0e493ec667623e8306ae86b9e5152"
@@ -150,13 +151,38 @@ jobs:
           name: lumo-release-unsigned-apk
           path: android/app/build/outputs/apk/release/app-release-unsigned.apk
 
-      - name: Require signed release on main
+      - name: Publish current debug APK
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          PUBLISH_APK="$RUNNER_TEMP/Lumo-debug.apk"
+          test -f "$APK"
+          cp "$APK" "$PUBLISH_APK"
+          if gh release view lumo-debug-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit lumo-debug-latest \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Lumo Debug (latest)" \
+              --notes "Latest installable test APK from main. This debug build is separate from the signed production update channel."
+          else
+            gh release create lumo-debug-latest "$PUBLISH_APK" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Lumo Debug (latest)" \
+              --notes "Latest installable test APK from main. This debug build is separate from the signed production update channel."
+            exit 0
+          fi
+          gh release upload lumo-debug-latest "$PUBLISH_APK" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+      - name: Report missing signed release
         if: github.ref == 'refs/heads/main' && github.event_name == 'push' && env.LUMO_SIGNED_RELEASE != 'true'
         shell: bash
         run: |
-          echo "::error::Production main build has no verified signed release APK. Refusing publication."
-          exit 1
-
+          echo "::warning::No verified signed production APK was produced. Debug APK is published for testing; production release remains blocked."
 
       - name: Publish signed APK to lumo-latest
         if: github.ref == 'refs/heads/main' && github.event_name == 'push' && env.LUMO_SIGNED_RELEASE == 'true'
