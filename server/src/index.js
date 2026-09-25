@@ -129,14 +129,14 @@ const lumoLandingPage = String.raw`<!doctype html>
 <main class="wrap">
   <div class="hero">
     <div>
-      <span class="badge"><span class="dot"></span>Lumo 1.0.6 • Android</span>
+      <span class="badge"><span class="dot"></span>Lumo 1.0.8 • Android</span>
       <h1>Общайся проще.<br><span class="grad">Оставайся ближе.</span></h1>
       <p class="lead">Lumo — современный мессенджер для личных сообщений, групповых чатов и звонков. Быстрый интерфейс, удобные диалоги и всё необходимое для общения в одном приложении.</p>
       <div class="actions">
         <a class="cta primary" href="/download">⬇ Скачать Lumo для Android</a>
         <a class="cta secondary" href="#features">Узнать больше</a>
       </div>
-      <div class="meta">Android • версия 1.0.6 • APK-сборка</div>
+      <div class="meta">Android • версия 1.0.8 • APK-сборка</div>
     </div>
     <div class="phone-wrap" aria-label="Предпросмотр интерфейса Lumo">
       <div class="glow"></div>
@@ -164,7 +164,7 @@ const lumoLandingPage = String.raw`<!doctype html>
 
   <section id="download">
     <div class="download">
-      <div><h2>Скачай Lumo</h2><p>Актуальная Android-сборка Lumo 1.0.6.</p></div>
+      <div><h2>Скачай Lumo</h2><p>Актуальная Android-сборка Lumo 1.0.8.</p></div>
       <a class="cta primary" href="/download">⬇ Скачать приложение</a>
     </div>
   </section>
