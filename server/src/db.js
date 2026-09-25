@@ -68,6 +68,15 @@ export async function initDatabase() {
   await client.query(`alter table media_assets add column if not exists storage_mode varchar(8) not null default 's3'`);
   await client.query(`alter table media_assets add column if not exists inline_bytes bytea`);
   await client.query(`create index if not exists media_assets_owner_idx on media_assets(owner_id,created_at desc)`);
+  await client.query(`create table if not exists media_inline_chunks (
+    asset_id uuid not null references media_assets(id) on delete cascade,
+    chunk_index integer not null check(chunk_index>=0 and chunk_index<16),
+    byte_length integer not null check(byte_length>0 and byte_length<=3145728),
+    body bytea not null,
+    created_at timestamptz not null default now(),
+    primary key(asset_id,chunk_index),
+    constraint media_inline_chunk_length_ck check(octet_length(body)=byte_length)
+  )`);
   await client.query(`create table if not exists media_download_tokens (
     token uuid primary key,
     asset_id uuid not null references media_assets(id) on delete cascade,
@@ -315,6 +324,7 @@ export async function dbHealth() {
     to_regclass('messages') as messages_table,
     to_regclass('media_assets') as media_assets_table,
     to_regclass('media_download_tokens') as media_download_tokens_table,
+    to_regclass('media_inline_chunks') as media_inline_chunks_table,
     to_regclass('user_blocks') as user_blocks_table,
     to_regclass('calls') as calls_table,
     to_regclass('call_signals') as call_signals_table,
@@ -357,5 +367,5 @@ export async function dbHealth() {
     exists(select 1 from information_schema.columns
       where table_schema=current_schema() and table_name='sessions' and column_name='expires_at') as session_expiry_column`);
   const row=r.rows[0];
-  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.media_download_tokens_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.push_devices_table && row.push_outbox_table && row.group_reply_column && row.group_edited_column && row.group_deleted_column && row.group_reactions_table && row.group_media_column && row.media_group_column && row.media_storage_mode_column && row.media_inline_bytes_column && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
+  return { configured:true, ok:Boolean(row.users_table && row.sessions_table && row.messages_table && row.media_assets_table && row.media_download_tokens_table && row.media_inline_chunks_table && row.user_blocks_table && row.groups_table && row.group_members_table && row.group_messages_table && row.push_devices_table && row.push_outbox_table && row.group_reply_column && row.group_edited_column && row.group_deleted_column && row.group_reactions_table && row.group_media_column && row.media_group_column && row.media_storage_mode_column && row.media_inline_bytes_column && row.password_column && row.bio_column && row.avatar_bytes_column && row.avatar_updated_column && row.reply_column && row.edited_column && row.deleted_column && row.media_column && row.session_expiry_column && (process.env.LUMO_CALL_SIGNALING_ENABLED !== 'true' || (row.calls_table && row.call_signals_table))), now:row.now };
 }
