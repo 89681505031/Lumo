@@ -24,7 +24,8 @@ private data class LumoServerSnapshot(
     val turnReady:Boolean,
     val mediaReady:Boolean,
     val sessionSecurityReady:Boolean,
-    val passwordChangeReady:Boolean
+    val passwordChangeReady:Boolean,
+    val userBlockingReady:Boolean
 )
 
 private fun fetchLumoServerSnapshot():LumoServerSnapshot {
@@ -57,7 +58,8 @@ private fun fetchLumoServerSnapshot():LumoServerSnapshot {
         turnReady=caps.optBoolean("turnReady",false),
         mediaReady=caps.optBoolean("mediaReady",false),
         sessionSecurityReady=caps.optBoolean("sessionRevokeOthers",false),
-        passwordChangeReady=caps.optBoolean("passwordChange",false)
+        passwordChangeReady=caps.optBoolean("passwordChange",false),
+        userBlockingReady=caps.optBoolean("userBlocking",false)
     )
 }
 
@@ -122,6 +124,7 @@ fun LumoServerStatusCard(){
             ServerStatusRow("Фото, видео и файлы",s.mediaReady)
             ServerStatusRow("Безопасность сессий",s.sessionSecurityReady)
             ServerStatusRow("Смена пароля",s.passwordChangeReady)
+            ServerStatusRow("Блокировка контактов",s.userBlockingReady)
         }
         if(error.isNotBlank()){
             Spacer(Modifier.height(8.dp))
