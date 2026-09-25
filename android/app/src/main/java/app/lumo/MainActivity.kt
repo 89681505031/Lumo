@@ -501,6 +501,8 @@ class MainActivity:ComponentActivity(){
  var profileError by remember{mutableStateOf("")}
  var loggingOut by remember{mutableStateOf(false)}
  var logoutError by remember{mutableStateOf("")}
+ var revokingOthers by remember{mutableStateOf(false)}
+ var sessionSecurityText by remember{mutableStateOf("")}
  var update by remember{mutableStateOf<UpdateInfo?>(null)}
  var checking by remember{mutableStateOf(true)}
  var updateText by remember{mutableStateOf("Проверяем обновления…")}
@@ -669,6 +671,49 @@ class MainActivity:ComponentActivity(){
       },modifier=Modifier.fillMaxWidth()
      )
     }
+   }
+  }
+  Spacer(Modifier.height(16.dp))
+  Column(Modifier.fillMaxWidth().lumoGlass(25).padding(18.dp)){
+   Text("Безопасность аккаунта",style=MaterialTheme.typography.titleMedium,
+    fontWeight=FontWeight.Bold,color=Color.White)
+   Spacer(Modifier.height(6.dp))
+   Text("Можно завершить все другие входы в Lumo, не выходя с этого телефона.",
+    style=MaterialTheme.typography.bodySmall,
+    color=MaterialTheme.colorScheme.onSurfaceVariant)
+   Spacer(Modifier.height(12.dp))
+   OutlinedButton(
+    onClick={
+     revokingOthers=true;sessionSecurityText=""
+     scope.launch{
+      runCatching{
+       kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+        Api.revokeOtherSessions(token)
+       }
+      }.onSuccess{count->
+       sessionSecurityText=if(count>0)
+        "Завершено других сессий: "+count
+       else "Других активных сессий нет."
+      }.onFailure{error->
+       if(error is SessionExpiredException)logout()
+       else sessionSecurityText="Не удалось завершить другие сессии. Попробуйте позже."
+      }
+      revokingOthers=false
+     }
+    },
+    enabled=!revokingOthers,
+    modifier=Modifier.fillMaxWidth().heightIn(min=50.dp),
+    shape=RoundedCornerShape(24.dp),
+    border=androidx.compose.foundation.BorderStroke(1.dp,LumoCyan),
+    colors=ButtonDefaults.outlinedButtonColors(contentColor=Color.White)
+   ){
+    Text(if(revokingOthers)"Завершаем…" else "Выйти на других устройствах")
+   }
+   if(sessionSecurityText.isNotBlank()){
+    Text(sessionSecurityText,modifier=Modifier.padding(top=9.dp),
+     style=MaterialTheme.typography.bodySmall,
+     color=if(sessionSecurityText.startsWith("Не удалось"))
+      MaterialTheme.colorScheme.error else LumoCyan)
    }
   }
   Spacer(Modifier.height(18.dp))
@@ -1474,6 +1519,16 @@ object Api{
   c.newCall(request).execute().use{response->
    if(response.code==401)throw SessionExpiredException()
    if(!response.isSuccessful)error("Выход: "+response.code)
+  }
+ }
+ fun revokeOtherSessions(t:String):Int{
+  val request=Request.Builder().url(HTTP+"/api/sessions/revoke-others")
+   .header("Authorization","Bearer "+t).post("".toRequestBody(null)).build()
+  c.newCall(request).execute().use{response->
+   val raw=response.body?.string().orEmpty()
+   if(response.code==401)throw SessionExpiredException()
+   if(!response.isSuccessful)error("Сессии: "+response.code)
+   return runCatching{JSONObject(raw).optInt("revoked",0)}.getOrDefault(0)
   }
  }
  fun updateMe(t:String,name:String,bio:String):Pair<User,Boolean>{val j=JSONObject().put("displayName",name).put("bio",bio);val r=Request.Builder().url(HTTP+"/api/me").header("Authorization","Bearer "+t).patch(j.toString().toRequestBody("application/json".toMediaType())).build();c.newCall(r).execute().use{x->if(x.code==401)throw SessionExpiredException();if(!x.isSuccessful)error("Профиль: "+x.code);val o=JSONObject(x.body!!.string());return user(o) to o.has("bio")}}
