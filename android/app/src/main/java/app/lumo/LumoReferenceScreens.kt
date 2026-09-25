@@ -589,9 +589,9 @@ private fun LumoReferenceCalls(
                             style=MaterialTheme.typography.bodySmall
                         )
                     }
-                    Text("☎",color=Color.White,style=MaterialTheme.typography.titleLarge)
+                    Icon(Icons.Rounded.Call,contentDescription="Аудиозвонок",tint=Color.White,modifier=Modifier.size(22.dp))
                     Spacer(Modifier.width(16.dp))
-                    Text("▣",color=ReferenceBlue,style=MaterialTheme.typography.titleLarge)
+                    Icon(Icons.Rounded.Videocam,contentDescription="Видеозвонок",tint=ReferenceGreen,modifier=Modifier.size(23.dp))
                 }
             }
         }
@@ -643,24 +643,26 @@ private fun LumoReferenceStatus(
         Row(
             Modifier
                 .fillMaxWidth()
-                .lumoGlass(24)
-                .padding(12.dp),
+                .heightIn(min=72.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(ReferencePanel)
+                .padding(horizontal=12.dp,vertical=8.dp),
             verticalAlignment=Alignment.CenterVertically
         ){
-            LumoUserAvatar(token,me,size=58.dp)
+            LumoUserAvatar(token,me,size=52.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)){
                 Text("Мой статус",color=Color.White,fontWeight=FontWeight.Bold)
                 Text("Поделиться моментом…",color=ReferenceMuted)
             }
-            Text("+",color=ReferenceBlue,style=MaterialTheme.typography.headlineMedium)
+            Icon(Icons.Rounded.Add,contentDescription="Добавить статус",tint=ReferenceGreen,modifier=Modifier.size(28.dp))
         }
 
         Spacer(Modifier.height(18.dp))
         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
             Text("Недавние",color=Color.White,fontWeight=FontWeight.Bold)
             Spacer(Modifier.weight(1f))
-            Text("Все ›",color=Color(0xFFC5B8FF))
+            Text("Все ›",color=ReferenceGreen)
         }
         Spacer(Modifier.height(8.dp))
 
@@ -714,7 +716,7 @@ private fun LumoReferenceStatus(
                     Text(peer.displayName,color=Color.White,fontWeight=FontWeight.SemiBold)
                     Text("Недавно",color=ReferenceMuted,style=MaterialTheme.typography.bodySmall)
                 }
-                Text("⋮",color=Color.White,style=MaterialTheme.typography.titleLarge)
+                Icon(Icons.Rounded.MoreVert,contentDescription=null,tint=Color.White,modifier=Modifier.size(22.dp))
             }
         }
     }
@@ -854,26 +856,28 @@ private fun LumoReferenceCommunities(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .lumoGlass(22)
+                        .heightIn(min=78.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(ReferencePanel)
                         .clickable(onClick=openGroups)
-                        .padding(11.dp),
+                        .padding(horizontal=10.dp,vertical=8.dp),
                     verticalAlignment=Alignment.CenterVertically
                 ){
                     Box(
                         Modifier
-                            .size(72.dp)
-                            .clip(RoundedCornerShape(18.dp))
+                            .size(58.dp)
+                            .clip(RoundedCornerShape(12.dp))
                             .background(ReferencePanel2),
                         contentAlignment=Alignment.Center
                     ){
-                        Text(item.third,style=MaterialTheme.typography.headlineMedium,color=Color.White)
+                        Icon(referenceIcon(item.third),contentDescription=null,tint=Color.White,modifier=Modifier.size(28.dp))
                     }
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)){
                         Text(item.first,color=Color.White,fontWeight=FontWeight.Bold)
                         Text(item.second,color=ReferenceMuted,style=MaterialTheme.typography.bodySmall)
                     }
-                    Text("›",color=Color.White,style=MaterialTheme.typography.titleLarge)
+                    Icon(Icons.Rounded.ArrowForwardIos,contentDescription=null,tint=ReferenceMuted,modifier=Modifier.size(18.dp))
                 }
             }
         }
@@ -970,14 +974,14 @@ private fun LumoReferenceSettingsRoot(
             Modifier
                 .fillMaxWidth()
                 .background(ReferenceBg)
-                .padding(horizontal=18.dp,vertical=16.dp),
+                .padding(horizontal=18.dp,vertical=10.dp),
             horizontalAlignment=Alignment.CenterHorizontally
         ){
             Box{
-                LumoUserAvatar(token,me,size=118.dp)
+                LumoUserAvatar(token,me,size=104.dp)
                 Box(
                     Modifier
-                        .size(24.dp)
+                        .size(22.dp)
                         .clip(CircleShape)
                         .background(ReferenceGreen)
                         .align(Alignment.BottomEnd)
@@ -1064,8 +1068,8 @@ private fun LumoReferenceProfileScreen(
                 .padding(horizontal=22.dp,vertical=18.dp),
             horizontalAlignment=Alignment.CenterHorizontally
         ){
-            LumoEditableAvatar(token,me,profileChanged,size=150.dp)
-            Spacer(Modifier.height(28.dp))
+            LumoEditableAvatar(token,me,profileChanged,size=144.dp)
+            Spacer(Modifier.height(22.dp))
 
             if(editing){
                 OutlinedTextField(
@@ -1544,10 +1548,7 @@ private fun SettingsSection(
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal=10.dp,vertical=4.dp)
-            .clip(RoundedCornerShape(22.dp))
-            .background(Color(0xB50A111C))
-            .padding(vertical=2.dp),
+            .background(ReferenceBg),
         content=content
     )
 }
@@ -1563,7 +1564,8 @@ private fun ReferenceSettingsRow(
         Modifier
             .fillMaxWidth()
             .clickable(onClick=onClick)
-            .padding(horizontal=16.dp,vertical=14.dp),
+            .heightIn(min=72.dp)
+            .padding(horizontal=20.dp,vertical=9.dp),
         verticalAlignment=Alignment.CenterVertically
     ){
         Box(
@@ -1591,7 +1593,7 @@ private fun ReferenceSettingsRow(
                 )
             }
         }
-        Text("›",color=ReferenceMuted,style=MaterialTheme.typography.titleLarge)
+        Icon(Icons.Rounded.ArrowForwardIos,contentDescription=null,tint=ReferenceMuted,modifier=Modifier.size(18.dp))
     }
 }
 
@@ -1675,7 +1677,6 @@ private fun referenceIcon(token:String):ImageVector = when(token){
     "◆" -> Icons.Rounded.DirectionsCar
     "▶" -> Icons.Rounded.Movie
     "ⓘ" -> Icons.Rounded.Info
-    "↗" -> Icons.Rounded.Link
     "∞" -> Icons.Rounded.AccountCircle
     "?" -> Icons.Rounded.HelpOutline
     "♧" -> Icons.Rounded.Notifications
@@ -1714,8 +1715,8 @@ private fun ReferenceActionCard(
 ){
     Column(
         modifier
-            .height(120.dp)
-            .clip(RoundedCornerShape(22.dp))
+            .height(108.dp)
+            .clip(RoundedCornerShape(16.dp))
             .background(ReferencePanel2)
             .clickable(onClick=onClick)
             .padding(16.dp),
@@ -1738,7 +1739,7 @@ private fun ReferenceMiniAction(
 ){
     Row(
         modifier
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(ReferencePanel)
             .clickable(onClick=onClick)
             .padding(horizontal=13.dp,vertical=12.dp),
