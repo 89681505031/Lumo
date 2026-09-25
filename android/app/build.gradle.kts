@@ -18,8 +18,10 @@ if (fcmRequested && !fcmConfigured)
 if (fcmConfigured) apply(plugin="com.google.gms.google-services")
 val httpForDebug = stagingBase ?: normalHttp
 val wsForDebug = httpForDebug.replaceFirst("https://", "wss://") + "/ws"
-val supabaseUrl = System.getenv("LUMO_SUPABASE_URL")?.trim()?.trimEnd('/') ?: ""
-val supabasePublishableKey = System.getenv("LUMO_SUPABASE_PUBLISHABLE_KEY")?.trim() ?: ""
+val defaultSupabaseUrl = "https://vikqgvkjxceypozktvgd.supabase.co"
+val defaultSupabasePublishableKey = "sb_publishable_f7TQbu8r5DH4iWwZE30e0w_Xhq-cRHX"
+val supabaseUrl = System.getenv("LUMO_SUPABASE_URL")?.trim()?.trimEnd('/')?.takeIf{it.isNotBlank()} ?: defaultSupabaseUrl
+val supabasePublishableKey = System.getenv("LUMO_SUPABASE_PUBLISHABLE_KEY")?.trim()?.takeIf{it.isNotBlank()} ?: defaultSupabasePublishableKey
 fun buildConfigString(value:String)=value.replace("\\","\\\\").replace("\"","\\\"")
 val releaseSigningReady = listOf(
  System.getenv("LUMO_KEYSTORE_PATH"),
