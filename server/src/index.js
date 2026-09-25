@@ -230,7 +230,8 @@ app.get("/api/capabilities",(_req,res)=>res.json({
   turnReady:turnReady(),
   turnProvider:turnProvider(),
   pushRegistration:hasDatabase,
-  sessionRevokeOthers:hasDatabase
+  sessionRevokeOthers:hasDatabase,
+  passwordChange:hasDatabase
 }));
 
 app.get("/health", async (_req, res) => { let database={configured:hasDatabase,ok:false}; if(hasDatabase){try{database=await dbHealth()}catch(error){console.error("Database health check failed",error);database={configured:true,ok:false}}} const ok=database.configured===true&&database.ok===true; res.status(ok?200:503).json({ ok, service:"lumo-server", database }); });
@@ -311,6 +312,48 @@ app.post(
       return res.json({revoked:revoked.length});
     }catch(error){
       console.error("Other session revocation failed",error);
+      return res.status(503).json({error:"service_unavailable"});
+    }
+  }
+);
+
+app.post(
+  "/api/account/password",
+  auth,
+  requireDatabase,
+  rateLimit({windowMs:15*60_000,max:5}),
+  async(req,res)=>{
+    const currentPassword=req.body?.currentPassword;
+    const newPassword=req.body?.newPassword;
+    if(!validPassword(newPassword))
+      return res.status(400).json({error:"invalid_new_password"});
+    if(!validPassword(currentPassword))
+      return res.status(403).json({error:"current_password_incorrect"});
+    try{
+      const currentHash=await postgresStore.passwordHash(req.user.id);
+      const verified=await verifyPassword(
+        currentPassword,
+        currentHash || dummyPasswordHash
+      );
+      if(!verified || !currentHash)
+        return res.status(403).json({error:"current_password_incorrect"});
+      if(await verifyPassword(newPassword,currentHash))
+        return res.status(409).json({error:"password_unchanged"});
+      const newHash=await hashPassword(newPassword);
+      const revoked=await postgresStore.changePasswordAndRevokeOthers(
+        req.user.id,
+        req.sessionToken,
+        currentHash,
+        newHash
+      );
+      if(revoked===null)
+        return res.status(409).json({error:"password_changed_elsewhere"});
+      const active=sockets.get(req.user.id);
+      if(active?.sessionToken && active.sessionToken!==req.sessionToken)
+        active.close(1008,"Session revoked");
+      return res.json({changed:true,revoked:revoked.length});
+    }catch(error){
+      console.error("Password change failed",error);
       return res.status(503).json({error:"service_unavailable"});
     }
   }
