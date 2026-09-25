@@ -245,16 +245,29 @@ class MainActivity:ComponentActivity(){
    containerColor=Color.Transparent,
    topBar={
     Row(
-     Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=18.dp,vertical=12.dp),
+     Modifier.fillMaxWidth().statusBarsPadding()
+      .padding(horizontal=16.dp,vertical=8.dp),
      verticalAlignment=Alignment.CenterVertically
     ){
-     Text("Lumo",style=MaterialTheme.typography.headlineLarge,fontWeight=FontWeight.ExtraBold,color=Color.White)
+     Text(
+      "Lumo",
+      style=MaterialTheme.typography.headlineMedium,
+      fontWeight=FontWeight.Bold,
+      color=Color.White
+     )
      Spacer(Modifier.weight(1f))
      Box(
-      Modifier.size(38.dp).clip(CircleShape).background(Color(0xFF00A884)).clickable{tab=2},
+      Modifier.size(34.dp).clip(CircleShape)
+       .background(Color(0xFF00A884)).clickable{tab=2},
       contentAlignment=Alignment.Center
      ){
-      Text(me.displayName.take(1).uppercase(),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Bold,color=Color.White,maxLines=1)
+      Text(
+       me.displayName.take(1).uppercase(),
+       style=MaterialTheme.typography.labelLarge,
+       fontWeight=FontWeight.Bold,
+       color=Color.White,
+       maxLines=1
+      )
      }
     }
    },
@@ -326,100 +339,137 @@ class MainActivity:ComponentActivity(){
    kotlinx.coroutines.delay(12_000)
   }
  }
- if(loading){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator(color=LumoCyan)};return}
+ if(loading){
+  Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){
+   CircularProgressIndicator(color=LumoCyan)
+  }
+  return
+ }
  Column(Modifier.fillMaxSize()){
   if(loadError&&chats.isEmpty()){
    Column(
-    Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp)
-     .lumoGlass(22).padding(horizontal=14.dp,vertical=12.dp)
+    Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=4.dp)
+     .background(Color(0xFF202C33),RoundedCornerShape(12.dp))
+     .padding(horizontal=12.dp,vertical=10.dp)
    ){
-    Text("Не удалось обновить список чатов",color=Color.White,fontWeight=FontWeight.SemiBold)
+    Text("Не удалось обновить чаты",color=Color.White,fontWeight=FontWeight.SemiBold)
     Text(loadErrorDetail,color=MaterialTheme.colorScheme.onSurfaceVariant,
      style=MaterialTheme.typography.bodySmall)
-    Spacer(Modifier.height(8.dp))
-    OutlinedButton(onClick={retry++}){Text("Повторить")}
+    TextButton(onClick={retry++}){Text("Повторить",color=LumoCyan)}
    }
   }
+
   Row(
-   Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp)
-    .lumoGlass(22).clickable{openGroups()}.padding(13.dp),
+   Modifier.fillMaxWidth().clickable{openGroups()}
+    .padding(horizontal=16.dp,vertical=8.dp),
    verticalAlignment=Alignment.CenterVertically
   ){
-   LumoNeonAvatar("Группы",size=44.dp)
+   LumoNeonAvatar("Группы",size=40.dp)
    Spacer(Modifier.width(12.dp))
    Column(Modifier.weight(1f)){
-    Text("Группы",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=Color.White)
-    Text("Создать группу или открыть групповой чат",color=MaterialTheme.colorScheme.onSurfaceVariant)
+    Text("Группы",fontWeight=FontWeight.SemiBold,color=Color.White)
+    Text("Групповые чаты",style=MaterialTheme.typography.bodySmall,
+     color=MaterialTheme.colorScheme.onSurfaceVariant)
    }
-   Text("›",color=Color.White)
+   Text("›",color=Color(0xFF8696A0),style=MaterialTheme.typography.titleLarge)
   }
+  HorizontalDivider(color=Color(0xFF202C33),modifier=Modifier.padding(start=68.dp))
   Row(
-   Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp)
-    .lumoGlass(22).clickable{openCalls()}.padding(13.dp),
+   Modifier.fillMaxWidth().clickable{openCalls()}
+    .padding(horizontal=16.dp,vertical=8.dp),
    verticalAlignment=Alignment.CenterVertically
   ){
-   LumoNeonAvatar("Звонки",size=44.dp)
+   LumoNeonAvatar("Звонки",size=40.dp)
    Spacer(Modifier.width(12.dp))
    Column(Modifier.weight(1f)){
-    Text("Звонки",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=Color.White)
-    Text("Аудио и видео",color=MaterialTheme.colorScheme.onSurfaceVariant)
+    Text("Звонки",fontWeight=FontWeight.SemiBold,color=Color.White)
+    Text("Аудио и видео",style=MaterialTheme.typography.bodySmall,
+     color=MaterialTheme.colorScheme.onSurfaceVariant)
    }
-   Text("›",color=Color.White)
+   Text("›",color=Color(0xFF8696A0),style=MaterialTheme.typography.titleLarge)
   }
+
   LumoSearchField(
    chatQuery,{chatQuery=it},"Поиск по чатам",
-   modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp)
+   modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=7.dp)
   )
+
   if(refreshError||showingCached)Text(
-   "Офлайн: показываем зашифрованную копию последних чатов с этого телефона.",
-   color=MaterialTheme.colorScheme.error,modifier=Modifier.padding(horizontal=18.dp,vertical=6.dp)
+   "Офлайн-копия чатов",
+   color=Color(0xFF8696A0),
+   style=MaterialTheme.typography.labelSmall,
+   modifier=Modifier.padding(horizontal=16.dp,vertical=2.dp)
   )
+
   if(chats.isEmpty()){
-   Box(Modifier.fillMaxSize().padding(20.dp),contentAlignment=Alignment.Center){
-    Column(Modifier.fillMaxWidth().lumoGlass(28).padding(22.dp),horizontalAlignment=Alignment.CenterHorizontally){
-     Text(if(loadError)"Чаты временно не загружены" else "Сообщений пока нет",
-      style=MaterialTheme.typography.titleLarge,color=Color.White,fontWeight=FontWeight.Bold)
-     Spacer(Modifier.height(8.dp))
+   Box(Modifier.fillMaxSize().padding(24.dp),contentAlignment=Alignment.Center){
+    Column(horizontalAlignment=Alignment.CenterHorizontally){
      Text(
-      if(loadError)"Можно найти человека и открыть диалог — список чатов обновится, когда сервер ответит."
-      else "Найди человека и начни первый диалог",
+      if(loadError)"Чаты недоступны" else "Сообщений пока нет",
+      style=MaterialTheme.typography.titleMedium,
+      color=Color.White,
+      fontWeight=FontWeight.SemiBold
+     )
+     Spacer(Modifier.height(6.dp))
+     Text(
+      if(loadError)"Попробуйте обновить или найдите человека."
+      else "Найдите человека и начните диалог.",
       color=MaterialTheme.colorScheme.onSurfaceVariant
      )
-     Spacer(Modifier.height(16.dp))
-     LumoNeonButton("Найти людей",find,Modifier.fillMaxWidth())
+     Spacer(Modifier.height(10.dp))
+     TextButton(onClick=find){Text("Найти людей",color=LumoCyan)}
     }
    }
   }else{
    val filtered=chats.filter{
     it.peer.displayName.contains(chatQuery,true)||it.peer.username.contains(chatQuery,true)
    }
-   if(filtered.isEmpty()) Text(
-    "Совпадений не найдено",color=Color.White,modifier=Modifier.padding(22.dp)
-   )
+   if(filtered.isEmpty()){
+    Text("Совпадений не найдено",color=Color(0xFF8696A0),
+     modifier=Modifier.padding(18.dp))
+   }
    LazyColumn(
     modifier=Modifier.fillMaxSize(),
-    contentPadding=PaddingValues(horizontal=8.dp,vertical=2.dp),
+    contentPadding=PaddingValues(vertical=2.dp),
     verticalArrangement=Arrangement.spacedBy(0.dp)
    ){
     items(filtered,key={it.peer.id}){chat->
      Row(
-      Modifier.fillMaxWidth().clickable{open(chat.peer)}.padding(horizontal=8.dp,vertical=11.dp),
+      Modifier.fillMaxWidth().clickable{open(chat.peer)}
+       .padding(horizontal=16.dp,vertical=9.dp),
       verticalAlignment=Alignment.CenterVertically
      ){
-      LumoUserAvatar(token,chat.peer,size=54.dp)
+      LumoUserAvatar(token,chat.peer,size=48.dp)
       Spacer(Modifier.width(12.dp))
       Column(Modifier.weight(1f)){
-       Text(chat.peer.displayName,style=MaterialTheme.typography.titleMedium,
-        fontWeight=FontWeight.Bold,color=Color.White,maxLines=1)
-       Spacer(Modifier.height(3.dp))
-       Text(if(privacy.hideChatPreviews)"Содержимое скрыто" else chat.lastMessage,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant)
+       Text(
+        chat.peer.displayName,
+        style=MaterialTheme.typography.bodyLarge,
+        fontWeight=FontWeight.SemiBold,
+        color=Color.White,
+        maxLines=1
+       )
+       Spacer(Modifier.height(2.dp))
+       Text(
+        if(privacy.hideChatPreviews)"Содержимое скрыто" else chat.lastMessage,
+        maxLines=1,
+        style=MaterialTheme.typography.bodyMedium,
+        color=Color(0xFF8696A0)
+       )
       }
       if(chat.lastAt.isNotBlank()){
        Spacer(Modifier.width(8.dp))
-       Text(formatMessageTime(chat.lastAt),style=MaterialTheme.typography.labelSmall,
-        color=MaterialTheme.colorScheme.onSurfaceVariant)
+       Text(
+        formatMessageTime(chat.lastAt),
+        style=MaterialTheme.typography.labelSmall,
+        color=Color(0xFF8696A0)
+       )
       }
      }
+     HorizontalDivider(
+      color=Color(0xFF17252D),
+      modifier=Modifier.padding(start=76.dp)
+     )
     }
    }
   }
@@ -442,50 +492,67 @@ class MainActivity:ComponentActivity(){
  Column(Modifier.fillMaxSize()){
   LumoSearchField(
    value=q,onValueChange={q=it},placeholder="Поиск по имени или логину",
-   modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp)
+   modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=7.dp)
   )
-  if(loading)LinearProgressIndicator(Modifier.fillMaxWidth(),color=LumoCyan)
+  if(loading)LinearProgressIndicator(
+   Modifier.fillMaxWidth().height(1.dp),color=LumoCyan
+  )
   if(loadError){
-   Column(
-    Modifier.fillMaxWidth().padding(16.dp).lumoGlass(24).padding(20.dp),
-    horizontalAlignment=Alignment.CenterHorizontally
+   Row(
+    Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=6.dp),
+    verticalAlignment=Alignment.CenterVertically
    ){
-    Text("Не удалось загрузить пользователей",color=Color.White)
-    Spacer(Modifier.height(10.dp))
-    LumoNeonButton("Повторить",onClick={retry++},modifier=Modifier.fillMaxWidth())
+    Text(
+     "Не удалось загрузить пользователей",
+     color=Color(0xFF8696A0),
+     style=MaterialTheme.typography.bodySmall,
+     modifier=Modifier.weight(1f)
+    )
+    TextButton(onClick={retry++}){Text("Повторить",color=LumoCyan)}
    }
   }
   if(!loading&&!loadError&&users.isEmpty()){
-   Box(Modifier.fillMaxWidth().padding(24.dp),contentAlignment=Alignment.Center){
-    Text(if(q.isBlank())"Пользователей пока нет" else "Ничего не найдено",
-     color=MaterialTheme.colorScheme.onSurfaceVariant)
+   Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){
+    Text(
+     if(q.isBlank())"Пользователей пока нет" else "Ничего не найдено",
+     color=Color(0xFF8696A0)
+    )
    }
-  }
-  LazyColumn(
-   Modifier.fillMaxSize(),
-   contentPadding=PaddingValues(horizontal=8.dp,vertical=2.dp),
-   verticalArrangement=Arrangement.spacedBy(0.dp)
-  ){
-   items(users,key={it.id}){u->
-    Row(
-     Modifier.fillMaxWidth().clickable{open(u)}.padding(horizontal=8.dp,vertical=11.dp),
-     verticalAlignment=Alignment.CenterVertically
-    ){
-     LumoUserAvatar(token,u,size=52.dp)
-     Spacer(Modifier.width(14.dp))
-     Column(Modifier.weight(1f)){
-      Text(u.displayName,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleMedium,
-       color=Color.White,maxLines=1)
-      Spacer(Modifier.height(3.dp))
-      Text("@"+u.username,color=MaterialTheme.colorScheme.onSurfaceVariant)
-      if(u.bio.isNotBlank())Text(
-       u.bio,maxLines=1,
-       style=MaterialTheme.typography.bodySmall,
-       color=MaterialTheme.colorScheme.onSurfaceVariant
-      )
+  }else{
+   LazyColumn(
+    Modifier.fillMaxSize(),
+    contentPadding=PaddingValues(vertical=2.dp),
+    verticalArrangement=Arrangement.spacedBy(0.dp)
+   ){
+    items(users,key={it.id}){u->
+     Row(
+      Modifier.fillMaxWidth().clickable{open(u)}
+       .padding(horizontal=16.dp,vertical=9.dp),
+      verticalAlignment=Alignment.CenterVertically
+     ){
+      LumoUserAvatar(token,u,size=48.dp)
+      Spacer(Modifier.width(12.dp))
+      Column(Modifier.weight(1f)){
+       Text(
+        u.displayName,
+        fontWeight=FontWeight.SemiBold,
+        style=MaterialTheme.typography.bodyLarge,
+        color=Color.White,
+        maxLines=1
+       )
+       Text(
+        "@"+u.username,
+        style=MaterialTheme.typography.bodyMedium,
+        color=Color(0xFF8696A0),
+        maxLines=1
+       )
+      }
+      Text("›",style=MaterialTheme.typography.titleLarge,color=Color(0xFF8696A0))
      }
-     Text("›",style=MaterialTheme.typography.headlineSmall,color=Color.White,
-      modifier=Modifier.padding(end=4.dp))
+     HorizontalDivider(
+      color=Color(0xFF17252D),
+      modifier=Modifier.padding(start=76.dp)
+     )
     }
    }
   }
