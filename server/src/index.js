@@ -11,7 +11,9 @@ import {
   mediaReady, inlineMediaReady, mediaAvailable, inlineMediaMaxBytes,
   mediaStore, registerMediaCleanup
 } from "./media-store.js";
-import { callRouter, callSignalingReady, turnReady } from "./call-signaling.js";
+import {
+  callRouter, callSignalingReady, turnReady, turnProvider
+} from "./call-signaling.js";
 import { registerCallCleanup } from "./call-cleanup.js";
 import { registerPushDispatch } from "./push-outbox.js";
 
@@ -221,6 +223,7 @@ app.get("/api/capabilities",(_req,res)=>res.json({
   groupAttachments:mediaEnabled&&hasDatabase,
   callsReady:callSignalingReady(),
   turnReady:turnReady(),
+  turnProvider:turnProvider(),
   pushRegistration:hasDatabase
 }));
 
