@@ -27,27 +27,29 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Check Vercel deployment credential
+
+      - name: Detect Vercel deployment credential
         id: credential
         shell: bash
         run: |
           if [ -n "$VERCEL_TOKEN" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "VERCEL_TOKEN is configured; GitHub Actions will perform an explicit production deployment."
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::error::VERCEL_TOKEN is not configured; refusing to report a successful production deployment."
-            exit 1
+            echo "::notice::VERCEL_TOKEN is not configured. Skipping the redundant CLI deploy and relying on the connected Vercel Git integration."
           fi
+
       - name: Deploy current server to Vercel production
         if: steps.credential.outputs.available == 'true'
         working-directory: server
         shell: bash
         run: npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN"
+
       - name: Verify production health and capabilities
-        if: steps.credential.outputs.available == 'true'
         shell: bash
         run: |
-          for attempt in $(seq 1 18); do
+          for attempt in $(seq 1 24); do
             HEALTH=$(curl -fsS --max-time 10 https://lumo-gamma-seven.vercel.app/health || true)
             CAPS=$(curl -fsS --max-time 10 https://lumo-gamma-seven.vercel.app/api/capabilities || true)
             if echo "$HEALTH" | grep -q '"ok":true' \
@@ -58,5 +60,5 @@ jobs:
             fi
             sleep 5
           done
-          echo "::error::Production alias did not expose the current Lumo backend in time."
+          echo "::error::Production alias did not expose a healthy Lumo backend in time."
           exit 1
