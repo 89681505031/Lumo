@@ -11,14 +11,86 @@ const turnUrls = () => (process.env.LUMO_TURN_URLS || "")
   .split(",").map(v=>v.trim()).filter(Boolean);
 const validTurnUrl = v =>
   /^turns?:[a-zA-Z0-9.-]+(?::[0-9]{1,5})?(?:[?]transport=(?:udp|tcp))?$/.test(v);
-
-export const callSignalingReady = () => enabled() && Boolean(pool);
-export const turnReady = () => {
+const staticTurnReady = () => {
   const secret = process.env.LUMO_TURN_SECRET || "";
   const urls = turnUrls();
-  return callSignalingReady() && secret.length >= 32 &&
-    urls.length >= 1 && urls.length <= 3 && urls.every(validTurnUrl);
+  return secret.length >= 32 && urls.length >= 1 && urls.length <= 3 &&
+    urls.every(validTurnUrl);
 };
+const cloudflareTurnKeyId = () =>
+  String(process.env.LUMO_CLOUDFLARE_TURN_KEY_ID || "").trim();
+const cloudflareTurnApiToken = () =>
+  String(process.env.LUMO_CLOUDFLARE_TURN_API_TOKEN || "").trim();
+const cloudflareTurnReady = () =>
+  /^[A-Za-z0-9_-]{16,64}$/.test(cloudflareTurnKeyId()) &&
+  cloudflareTurnApiToken().length >= 32;
+
+function cloudflareTurnBaseUrl() {
+  const testOverride=String(
+    process.env.LUMO_TEST_CLOUDFLARE_TURN_BASE_URL || ""
+  ).trim();
+  if(process.env.NODE_ENV==="test" && testOverride){
+    const u=new URL(testOverride);
+    if(u.protocol!=="http:" || !["127.0.0.1","localhost"].includes(u.hostname))
+      throw new Error("Invalid test Cloudflare TURN base URL");
+    return u.toString().replace(/\/$/,"");
+  }
+  return "https://rtc.live.cloudflare.com";
+}
+
+export function normalizeCloudflareIceServers(value) {
+  const raw=Array.isArray(value?.iceServers)?value.iceServers:[];
+  const out=[];
+  for(const item of raw){
+    if(!item || typeof item!=="object")continue;
+    const username=typeof item.username==="string"?item.username:"";
+    const credential=typeof item.credential==="string"?item.credential:"";
+    if(!username || !credential || username.length>512 || credential.length>512)
+      continue;
+    const candidateUrls=Array.isArray(item.urls)
+      ?item.urls
+      :typeof item.urls==="string"?[item.urls]:[];
+    const urls=candidateUrls
+      .filter(v=>typeof v==="string" && validTurnUrl(v))
+      .filter(v=>!/^turns?:[^?]+:53(?:[?]|$)/.test(v));
+    if(!urls.length)continue;
+    out.push({urls:[...new Set(urls)].slice(0,8),username,credential});
+    if(out.length>=3)break;
+  }
+  return out;
+}
+
+async function cloudflareIceServers(ttlSeconds) {
+  const keyId=cloudflareTurnKeyId();
+  const token=cloudflareTurnApiToken();
+  const response=await fetch(
+    cloudflareTurnBaseUrl()+"/v1/turn/keys/"+
+      encodeURIComponent(keyId)+"/credentials/generate-ice-servers",
+    {
+      method:"POST",
+      headers:{
+        "Authorization":"Bearer "+token,
+        "Content-Type":"application/json"
+      },
+      body:JSON.stringify({ttl:ttlSeconds}),
+      signal:AbortSignal.timeout(5_000)
+    }
+  );
+  if(!response.ok)
+    throw new Error("cloudflare_turn_http_"+response.status);
+  const payload=await response.json();
+  const iceServers=normalizeCloudflareIceServers(payload);
+  if(!iceServers.length)
+    throw new Error("cloudflare_turn_invalid_response");
+  return iceServers;
+}
+
+export const callSignalingReady = () => enabled() && Boolean(pool);
+export const turnProvider = () =>
+  cloudflareTurnReady() ? "cloudflare" :
+  staticTurnReady() ? "coturn" : null;
+export const turnReady = () =>
+  callSignalingReady() && turnProvider()!==null;
 const publicCall = r => ({
   id:r.id, callerId:r.caller_id, calleeId:r.callee_id, kind:r.kind,
   status:r.status, createdAt:r.created_at, updatedAt:r.updated_at, expiresAt:r.expires_at
@@ -193,18 +265,44 @@ export function callRouter(auth) {
       return res.status(409).json({error:"call_inactive"});
     if (await blocked(pool,call.caller_id,call.callee_id))
       return res.status(403).json({error:"user_blocked"});
+    // Fail closed: never hand out unusable or arbitrary ICE URLs.
+    const provider=turnProvider();
+    if (!turnReady() || !provider)
+      return res.status(503).json({error:"turn_unavailable"});
+    // 35-minute upper bound covers an accepted 30-minute call.
+    const remaining = Math.max(
+      1,
+      Math.ceil((new Date(call.expires_at).getTime()-Date.now())/1000)
+    );
+    const ttl=Math.min(remaining+30,35*60);
+    const expiry = Math.floor(Date.now()/1000)+ttl;
+    res.set("Cache-Control","private, no-store");
+
+    if(provider==="cloudflare"){
+      try{
+        const iceServers=await cloudflareIceServers(ttl);
+        return res.json({
+          iceServers,
+          expiresAt:new Date(expiry*1000).toISOString()
+        });
+      }catch(error){
+        console.error(
+          "Cloudflare TURN credential request failed",
+          typeof error?.message==="string"?error.message:"unknown"
+        );
+        return res.status(503).json({error:"turn_unavailable"});
+      }
+    }
+
     const secret = process.env.LUMO_TURN_SECRET || "";
     const urls = turnUrls();
-    // Fail closed: never hand out unusable or arbitrary ICE URLs.
-    if (!turnReady())
-      return res.status(503).json({error:"turn_unavailable"});
-    // 35-minute upper bound covers an accepted 30-minute lab call.
-    const remaining = Math.max(1,Math.ceil((new Date(call.expires_at).getTime()-Date.now())/1000));
-    const expiry = Math.floor(Date.now()/1000)+Math.min(remaining+30,35*60);
     const username = expiry+":"+req.user.id+":"+call.id;
-    const credential = createHmac("sha1",secret).update(username).digest("base64");
-    res.set("Cache-Control","private, no-store");
-    res.json({ iceServers:[{urls,username,credential}], expiresAt:new Date(expiry*1000).toISOString() });
+    const credential = createHmac("sha1",secret)
+      .update(username).digest("base64");
+    return res.json({
+      iceServers:[{urls,username,credential}],
+      expiresAt:new Date(expiry*1000).toISOString()
+    });
   }));
 
   // Stable per-call sequence number: row lock commits each signal before a later
