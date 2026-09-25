@@ -88,7 +88,7 @@ test("direct history pagination is stable for equal timestamps and conversation-
     assert.equal(caps.status,200);
     assert.equal(caps.body.directPagination,true);
 
-    const sameTime=new Date("2026-09-25T10:00:00.123456Z");
+    const sameTime="2026-09-25 10:00:00.123456+00";
     const ids=[];
     for(let i=0;i<125;i++){
       const id=randomUUID();
