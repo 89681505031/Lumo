@@ -1,5 +1,6 @@
 package app.lumo
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -327,8 +328,9 @@ fun LumoCallsLab(
     LumoBackdrop(Modifier.fillMaxSize()){
         Column(Modifier.fillMaxSize().statusBarsPadding()){
             Row(
-                Modifier.fillMaxWidth().padding(horizontal=10.dp,vertical=8.dp)
-                    .lumoGlass(24).padding(horizontal=8.dp,vertical=6.dp),
+                Modifier.fillMaxWidth()
+                    .background(Color(0xFF202C33))
+                    .padding(horizontal=8.dp,vertical=6.dp),
                 verticalAlignment=Alignment.CenterVertically
             ){
                 TextButton(onClick=back){Text("‹",color=Color.White,
@@ -339,37 +341,6 @@ fun LumoCallsLab(
                     Text("Приватные аудио- и видеозвонки",
                         color=MaterialTheme.colorScheme.onSurfaceVariant,
                         style=MaterialTheme.typography.labelMedium)
-                }
-            }
-
-            Box(
-                Modifier.fillMaxWidth().padding(12.dp).lumoGlass(22).padding(14.dp)
-            ){
-                Text(
-                    "После принятия вызова каждый участник отдельно включает аудио или видео. " +
-                        "Экран показывает реальное состояние WebRTC и время соединения. Камера и микрофон не запускаются автоматически; " +
-                        "медиатрафик остаётся в TURN-only режиме, а при сворачивании захват останавливается.",
-                    color=Color.White,style=MaterialTheme.typography.bodySmall
-                )
-            }
-
-            serviceCaps?.let{caps->
-                if(caps.callsReady==true){
-                    Box(
-                        Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp)
-                            .lumoGlass(18).padding(11.dp)
-                    ){
-                        Text(
-                            if(caps.turnReady==true)
-                                "Сервер звонков готов: signaling и приватный TURN доступны."
-                            else if(caps.turnReady==false)
-                                "Приглашения звонков доступны, но приватный TURN ещё не настроен. Аудио и видео не запустятся до настройки TURN."
-                            else
-                                "Сигнализация звонков доступна. Сервер пока не сообщает состояние TURN.",
-                            color=if(caps.turnReady==true)LumoCyan else Color.White,
-                            style=MaterialTheme.typography.bodySmall
-                        )
-                    }
                 }
             }
 
