@@ -42,7 +42,7 @@ import org.json.JSONObject
 
 private const val MAX_AVATAR_SOURCE_BYTES=8*1024*1024
 private const val MAX_SYNCED_JPEG_BYTES=350*1024
-private val avatarEdge=Brush.linearGradient(listOf(LumoCyan,Color.White,LumoPink))
+private val avatarEdge=Brush.linearGradient(listOf(Color(0xFF2A3942),Color(0xFF2A3942)))
 
 private object LumoAvatarMemory {
     val cache=LruCache<String,Bitmap>(24)
@@ -239,7 +239,7 @@ fun LumoUserAvatar(token:String,user:User,size:Dp=52.dp,modifier:Modifier=Modifi
         bitmap=image.asImageBitmap(),
         contentDescription=user.displayName,
         contentScale=ContentScale.Crop,
-        modifier=modifier.size(size).clip(CircleShape).border(1.6.dp,avatarEdge,CircleShape)
+        modifier=modifier.size(size).clip(CircleShape).border(1.dp,avatarEdge,CircleShape)
     )
 }
 
@@ -300,12 +300,12 @@ fun LumoEditableAvatar(
                 bitmap=local.asImageBitmap(),
                 contentDescription="Мой аватар",
                 contentScale=ContentScale.Crop,
-                modifier=Modifier.size(size).clip(CircleShape).border(2.dp,avatarEdge,CircleShape)
+                modifier=Modifier.size(size).clip(CircleShape).border(1.dp,avatarEdge,CircleShape)
             ) else LumoUserAvatar(token,user,size)
 
             Box(
-                Modifier.align(Alignment.BottomEnd).size(42.dp)
-                    .lumoGlass(22).clip(CircleShape)
+                Modifier.align(Alignment.BottomEnd).size(46.dp)
+                    .clip(CircleShape).background(Color(0xFF25D366))
                     .clickable(enabled=!syncing){
                         select.launch(PickVisualMediaRequest(
                             ActivityResultContracts.PickVisualMedia.ImageOnly
@@ -314,7 +314,7 @@ fun LumoEditableAvatar(
                     .semantics{contentDescription="Выбрать новый аватар"},
                 contentAlignment=Alignment.Center
             ){
-                Text("✎",style=MaterialTheme.typography.titleLarge,color=Color.White)
+                Text("✎",style=MaterialTheme.typography.titleLarge,color=Color(0xFF061A10))
             }
         }
 
