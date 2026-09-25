@@ -84,6 +84,41 @@ export const postgresStore = {
     );
     return r.rows.map(row=>row.token);
   },
+  async passwordHash(userId) {
+    const r=await dbQuery(
+      "select password_hash from users where id=$1",
+      [userId]
+    );
+    return r.rows[0]?.password_hash || null;
+  },
+  async changePasswordAndRevokeOthers(userId,currentToken,expectedHash,newHash) {
+    const client=await pool.connect();
+    let committed=false;
+    try{
+      await client.query("begin");
+      const changed=await client.query(
+        "update users set password_hash=$4 where id=$1 and password_hash=$3 returning id",
+        [userId,currentToken,expectedHash,newHash]
+      );
+      if(!changed.rowCount){
+        await client.query("rollback");
+        return null;
+      }
+      const revoked=await client.query(
+        "delete from sessions where user_id=$1 and token<>$2 returning token",
+        [userId,currentToken]
+      );
+      await client.query("commit");
+      committed=true;
+      return revoked.rows.map(row=>row.token);
+    }catch(error){
+      await client.query("rollback").catch(()=>{});
+      throw error;
+    }finally{
+      if(!committed)await client.query("rollback").catch(()=>{});
+      client.release();
+    }
+  },
   async createUser({id,username,displayName,passwordHash,token}) {
     try {
       const r=await dbQuery(`with created as (
