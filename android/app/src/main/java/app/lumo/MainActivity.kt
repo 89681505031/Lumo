@@ -503,6 +503,12 @@ class MainActivity:ComponentActivity(){
  var logoutError by remember{mutableStateOf("")}
  var revokingOthers by remember{mutableStateOf(false)}
  var sessionSecurityText by remember{mutableStateOf("")}
+ var passwordDialog by remember{mutableStateOf(false)}
+ var currentPassword by remember{mutableStateOf("")}
+ var newPassword by remember{mutableStateOf("")}
+ var confirmPassword by remember{mutableStateOf("")}
+ var changingPassword by remember{mutableStateOf(false)}
+ var passwordError by remember{mutableStateOf("")}
  var update by remember{mutableStateOf<UpdateInfo?>(null)}
  var checking by remember{mutableStateOf(true)}
  var updateText by remember{mutableStateOf("Проверяем обновления…")}
@@ -715,6 +721,104 @@ class MainActivity:ComponentActivity(){
      color=if(sessionSecurityText.startsWith("Не удалось"))
       MaterialTheme.colorScheme.error else LumoCyan)
    }
+   Spacer(Modifier.height(10.dp))
+   TextButton(
+    onClick={
+     currentPassword="";newPassword="";confirmPassword=""
+     passwordError="";passwordDialog=true
+    },
+    modifier=Modifier.align(Alignment.CenterHorizontally)
+   ){Text("Сменить пароль",color=Color.White)}
+  }
+  if(passwordDialog){
+   AlertDialog(
+    onDismissRequest={
+     if(!changingPassword){
+      passwordDialog=false
+      currentPassword="";newPassword="";confirmPassword="";passwordError=""
+     }
+    },
+    title={Text("Смена пароля")},
+    text={
+     Column{
+      Text("После смены пароля Lumo завершит все другие активные сессии.",
+       style=MaterialTheme.typography.bodySmall,
+       color=MaterialTheme.colorScheme.onSurfaceVariant)
+      Spacer(Modifier.height(12.dp))
+      OutlinedTextField(
+       value=currentPassword,
+       onValueChange={currentPassword=it;passwordError=""},
+       label={Text("Текущий пароль")},
+       singleLine=true,
+       visualTransformation=PasswordVisualTransformation(),
+       modifier=Modifier.fillMaxWidth()
+      )
+      Spacer(Modifier.height(8.dp))
+      OutlinedTextField(
+       value=newPassword,
+       onValueChange={newPassword=it.take(128);passwordError=""},
+       label={Text("Новый пароль")},
+       singleLine=true,
+       visualTransformation=PasswordVisualTransformation(),
+       modifier=Modifier.fillMaxWidth()
+      )
+      Spacer(Modifier.height(8.dp))
+      OutlinedTextField(
+       value=confirmPassword,
+       onValueChange={confirmPassword=it.take(128);passwordError=""},
+       label={Text("Повтори новый пароль")},
+       singleLine=true,
+       visualTransformation=PasswordVisualTransformation(),
+       modifier=Modifier.fillMaxWidth()
+      )
+      if(passwordError.isNotBlank())
+       Text(passwordError,color=MaterialTheme.colorScheme.error,
+        style=MaterialTheme.typography.bodySmall,
+        modifier=Modifier.padding(top=8.dp))
+     }
+    },
+    confirmButton={
+     TextButton(
+      enabled=!changingPassword,
+      onClick={
+       when{
+        currentPassword.isBlank()->passwordError="Введи текущий пароль."
+        newPassword.length<10->passwordError="Новый пароль должен быть не короче 10 символов."
+        newPassword!=confirmPassword->passwordError="Новые пароли не совпадают."
+        else->{
+         changingPassword=true;passwordError=""
+         scope.launch{
+          runCatching{
+           kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+            Api.changePassword(token,currentPassword,newPassword)
+           }
+          }.onSuccess{revoked->
+           sessionSecurityText=if(revoked>0)
+            "Пароль изменён. Завершено других сессий: "+revoked
+           else "Пароль изменён."
+           passwordDialog=false
+           currentPassword="";newPassword="";confirmPassword=""
+          }.onFailure{error->
+           if(error is SessionExpiredException)logout()
+           else passwordError=error.message ?: "Не удалось сменить пароль."
+          }
+          changingPassword=false
+         }
+        }
+       }
+      }
+     ){Text(if(changingPassword)"Сохраняем…" else "Сменить")}
+    },
+    dismissButton={
+     TextButton(
+      enabled=!changingPassword,
+      onClick={
+       passwordDialog=false
+       currentPassword="";newPassword="";confirmPassword="";passwordError=""
+      }
+     ){Text("Отмена")}
+    }
+   )
   }
   Spacer(Modifier.height(18.dp))
   OutlinedButton(
@@ -1528,6 +1632,30 @@ object Api{
    val raw=response.body?.string().orEmpty()
    if(response.code==401)throw SessionExpiredException()
    if(!response.isSuccessful)error("Сессии: "+response.code)
+   return runCatching{JSONObject(raw).optInt("revoked",0)}.getOrDefault(0)
+  }
+ }
+ fun changePassword(t:String,current:String,replacement:String):Int{
+  val body=JSONObject()
+   .put("currentPassword",current)
+   .put("newPassword",replacement)
+   .toString().toRequestBody("application/json".toMediaType())
+  val request=Request.Builder().url(HTTP+"/api/account/password")
+   .header("Authorization","Bearer "+t).post(body).build()
+  c.newCall(request).execute().use{response->
+   val raw=response.body?.string().orEmpty()
+   if(response.code==401)throw SessionExpiredException()
+   if(!response.isSuccessful){
+    val code=runCatching{JSONObject(raw).optString("error")}.getOrDefault("")
+    error(when(code){
+     "invalid_new_password"->"Новый пароль должен содержать от 10 до 128 символов."
+     "current_password_incorrect"->"Текущий пароль указан неверно."
+     "password_unchanged"->"Новый пароль совпадает с текущим."
+     "password_changed_elsewhere"->"Пароль уже был изменён в другой сессии. Войди заново."
+     else->if(response.code==404)"Сервер пока не поддерживает смену пароля."
+      else "Не удалось сменить пароль (HTTP "+response.code+")."
+    })
+   }
    return runCatching{JSONObject(raw).optInt("revoked",0)}.getOrDefault(0)
   }
  }
