@@ -506,105 +506,160 @@ fun MediaComposer(token:String,me:User,peer:User,allowSend:Boolean,onSent:(Msg)-
    chosen?.file?.delete()
   }
  }
- Column(Modifier.fillMaxWidth().padding(horizontal=10.dp,vertical=5.dp).lumoGlass(22).padding(12.dp)){
-  Text("Фото, видео и голосовые",style=MaterialTheme.typography.titleMedium,color=Color.White)
-  Spacer(Modifier.height(6.dp))
+ Column(
+  Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=2.dp)
+ ){
   if(checking){
-   LinearProgressIndicator(Modifier.fillMaxWidth(),color=LumoCyan)
-   Text("Проверяем доступность медиа…",style=MaterialTheme.typography.bodySmall)
-  }else if(!available){
-   Text(
-    "Сервер медиа пока недоступен. После обновления функции включатся автоматически.",
-    style=MaterialTheme.typography.bodySmall,
-    color=MaterialTheme.colorScheme.onSurfaceVariant
+   LinearProgressIndicator(
+    Modifier.fillMaxWidth().height(1.dp),
+    color=LumoCyan
    )
-   TextButton(onClick={capabilityRetry++}){Text("Проверить снова",color=LumoCyan)}
+  }else if(!available){
+   TextButton(
+    onClick={capabilityRetry++},
+    modifier=Modifier.align(androidx.compose.ui.Alignment.End)
+   ){
+    Text("Вложения недоступны",color=MaterialTheme.colorScheme.onSurfaceVariant,
+     style=MaterialTheme.typography.labelSmall)
+   }
   }
-  if(status.isNotBlank())Text(status,style=MaterialTheme.typography.bodySmall,
-   color=MaterialTheme.colorScheme.onSurfaceVariant)
+  if(status.isNotBlank()){
+   Text(
+    status,
+    style=MaterialTheme.typography.labelSmall,
+    color=MaterialTheme.colorScheme.onSurfaceVariant,
+    modifier=Modifier.padding(horizontal=8.dp,vertical=2.dp)
+   )
+  }
   if(pending!=null){
-   Text("Ожидает отправки: "+pending!!.filename,style=MaterialTheme.typography.bodySmall)
-   Row{
-    Button(onClick={
-     val item=pending?:return@Button
+   Row(
+    Modifier.fillMaxWidth().background(Color(0xFF202C33),RoundedCornerShape(16.dp))
+     .padding(horizontal=10.dp,vertical=6.dp),
+    verticalAlignment=androidx.compose.ui.Alignment.CenterVertically
+   ){
+    Text(
+     pending!!.filename,
+     style=MaterialTheme.typography.bodySmall,
+     color=Color.White,
+     maxLines=1,
+     modifier=Modifier.weight(1f)
+    )
+    TextButton(onClick={
+     val item=pending?:return@TextButton
      busy=true
      scope.launch{
       runCatching{withContext(Dispatchers.IO){MediaApi.send(token,item)}}
        .onSuccess{onSent(it);rememberPending(null);status="Медиа отправлено";caption=""}
-       .onFailure{status="Отправка не подтверждена. Повторите с тем же ID."}
+       .onFailure{status="Отправка не подтверждена. Повторите."}
       busy=false
      }
-    },enabled=allowSend&&!busy){Text("Повторить отправку")}
+    },enabled=allowSend&&!busy){Text("Повторить",color=LumoCyan)}
     TextButton(onClick={rememberPending(null);status="Отправка отменена"},enabled=!busy){
-     Text("Отменить")
+     Text("×",color=Color.White)
     }
    }
   }else if(available){
-   if(recorder==null){
-    Row(Modifier.fillMaxWidth()){
+   if(recorder==null && chosen==null){
+    Row(
+     Modifier.fillMaxWidth(),
+     horizontalArrangement=Arrangement.End,
+     verticalAlignment=androidx.compose.ui.Alignment.CenterVertically
+    ){
      TextButton(
       onClick={chooseVisual.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))},
-      enabled=available&&allowSend&&!busy,
-      modifier=Modifier.weight(1f)
-     ){Text("◉ Фото / видео",color=LumoCyan,maxLines=1)}
+      enabled=allowSend&&!busy
+     ){Text("Фото",color=LumoCyan)}
      TextButton(
       onClick={chooseDocument.launch(documentMimes)},
-      enabled=available&&allowSend&&!busy,
-      modifier=Modifier.weight(1f)
-     ){Text("📎 Документ",color=LumoCyan,maxLines=1)}
+      enabled=allowSend&&!busy
+     ){Text("Файл",color=LumoCyan)}
+     TextButton(
+      onClick={askMicrophone.launch(Manifest.permission.RECORD_AUDIO)},
+      enabled=allowSend&&!busy
+     ){Text("Голос",color=LumoCyan)}
     }
-    TextButton(
-     onClick={askMicrophone.launch(Manifest.permission.RECORD_AUDIO)},
-     enabled=available&&allowSend&&!busy&&chosen==null
-    ){Text("🎙 Голосовое",color=LumoCyan)}
-   }else{
-    Row(Modifier.fillMaxWidth()){
+   }else if(recorder!=null){
+    Row(
+     Modifier.fillMaxWidth().background(Color(0xFF202C33),RoundedCornerShape(16.dp))
+      .padding(horizontal=10.dp,vertical=5.dp),
+     verticalAlignment=androidx.compose.ui.Alignment.CenterVertically
+    ){
+     Text("Запись голосового…",color=Color.White,modifier=Modifier.weight(1f))
      TextButton(onClick={
       if(SystemClock.elapsedRealtime()-startedAt>=700L)stopRecording(false)
       else status="Запишите хотя бы одну секунду"
-     },enabled=!busy){Text("■ Готово")}
+     },enabled=!busy){Text("Готово",color=LumoCyan)}
      TextButton(onClick={stopRecording(true);status="Запись отменена"},enabled=!busy){
-      Text("Отмена")
+      Text("×",color=Color.White)
      }
     }
    }
    chosen?.let{selected->
-    Row(Modifier.fillMaxWidth()){
-     Text(selected.filename+" ("+selected.bytes/(1024)+" КБ)",
-      style=MaterialTheme.typography.bodySmall,modifier=Modifier.weight(1f))
-     TextButton(onClick={chosen=null;selected.file?.delete();status=""},enabled=!busy){
-      Text("×")
+    Column(
+     Modifier.fillMaxWidth().background(Color(0xFF202C33),RoundedCornerShape(16.dp))
+      .padding(horizontal=10.dp,vertical=8.dp)
+    ){
+     Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+      Text(
+       selected.filename,
+       style=MaterialTheme.typography.bodySmall,
+       color=Color.White,
+       maxLines=1,
+       modifier=Modifier.weight(1f)
+      )
+      TextButton(onClick={chosen=null;selected.file?.delete();status=""},enabled=!busy){
+       Text("×",color=Color.White)
+      }
+     }
+     OutlinedTextField(
+      value=caption,onValueChange={caption=it.take(1000)},
+      placeholder={Text("Подпись",color=MaterialTheme.colorScheme.onSurfaceVariant)},
+      modifier=Modifier.fillMaxWidth(),
+      maxLines=2,
+      enabled=!busy,
+      shape=RoundedCornerShape(14.dp),
+      colors=OutlinedTextFieldDefaults.colors(
+       focusedTextColor=Color.White,
+       unfocusedTextColor=Color.White,
+       focusedBorderColor=Color.Transparent,
+       unfocusedBorderColor=Color.Transparent,
+       focusedContainerColor=Color(0xFF111B21),
+       unfocusedContainerColor=Color(0xFF111B21),
+       cursorColor=LumoCyan
+      )
+     )
+     Spacer(Modifier.height(6.dp))
+     Button(
+      onClick={
+       val source=chosen?:return@Button
+       busy=true
+       status="Загрузка..."
+       scope.launch{
+        runCatching{withContext(Dispatchers.IO){
+         val ticket=MediaApi.initiate(token,peer.id,source)
+         MediaApi.upload(context,token,ticket,source)
+         MediaApi.complete(token,ticket.assetId)
+         PendingAttachment(ticket.assetId,java.util.UUID.randomUUID().toString(),
+          caption.trim(),source.filename)
+        }}.onSuccess{item->
+         rememberPending(item)
+         chosen?.file?.delete();chosen=null
+         runCatching{withContext(Dispatchers.IO){MediaApi.send(token,item)}}
+          .onSuccess{onSent(it);rememberPending(null);caption="";status="Медиа отправлено"}
+          .onFailure{status="Файл загружен, но отправка не подтверждена. Повторите."}
+        }.onFailure{status=it.message?:"Не удалось загрузить файл"}
+        busy=false
+       }
+      },
+      enabled=allowSend&&!busy&&recorder==null,
+      modifier=Modifier.align(androidx.compose.ui.Alignment.End)
+     ){
+      Text(if(busy)"Загрузка…" else "Отправить")
      }
     }
-    OutlinedTextField(caption,{caption=it.take(1000)},label={Text("Подпись (необязательно)")},
-     modifier=Modifier.fillMaxWidth(),maxLines=2,enabled=!busy)
-    Button(onClick={
-     val source=chosen?:return@Button
-     busy=true
-     status="Загрузка..."
-     scope.launch{
-      runCatching{withContext(Dispatchers.IO){
-       val ticket=MediaApi.initiate(token,peer.id,source)
-       MediaApi.upload(context,token,ticket,source)
-       MediaApi.complete(token,ticket.assetId)
-       PendingAttachment(ticket.assetId,java.util.UUID.randomUUID().toString(),
-        caption.trim(),source.filename)
-      }}.onSuccess{item->
-       // Persist the exact ID BEFORE the send, because a lost HTTP response
-       // must never cause a second distinct message on retry.
-       rememberPending(item)
-       chosen?.file?.delete();chosen=null
-       runCatching{withContext(Dispatchers.IO){MediaApi.send(token,item)}}
-        .onSuccess{onSent(it);rememberPending(null);caption="";status="Медиа отправлено"}
-        .onFailure{status="Файл загружен, но отправка не подтверждена. Повторите."}
-      }.onFailure{status=it.message?:"Не удалось загрузить файл"}
-      busy=false
-     }
-    },enabled=allowSend&&!busy&&recorder==null){Text(if(busy)"Подождите..." else "Отправить файл")}
    }
   }
- }
-}
+ }}
 
 
 @Composable
