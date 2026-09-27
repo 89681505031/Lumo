@@ -1,4 +1,4 @@
-name: Build Lumo Music Mini v2.0 Vocal Focus
+name: Build Lumo Music Mini v2.0.1 Safe Vocal
 
 on:
   push:
@@ -30,27 +30,29 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Restore v2.0 source
+      - name: Restore v2.0.1 source
         run: |
           cat lumo-music-build/v2_part_*.txt | tr -d '\n' | base64 -d > /tmp/lumo-v2.zip
           mkdir -p /tmp/lumo-v2
           unzip -q /tmp/lumo-v2.zip -d /tmp/lumo-v2
-          test -f /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/VocalPerformancePlanner.kt
-          grep -q 'versionName = "2.0.0"' /tmp/lumo-v2/LumoMusicMini/app/build.gradle.kts
-          grep -q 'VocalPerformancePlanner.plan' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/RecurrentWaveVocalEngine.kt
-          grep -q 'vocalPresence' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/SequenceSynthRenderer.kt
+          cat lumo-music-build/v201_patch.b64.txt | tr -d '\n' | base64 -d > /tmp/v201-patch.zip
+          unzip -oq /tmp/v201-patch.zip -d /tmp/lumo-v2/LumoMusicMini
+          test -f /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ResilientVocalEngine.kt
+          grep -q 'versionName = "2.0.1"' /tmp/lumo-v2/LumoMusicMini/app/build.gradle.kts
+          grep -q 'ResilientVocalEngine' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/AiMusicModel.kt
+          grep -q 'scale.getOrElse' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/RecurrentWaveVocalEngine.kt
 
-      - name: Build v2.0 APK
+      - name: Build v2.0.1 APK
         working-directory: /tmp/lumo-v2/LumoMusicMini
         run: gradle :app:assembleDebug --stacktrace
 
-      - name: Verify v2.0 APK
+      - name: Verify v2.0.1 APK
         working-directory: /tmp/lumo-v2/LumoMusicMini
         run: |
           APK=app/build/outputs/apk/debug/app-debug.apk
           AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
           test -s "$APK"
-          "$AAPT" dump badging "$APK" | grep -q "versionName='2.0.0'"
+          "$AAPT" dump badging "$APK" | grep -q "versionName='2.0.1'"
           ! "$AAPT" dump permissions "$APK" | grep -q 'android.permission.INTERNET'
           unzip -l "$APK" | grep -q 'assets/models/tiny_sakha_subword_language_model_v2.json'
           unzip -l "$APK" | grep -q 'assets/models/tiny_recurrent_wave_decoder_v2.json'
@@ -60,6 +62,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LumoMusicMini-v2.0-vocal-focus-apk
+          name: LumoMusicMini-v2.0.1-safe-vocal-apk
           path: /tmp/lumo-v2/LumoMusicMini/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
