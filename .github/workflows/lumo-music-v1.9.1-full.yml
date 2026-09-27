@@ -8,18 +8,22 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK
-        run: sdkmanager "platforms;android-37" "build-tools;37.0.0"
+      - name: Install Android SDK 37
+        run: |
+          which sdkmanager
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-37" "build-tools;37.0.0" "platform-tools"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
@@ -33,6 +37,7 @@ jobs:
           test -f /tmp/lumo-source/LumoMusicMini/app/src/main/java/com/lumomusic/mini/MainActivity.kt
           grep -q 'versionName = "1.9.1"' /tmp/lumo-source/LumoMusicMini/app/build.gradle.kts
           grep -q 'listOf(30, 60, 120)' /tmp/lumo-source/LumoMusicMini/app/src/main/java/com/lumomusic/mini/MainActivity.kt
+          grep -q 'vocalsEnabled = mode == CreationMode.SONG' /tmp/lumo-source/LumoMusicMini/app/src/main/java/com/lumomusic/mini/MainActivity.kt
 
       - name: Build full APK
         working-directory: /tmp/lumo-source/LumoMusicMini
