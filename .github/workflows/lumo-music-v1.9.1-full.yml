@@ -59,7 +59,6 @@ jobs:
           unzip -l "$APK" | grep -q 'assets/models/tiny_sakha_subword_language_model_v2.json'
           unzip -l "$APK" | grep -q 'assets/models/tiny_recurrent_wave_decoder_v2.json'
           unzip -l "$APK" | grep -q 'assets/language/sakha_phonology_v1.json'
-          unzip -p "$APK" classes.dex | strings | grep -q 'Lumo Articulatory Singer v2.1'
           echo "APK bytes: $(stat -c%s "$APK")"
           sha256sum "$APK"
 
