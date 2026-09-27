@@ -1,0 +1,56 @@
+name: Build Lumo Music Mini v1.9.1 Full
+
+on:
+  push:
+    branches:
+      - lumo-music-mini-v1-9-apk-build
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: sdkmanager "platforms;android-37" "build-tools;37.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+
+      - name: Restore full source
+        run: |
+          cat lumo-music-build/part_*.txt | tr -d '\n' | base64 -d > /tmp/lumo-source.zip
+          mkdir -p /tmp/lumo-source
+          unzip -q /tmp/lumo-source.zip -d /tmp/lumo-source
+          test -f /tmp/lumo-source/LumoMusicMini/app/src/main/java/com/lumomusic/mini/MainActivity.kt
+          grep -q 'versionName = "1.9.1"' /tmp/lumo-source/LumoMusicMini/app/build.gradle.kts
+          grep -q 'listOf(30, 60, 120)' /tmp/lumo-source/LumoMusicMini/app/src/main/java/com/lumomusic/mini/MainActivity.kt
+
+      - name: Build full APK
+        working-directory: /tmp/lumo-source/LumoMusicMini
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Verify full APK
+        working-directory: /tmp/lumo-source/LumoMusicMini
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          unzip -l "$APK" | grep -q 'assets/models/tiny_sakha_subword_language_model_v2.json'
+          unzip -l "$APK" | grep -q 'assets/models/tiny_recurrent_wave_decoder_v2.json'
+          unzip -l "$APK" | grep -q 'assets/language/sakha_phonology_v1.json'
+          echo "APK bytes: $(stat -c%s "$APK")"
+          sha256sum "$APK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LumoMusicMini-v1.9.1-full-debug-apk
+          path: /tmp/lumo-source/LumoMusicMini/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
