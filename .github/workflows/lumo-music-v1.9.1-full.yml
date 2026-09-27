@@ -1,4 +1,4 @@
-name: Build Lumo Music Mini v1.9.1 Full
+name: Build Lumo Music Mini v2.0 Vocal Focus
 
 on:
   push:
@@ -30,34 +30,28 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Restore full source
+      - name: Restore v2.0 source
         run: |
-          cat lumo-music-build/part_*.txt | tr -d '\n' | base64 -d > /tmp/lumo-source.zip
-          mkdir -p /tmp/lumo-source
-          unzip -q /tmp/lumo-source.zip -d /tmp/lumo-source
-          test -f /tmp/lumo-source/LumoMusicMini/app/src/main/java/com/lumomusic/mini/MainActivity.kt
-          grep -q 'versionName = "1.9.1"' /tmp/lumo-source/LumoMusicMini/app/build.gradle.kts
-          grep -q 'listOf(30, 60, 120)' /tmp/lumo-source/LumoMusicMini/app/src/main/java/com/lumomusic/mini/MainActivity.kt
-          grep -q 'vocalsEnabled = mode == CreationMode.SONG' /tmp/lumo-source/LumoMusicMini/app/src/main/java/com/lumomusic/mini/MainActivity.kt
-          sed -i 's/compileSdk = 37/compileSdk = 36/' /tmp/lumo-source/LumoMusicMini/app/build.gradle.kts
-          sed -i 's/targetSdk = 37/targetSdk = 36/' /tmp/lumo-source/LumoMusicMini/app/build.gradle.kts
-          sed -i 's/androidx.activity:activity-compose:1.13.0/androidx.activity:activity-compose:1.10.1/' /tmp/lumo-source/LumoMusicMini/app/build.gradle.kts
-          sed -i 's/androidx.compose.ui:ui:1.12.1/androidx.compose.ui:ui:1.8.3/' /tmp/lumo-source/LumoMusicMini/app/build.gradle.kts
-          sed -i 's/androidx.compose.ui:ui-tooling-preview:1.12.1/androidx.compose.ui:ui-tooling-preview:1.8.3/' /tmp/lumo-source/LumoMusicMini/app/build.gradle.kts
-          sed -i 's/androidx.compose.foundation:foundation:1.12.1/androidx.compose.foundation:foundation:1.8.3/' /tmp/lumo-source/LumoMusicMini/app/build.gradle.kts
-          sed -i 's/androidx.compose.material3:material3:1.4.0/androidx.compose.material3:material3:1.3.2/' /tmp/lumo-source/LumoMusicMini/app/build.gradle.kts
-          sed -i 's/androidx.lifecycle:lifecycle-runtime-ktx:2.11.0/androidx.lifecycle:lifecycle-runtime-ktx:2.9.1/' /tmp/lumo-source/LumoMusicMini/app/build.gradle.kts
-          sed -i 's/androidx.compose.ui:ui-tooling:1.12.1/androidx.compose.ui:ui-tooling:1.8.3/' /tmp/lumo-source/LumoMusicMini/app/build.gradle.kts
+          cat lumo-music-build/v2_part_*.txt | tr -d '\n' | base64 -d > /tmp/lumo-v2.zip
+          mkdir -p /tmp/lumo-v2
+          unzip -q /tmp/lumo-v2.zip -d /tmp/lumo-v2
+          test -f /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/VocalPerformancePlanner.kt
+          grep -q 'versionName = "2.0.0"' /tmp/lumo-v2/LumoMusicMini/app/build.gradle.kts
+          grep -q 'VocalPerformancePlanner.plan' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/RecurrentWaveVocalEngine.kt
+          grep -q 'vocalPresence' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/SequenceSynthRenderer.kt
 
-      - name: Build full APK
-        working-directory: /tmp/lumo-source/LumoMusicMini
+      - name: Build v2.0 APK
+        working-directory: /tmp/lumo-v2/LumoMusicMini
         run: gradle :app:assembleDebug --stacktrace
 
-      - name: Verify full APK
-        working-directory: /tmp/lumo-source/LumoMusicMini
+      - name: Verify v2.0 APK
+        working-directory: /tmp/lumo-v2/LumoMusicMini
         run: |
           APK=app/build/outputs/apk/debug/app-debug.apk
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
           test -s "$APK"
+          "$AAPT" dump badging "$APK" | grep -q "versionName='2.0.0'"
+          ! "$AAPT" dump permissions "$APK" | grep -q 'android.permission.INTERNET'
           unzip -l "$APK" | grep -q 'assets/models/tiny_sakha_subword_language_model_v2.json'
           unzip -l "$APK" | grep -q 'assets/models/tiny_recurrent_wave_decoder_v2.json'
           unzip -l "$APK" | grep -q 'assets/language/sakha_phonology_v1.json'
@@ -66,6 +60,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LumoMusicMini-v1.9.1-full-debug-apk
-          path: /tmp/lumo-source/LumoMusicMini/app/build/outputs/apk/debug/app-debug.apk
+          name: LumoMusicMini-v2.0-vocal-focus-apk
+          path: /tmp/lumo-v2/LumoMusicMini/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
