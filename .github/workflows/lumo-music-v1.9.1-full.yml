@@ -1,4 +1,4 @@
-name: Build Lumo Music Mini v2.4 Intelligibility
+name: Build Lumo Music Mini v2.4 Clear Voice
 
 on:
   push:
@@ -40,10 +40,11 @@ jobs:
             unzip -oq "/tmp/${P}-patch.zip" -d /tmp/lumo-v2/LumoMusicMini
           done
           grep -q 'versionName = "2.4.0"' /tmp/lumo-v2/LumoMusicMini/app/build.gradle.kts
-          grep -q 'Lumo Intelligibility Singer v2.4' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ArticulatoryVocalEngine.kt
-          grep -q 'unit.phraseEnd -> 145' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ArticulatoryVocalEngine.kt
-          grep -q 'edgeNoise' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ArticulatoryVocalEngine.kt
-          grep -q 'bodyShape' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ArticulatoryVocalEngine.kt
+          grep -q 'Lumo Clear Voice Singer v2.4' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ArticulatoryVocalEngine.kt
+          grep -q 'unit.phraseEnd -> 140' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ArticulatoryVocalEngine.kt
+          grep -q 'val maxRatio = 2.0.pow(3.0 / 12.0)' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ArticulatoryVocalEngine.kt
+          grep -q 'addVocalPresence' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/SequenceSynthRenderer.kt
+          grep -q 'vocalPresence \* 0.66' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/SequenceSynthRenderer.kt
 
       - name: Build v2.4 APK
         working-directory: /tmp/lumo-v2/LumoMusicMini
@@ -65,6 +66,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LumoMusicMini-v2.4-intelligibility-apk
+          name: LumoMusicMini-v2.4-clear-voice-apk
           path: /tmp/lumo-v2/LumoMusicMini/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
