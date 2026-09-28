@@ -1,4 +1,4 @@
-name: Build Lumo Music Mini v2.3 Phrase Formant
+name: Build Lumo Music Mini v2.4 Intelligibility
 
 on:
   push:
@@ -30,36 +30,32 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Restore v2.3 source
+      - name: Restore v2.4 source
         run: |
           cat lumo-music-build/v2_part_*.txt | tr -d '\n' | base64 -d > /tmp/lumo-v2.zip
           mkdir -p /tmp/lumo-v2
           unzip -q /tmp/lumo-v2.zip -d /tmp/lumo-v2
-          cat lumo-music-build/v201_patch.b64.txt | tr -d '\n' | base64 -d > /tmp/v201-patch.zip
-          unzip -oq /tmp/v201-patch.zip -d /tmp/lumo-v2/LumoMusicMini
-          cat lumo-music-build/v21_patch.b64.txt | tr -d '\n' | base64 -d > /tmp/v21-patch.zip
-          unzip -oq /tmp/v21-patch.zip -d /tmp/lumo-v2/LumoMusicMini
-          cat lumo-music-build/v22_patch.b64.txt | tr -d '\n' | base64 -d > /tmp/v22-patch.zip
-          unzip -oq /tmp/v22-patch.zip -d /tmp/lumo-v2/LumoMusicMini
-          cat lumo-music-build/v23_patch.b64.txt | tr -d '\n' | base64 -d > /tmp/v23-patch.zip
-          unzip -oq /tmp/v23-patch.zip -d /tmp/lumo-v2/LumoMusicMini
-          grep -q 'versionName = "2.3.0"' /tmp/lumo-v2/LumoMusicMini/app/build.gradle.kts
-          grep -q 'Lumo Phrase Formant Singer v2.3' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ArticulatoryVocalEngine.kt
-          grep -q 'smoothPitchTarget' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ArticulatoryVocalEngine.kt
-          grep -q 'consonantLocus' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ArticulatoryVocalEngine.kt
-          grep -q 'glottalPulse' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ArticulatoryVocalEngine.kt
+          for P in v201 v21 v22 v23 v24; do
+            cat "lumo-music-build/${P}_patch.b64.txt" | tr -d '\n' | base64 -d > "/tmp/${P}-patch.zip"
+            unzip -oq "/tmp/${P}-patch.zip" -d /tmp/lumo-v2/LumoMusicMini
+          done
+          grep -q 'versionName = "2.4.0"' /tmp/lumo-v2/LumoMusicMini/app/build.gradle.kts
+          grep -q 'Lumo Intelligibility Singer v2.4' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ArticulatoryVocalEngine.kt
+          grep -q 'unit.phraseEnd -> 145' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ArticulatoryVocalEngine.kt
+          grep -q 'edgeNoise' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ArticulatoryVocalEngine.kt
+          grep -q 'bodyShape' /tmp/lumo-v2/LumoMusicMini/app/src/main/java/com/lumomusic/mini/audio/ArticulatoryVocalEngine.kt
 
-      - name: Build v2.3 APK
+      - name: Build v2.4 APK
         working-directory: /tmp/lumo-v2/LumoMusicMini
         run: gradle :app:assembleDebug --stacktrace
 
-      - name: Verify v2.3 APK
+      - name: Verify v2.4 APK
         working-directory: /tmp/lumo-v2/LumoMusicMini
         run: |
           APK=app/build/outputs/apk/debug/app-debug.apk
           AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
           test -s "$APK"
-          "$AAPT" dump badging "$APK" | grep -q "versionName='2.3.0'"
+          "$AAPT" dump badging "$APK" | grep -q "versionName='2.4.0'"
           ! "$AAPT" dump permissions "$APK" | grep -q 'android.permission.INTERNET'
           unzip -l "$APK" | grep -q 'assets/models/tiny_sakha_subword_language_model_v2.json'
           unzip -l "$APK" | grep -q 'assets/models/tiny_recurrent_wave_decoder_v2.json'
@@ -69,6 +65,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LumoMusicMini-v2.3-phrase-formant-apk
+          name: LumoMusicMini-v2.4-intelligibility-apk
           path: /tmp/lumo-v2/LumoMusicMini/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
