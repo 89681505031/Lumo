@@ -1,9 +1,12 @@
 const e164=/^\+[1-9][0-9]{7,14}$/;
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+const defaultSupabaseUrl="https://vikqgvkjxceypozktvgd.supabase.co";
+const defaultSupabasePublishableKey="sb_publishable_f7TQbu8r5DH4iWwZE30e0w_Xhq-cRHX";
+
 function config(){
-  const url=String(process.env.SUPABASE_URL||"").trim().replace(/\/$/,"");
-  const key=String(process.env.SUPABASE_PUBLISHABLE_KEY||"").trim();
+  const url=String(process.env.SUPABASE_URL||defaultSupabaseUrl).trim().replace(/\/$/,"");
+  const key=String(process.env.SUPABASE_PUBLISHABLE_KEY||defaultSupabasePublishableKey).trim();
   return {url,key};
 }
 
